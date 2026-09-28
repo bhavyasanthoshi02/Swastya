@@ -1,0 +1,329 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model bloodbanks {
+  bloodbankid        String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userid             String            @unique @db.Uuid
+  bloodbankname      String            @db.VarChar(255)
+  licensenumber      String            @unique @db.VarChar(100)
+  contactpersonname  String            @db.VarChar(100)
+  contactpersonphone String            @db.VarChar(15)
+  address            String            @db.VarChar(255)
+  city               String            @db.VarChar(100)
+  state              String            @db.VarChar(100)
+  pincode            String            @db.VarChar(10)
+  latitude           Decimal?          @db.Decimal(9, 6)
+  longitude          Decimal?          @db.Decimal(9, 6)
+  approvalstatus     approval_status?  @default(PENDING)
+  createdat          DateTime?         @default(now()) @db.Timestamp(6)
+  updatedat          DateTime?         @default(now()) @db.Timestamp(6)
+  users              users             @relation(fields: [userid], references: [userid], onDelete: Cascade, onUpdate: NoAction, map: "fk_bloodbank_user")
+  donationhistory    donationhistory[]
+  inventory          inventory[]
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model bloodrequests {
+  requestid            String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  createdbyuserid      String                 @db.Uuid
+  requesterid          String?                @db.Uuid
+  hospitalid           String?                @db.Uuid
+  patientname          String                 @db.VarChar(100)
+  patientage           Int
+  patientgender        gender_type
+  patientcontact       String                 @db.VarChar(15)
+  bloodgroup           blood_group
+  bloodcomponent       blood_component
+  unitsrequired        Int
+  urgencylevel         urgency_level
+  isemergency          Boolean?               @default(false)
+  searchradius         Int?                   @default(5)
+  requiredby           DateTime               @db.Timestamp(6)
+  status               request_status?        @default(CREATED)
+  notes                String?
+  createdat            DateTime?              @default(now()) @db.Timestamp(6)
+  updatedat            DateTime?              @default(now()) @db.Timestamp(6)
+  users                users                  @relation(fields: [createdbyuserid], references: [userid], onDelete: NoAction, onUpdate: NoAction, map: "fk_request_creator")
+  hospitals            hospitals?             @relation(fields: [hospitalid], references: [hospitalid], onDelete: NoAction, onUpdate: NoAction, map: "fk_request_hospital")
+  requesters           requesters?            @relation(fields: [requesterid], references: [requesterid], onDelete: NoAction, onUpdate: NoAction, map: "fk_request_requester")
+  donationhistory      donationhistory[]
+  hospitalcoordination hospitalcoordination[]
+  notification         notification[]
+  prescription         prescription?
+  requeststatushistory requeststatushistory[]
+
+  @@index([status], map: "idx_bloodrequests_status")
+}
+
+model donationhistory {
+  donationhistoryid String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  donorid           String        @db.Uuid
+  requestid         String        @db.Uuid
+  unitsdonated      Int
+  donationdate      DateTime      @db.Date
+  bloodbankid       String?       @db.Uuid
+  hospitalid        String?       @db.Uuid
+  remarks           String?
+  createdat         DateTime?     @default(now()) @db.Timestamp(6)
+  bloodbanks        bloodbanks?   @relation(fields: [bloodbankid], references: [bloodbankid], onDelete: NoAction, onUpdate: NoAction, map: "fk_donation_bloodbank")
+  donors            donors        @relation(fields: [donorid], references: [donorid], onDelete: NoAction, onUpdate: NoAction, map: "fk_donation_donor")
+  hospitals         hospitals?    @relation(fields: [hospitalid], references: [hospitalid], onDelete: NoAction, onUpdate: NoAction, map: "fk_donation_hospital")
+  bloodrequests     bloodrequests @relation(fields: [requestid], references: [requestid], onDelete: NoAction, onUpdate: NoAction, map: "fk_donation_request")
+}
+
+model donors {
+  donorid            String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userid             String               @unique @db.Uuid
+  bloodgroup         blood_group
+  dateofbirth        DateTime             @db.Date
+  gender             gender_type
+  weight             Decimal?             @db.Decimal(5, 2)
+  city               String               @db.VarChar(100)
+  state              String               @db.VarChar(100)
+  pincode            String               @db.VarChar(10)
+  latitude           Decimal?             @db.Decimal(9, 6)
+  longitude          Decimal?             @db.Decimal(9, 6)
+  availabilitystatus availability_status? @default(AVAILABLE)
+  iseligible         Boolean?             @default(true)
+  lastdonationdate   DateTime?            @db.Date
+  createdat          DateTime?            @default(now()) @db.Timestamp(6)
+  updatedat          DateTime?            @default(now()) @db.Timestamp(6)
+  address            String?              @db.VarChar(255)
+  donationhistory    donationhistory[]
+  users              users                @relation(fields: [userid], references: [userid], onDelete: Cascade, onUpdate: NoAction, map: "fk_donor_user")
+
+  @@index([bloodgroup], map: "idx_donors_bloodgroup")
+}
+
+model hospitalcoordination {
+  coordinationid                                           String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  requestid                                                String               @db.Uuid
+  fromhospitalid                                           String               @db.Uuid
+  tohospitalid                                             String               @db.Uuid
+  status                                                   coordination_status? @default(PENDING)
+  remarks                                                  String?
+  createdat                                                DateTime?            @default(now()) @db.Timestamp(6)
+  respondedat                                              DateTime?            @db.Timestamp(6)
+  hospitals_hospitalcoordination_fromhospitalidTohospitals hospitals            @relation("hospitalcoordination_fromhospitalidTohospitals", fields: [fromhospitalid], references: [hospitalid], onDelete: NoAction, onUpdate: NoAction, map: "fk_coordination_from_hospital")
+  bloodrequests                                            bloodrequests        @relation(fields: [requestid], references: [requestid], onDelete: NoAction, onUpdate: NoAction, map: "fk_coordination_request")
+  hospitals_hospitalcoordination_tohospitalidTohospitals   hospitals            @relation("hospitalcoordination_tohospitalidTohospitals", fields: [tohospitalid], references: [hospitalid], onDelete: NoAction, onUpdate: NoAction, map: "fk_coordination_to_hospital")
+}
+
+model hospitals {
+  hospitalid                                                          String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userid                                                              String                 @unique @db.Uuid
+  hospitalname                                                        String                 @db.VarChar(255)
+  registrationnumber                                                  String                 @unique @db.VarChar(100)
+  contactpersonname                                                   String                 @db.VarChar(100)
+  contactpersonphone                                                  String                 @db.VarChar(15)
+  address                                                             String                 @db.VarChar(255)
+  city                                                                String                 @db.VarChar(100)
+  state                                                               String                 @db.VarChar(100)
+  pincode                                                             String                 @db.VarChar(10)
+  latitude                                                            Decimal?               @db.Decimal(9, 6)
+  longitude                                                           Decimal?               @db.Decimal(9, 6)
+  approvalstatus                                                      approval_status?       @default(PENDING)
+  createdat                                                           DateTime?              @default(now()) @db.Timestamp(6)
+  updatedat                                                           DateTime?              @default(now()) @db.Timestamp(6)
+  bloodrequests                                                       bloodrequests[]
+  donationhistory                                                     donationhistory[]
+  hospitalcoordination_hospitalcoordination_fromhospitalidTohospitals hospitalcoordination[] @relation("hospitalcoordination_fromhospitalidTohospitals")
+  hospitalcoordination_hospitalcoordination_tohospitalidTohospitals   hospitalcoordination[] @relation("hospitalcoordination_tohospitalidTohospitals")
+  users                                                               users                  @relation(fields: [userid], references: [userid], onDelete: Cascade, onUpdate: NoAction, map: "fk_hospital_user")
+  prescription                                                        prescription[]
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model inventory {
+  inventoryid    String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bloodbankid    String          @db.Uuid
+  bloodgroup     blood_group
+  bloodcomponent blood_component
+  unitsavailable Int             @default(0)
+  unitsreserved  Int             @default(0)
+  expirydate     DateTime        @db.Date
+  lastupdated    DateTime?       @default(now()) @db.Timestamp(6)
+  createdat      DateTime?       @default(now()) @db.Timestamp(6)
+  updatedat      DateTime?       @default(now()) @db.Timestamp(6)
+  bloodbanks     bloodbanks      @relation(fields: [bloodbankid], references: [bloodbankid], onDelete: Cascade, onUpdate: NoAction, map: "fk_inventory_bloodbank")
+
+  @@unique([bloodbankid, bloodgroup, bloodcomponent, expirydate], map: "uq_inventory")
+  @@index([bloodgroup], map: "idx_inventory_bloodgroup")
+}
+
+model notification {
+  notificationid String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userid         String            @db.Uuid
+  requestid      String?           @db.Uuid
+  type           notification_type
+  title          String            @db.VarChar(255)
+  message        String
+  isread         Boolean?          @default(false)
+  sentat         DateTime?         @default(now()) @db.Timestamp(6)
+  readat         DateTime?         @db.Timestamp(6)
+  bloodrequests  bloodrequests?    @relation(fields: [requestid], references: [requestid], onDelete: NoAction, onUpdate: NoAction, map: "fk_notification_request")
+  users          users             @relation(fields: [userid], references: [userid], onDelete: Cascade, onUpdate: NoAction, map: "fk_notification_user")
+
+  @@index([userid], map: "idx_notification_user")
+}
+
+model prescription {
+  prescriptionid       String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  requestid            String               @unique @db.Uuid
+  fileurl              String
+  doctorname           String               @db.VarChar(100)
+  hospitalname         String               @db.VarChar(255)
+  status               prescription_status? @default(PENDING)
+  verifiedbyhospitalid String?              @db.Uuid
+  verificationdate     DateTime?            @db.Timestamp(6)
+  remarks              String?
+  uploadedat           DateTime?            @default(now()) @db.Timestamp(6)
+  createdat            DateTime?            @default(now()) @db.Timestamp(6)
+  updatedat            DateTime?            @default(now()) @db.Timestamp(6)
+  hospitals            hospitals?           @relation(fields: [verifiedbyhospitalid], references: [hospitalid], onDelete: NoAction, onUpdate: NoAction, map: "fk_prescription_hospital")
+  bloodrequests        bloodrequests        @relation(fields: [requestid], references: [requestid], onDelete: NoAction, onUpdate: NoAction, map: "fk_prescription_request")
+}
+
+model requesters {
+  requesterid   String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userid        String          @unique @db.Uuid
+  address       String          @db.VarChar(255)
+  city          String          @db.VarChar(100)
+  state         String          @db.VarChar(100)
+  pincode       String          @db.VarChar(10)
+  latitude      Decimal?        @db.Decimal(9, 6)
+  longitude     Decimal?        @db.Decimal(9, 6)
+  createdat     DateTime?       @default(now()) @db.Timestamp(6)
+  updatedat     DateTime?       @default(now()) @db.Timestamp(6)
+  bloodrequests bloodrequests[]
+  users         users           @relation(fields: [userid], references: [userid], onDelete: Cascade, onUpdate: NoAction, map: "fk_requester_user")
+}
+
+model requeststatushistory {
+  historyid       String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  requestid       String          @db.Uuid
+  oldstatus       request_status?
+  newstatus       request_status
+  changedbyuserid String?         @db.Uuid
+  remarks         String?
+  changedat       DateTime?       @default(now()) @db.Timestamp(6)
+  bloodrequests   bloodrequests   @relation(fields: [requestid], references: [requestid], onDelete: Cascade, onUpdate: NoAction, map: "fk_statushistory_request")
+  users           users?          @relation(fields: [changedbyuserid], references: [userid], onDelete: NoAction, onUpdate: NoAction, map: "fk_statushistory_user")
+}
+
+model users {
+  userid               String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                 String                 @db.VarChar(100)
+  email                String                 @unique @db.VarChar(255)
+  phonenumber          String?                @db.VarChar(15)
+  password             String                 @db.VarChar(255)
+  role                 user_role
+  isactive             Boolean?               @default(true)
+  emailverified        Boolean?               @default(false)
+  createdat            DateTime?              @default(now()) @db.Timestamp(6)
+  updatedat            DateTime?              @default(now()) @db.Timestamp(6)
+  bloodbanks           bloodbanks?
+  bloodrequests        bloodrequests[]
+  donors               donors?
+  hospitals            hospitals?
+  notification         notification[]
+  requesters           requesters?
+  requeststatushistory requeststatushistory[]
+
+  @@index([email], map: "idx_users_email")
+}
+
+enum approval_status {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum availability_status {
+  AVAILABLE
+  TEMPORARILY_UNAVAILABLE
+  PERMANENTLY_UNAVAILABLE
+}
+
+enum blood_component {
+  WHOLE_BLOOD
+  PLATELETS
+  PLASMA
+  RBC
+}
+
+enum blood_group {
+  A_POSITIVE  @map("A+")
+  A_NEGATIVE  @map("A-")
+  B_POSITIVE  @map("B+")
+  B_NEGATIVE  @map("B-")
+  AB_POSITIVE @map("AB+")
+  AB_NEGATIVE @map("AB-")
+  O_POSITIVE  @map("O+")
+  O_NEGATIVE  @map("O-")
+}
+
+enum coordination_status {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
+
+enum gender_type {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum notification_type {
+  REQUEST
+  MATCH
+  INVENTORY
+  VERIFICATION
+  SYSTEM
+}
+
+enum prescription_status {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum request_status {
+  CREATED
+  VERIFIED
+  HOSPITAL_REVIEW
+  BLOOD_BANK_CHECK
+  DONOR_MATCHING
+  BLOOD_ARRANGED
+  FULFILLED
+  CANCELLED
+  EXPIRED
+}
+
+enum urgency_level {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum user_role {
+  ADMIN
+  DONOR
+  REQUESTER
+  HOSPITAL
+  BLOOD_BANK
+}
+
+enum verification_status {
+  PENDING
+  VERIFIED
+  REJECTED
+}
