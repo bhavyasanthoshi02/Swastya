@@ -1,5 +1,8 @@
 import { Router } from "express";
 import { prisma } from "../config/prisma";
+import { authenticate } from "../middleware/auth.middleware";
+import { authorize } from "../middleware/role.middleware";
+import { checkBloodBankOwnership } from "../middleware/ownership.middleware";
 
 const router = Router();
 router.get("/", async (_req, res) => {
@@ -20,6 +23,65 @@ router.get("/", async (_req, res) => {
         });
     }
 });
+router.get(
+    "/:bloodBankId/dashboard",
+    authenticate,
+    authorize("BLOOD_BANK", "ADMIN"),
+    checkBloodBankOwnership,
+    async (req, res) => {
+        try {
+            const bloodBankId = req.params.bloodBankId as string;
+
+            const totalInventoryRecords = await prisma.inventory.count({
+                where: {
+                    bloodbankid: bloodBankId,
+                },
+            });
+
+            const totalUnitsAvailable = await prisma.inventory.aggregate({
+                where: {
+                    bloodbankid: bloodBankId,
+                },
+                _sum: {
+                    unitsavailable: true,
+                },
+            });
+
+            const totalUnitsReserved = await prisma.inventory.aggregate({
+                where: {
+                    bloodbankid: bloodBankId,
+                },
+                _sum: {
+                    unitsreserved: true,
+                },
+            });
+
+            const recentInventory = await prisma.inventory.findMany({
+                where: {
+                    bloodbankid: bloodBankId,
+                },
+                orderBy: {
+                    updatedat: "desc",
+                },
+                take: 5,
+            });
+
+            res.status(200).json({
+                totalInventoryRecords,
+                totalUnitsAvailable: totalUnitsAvailable._sum.unitsavailable ?? 0,
+                totalUnitsReserved: totalUnitsReserved._sum.unitsreserved ?? 0,
+                recentInventory,
+            });
+        } catch (error) {
+            console.error("Error loading blood bank dashboard:", error);
+
+            res.status(500).json({
+                success: false,
+                message: "Failed to load dashboard",
+            });
+        }
+    }
+);
 router.get("/:id", async (req, res) => {
     try {
         const bloodbank = await prisma.bloodbanks.findUnique({

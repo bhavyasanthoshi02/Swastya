@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { prisma } from "../config/prisma";
+import { authenticate } from "../middleware/auth.middleware";
 
 const router = Router();
 
@@ -7,7 +8,7 @@ const router = Router();
  * GET ALL USERS
  * GET /users
  */
-router.get("/", async (_req, res) => {
+router.get("/", authenticate, async (_req, res) => {
     try {
         const users = await prisma.users.findMany();
 

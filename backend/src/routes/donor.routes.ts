@@ -1,5 +1,8 @@
 import { Router } from "express";
 import { prisma } from "../config/prisma";
+import { authenticate } from "../middleware/auth.middleware";
+import { authorize } from "../middleware/role.middleware";
+import { checkDonorOwnership } from "../middleware/ownership.middleware";
 
 const router = Router();
 
@@ -21,6 +24,43 @@ router.get("/", async (_req, res) => {
         });
     }
 });
+router.get(
+    "/:donorId/dashboard",
+    authenticate,
+    authorize("DONOR", "ADMIN"),
+    checkDonorOwnership,
+    async (req, res) => {
+        try {
+            const donorId = req.params.donorId as string;
+
+            const donor = await prisma.donors.findUnique({
+                where: {
+                    donorid: donorId,
+                },
+                include: {
+                    users: true,
+                },
+            });
+
+            if (!donor) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Donor not found",
+                });
+            }
+
+            res.status(200).json({
+                donor,
+            });
+        } catch (error) {
+            console.error("Error loading donor dashboard:", error);
+
+            res.status(500).json({
+                success: false,
+                message: "Failed to load dashboard",
+            });
+        }
+    });
 router.get("/:id", async (req, res) => {
     try {
         const donor = await prisma.donors.findUnique({

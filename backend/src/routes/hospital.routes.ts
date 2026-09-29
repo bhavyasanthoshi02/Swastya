@@ -1,5 +1,8 @@
 import { Router } from "express";
 import { prisma } from "../config/prisma";
+import { authenticate } from "../middleware/auth.middleware";
+import { authorize } from "../middleware/role.middleware";
+import { checkHospitalOwnership } from "../middleware/ownership.middleware";
 
 const router = Router();
 router.get("/", async (_req, res) => {
@@ -20,6 +23,89 @@ router.get("/", async (_req, res) => {
         });
     }
 });
+router.get(
+    "/:hospitalId/dashboard",
+    authenticate,
+    authorize("HOSPITAL", "ADMIN"),
+    checkHospitalOwnership,
+    async (req, res) => {
+        try {
+            const hospitalId = req.params.hospitalId as string;
+
+            const totalRequests = await prisma.bloodrequests.count({
+                where: {
+                    hospitalid: hospitalId,
+                },
+            });
+
+            const emergencyRequests = await prisma.bloodrequests.count({
+                where: {
+                    hospitalid: hospitalId,
+                    isemergency: true,
+                },
+            });
+
+            const fulfilledRequests = await prisma.bloodrequests.count({
+                where: {
+                    hospitalid: hospitalId,
+                    status: "FULFILLED" as any,
+                },
+            });
+
+            const recentRequests = await prisma.bloodrequests.findMany({
+                where: {
+                    hospitalid: hospitalId,
+                },
+                orderBy: {
+                    createdat: "desc",
+                },
+                take: 5,
+            });
+
+            res.status(200).json({
+                totalRequests,
+                emergencyRequests,
+                fulfilledRequests,
+                recentRequests,
+            });
+        } catch (error) {
+            console.error("Error loading dashboard:", error);
+
+            res.status(500).json({
+                success: false,
+                message: "Failed to load dashboard",
+            });
+        }
+    }
+);
+router.get(
+    "/:hospitalId/bloodrequests",
+    authenticate,
+    authorize("HOSPITAL", "ADMIN"),
+    checkHospitalOwnership,
+    async (req, res) => {
+        try {
+            const hospitalId = req.params.hospitalId as string;
+
+            const bloodRequests = await prisma.bloodrequests.findMany({
+                where: {
+                    hospitalid: hospitalId,
+                },
+                orderBy: {
+                    createdat: "desc",
+                },
+            });
+
+            res.status(200).json(bloodRequests);
+        } catch (error) {
+            console.error("Error fetching hospital blood requests:", error);
+
+            res.status(500).json({
+                success: false,
+                message: "Failed to fetch blood requests",
+            });
+        }
+    });
 router.get("/:id", async (req, res) => {
     try {
         const hospital = await prisma.hospitals.findUnique({

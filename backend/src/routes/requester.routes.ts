@@ -1,5 +1,8 @@
 import { Router } from "express";
 import { prisma } from "../config/prisma";
+import { authenticate } from "../middleware/auth.middleware";
+import { authorize } from "../middleware/role.middleware";
+import { checkRequesterOwnership } from "../middleware/ownership.middleware";
 
 const router = Router();
 router.get("/", async (_req, res) => {
@@ -17,6 +20,85 @@ router.get("/", async (_req, res) => {
         res.status(500).json({
             success: false,
             message: "Failed to fetch requesters",
+        });
+    }
+}); router.get(
+    "/:requesterId/dashboard",
+    authenticate,
+    authorize("REQUESTER", "ADMIN"),
+    checkRequesterOwnership,
+    async (req, res) => {
+
+        try {
+            const requesterId = req.params.requesterId as string;
+
+            const totalRequests = await prisma.bloodrequests.count({
+                where: {
+                    requesterid: requesterId,
+                },
+            });
+
+            const activeRequests = await prisma.bloodrequests.count({
+                where: {
+                    requesterid: requesterId,
+                    status: {
+                        notIn: ["FULFILLED", "CANCELLED", "EXPIRED"],
+                    },
+                },
+            });
+
+            const completedRequests = await prisma.bloodrequests.count({
+                where: {
+                    requesterid: requesterId,
+                    status: "FULFILLED",
+                },
+            });
+
+            const recentRequests = await prisma.bloodrequests.findMany({
+                where: {
+                    requesterid: requesterId,
+                },
+                orderBy: {
+                    createdat: "desc",
+                },
+                take: 5,
+            });
+
+            res.status(200).json({
+                totalRequests,
+                activeRequests,
+                completedRequests,
+                recentRequests,
+            });
+        } catch (error) {
+            console.error("Error loading requester dashboard:", error);
+
+            res.status(500).json({
+                success: false,
+                message: "Failed to load dashboard",
+            });
+        }
+    });
+router.get("/:requesterId/bloodrequests", async (req, res) => {
+    try {
+        const requesterId = req.params.requesterId;
+
+        const bloodRequests = await prisma.bloodrequests.findMany({
+            where: {
+                requesterid: requesterId,
+            },
+            orderBy: {
+                createdat: "desc",
+            },
+        });
+
+        res.status(200).json(bloodRequests);
+    } catch (error) {
+        console.error("Error fetching requester blood requests:", error);
+
+        res.status(500).json({
+            success: false,
+            message: "Failed to fetch blood requests",
         });
     }
 });

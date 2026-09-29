@@ -7,6 +7,7 @@ import requesterRoutes from "./routes/requester.routes";
 import hospitalRoutes from "./routes/hospital.routes";
 import bloodbankRoutes from "./routes/bloodbank.routes";
 import bloodrequestRoutes from "./routes/bloodrequest.routes";
+import authRoutes from "./routes/auth.routes";
 const app = express();
 
 app.use(express.json());
@@ -19,4 +20,5 @@ app.use("/requesters", requesterRoutes);
 app.use("/hospitals", hospitalRoutes);
 app.use("/bloodbanks", bloodbankRoutes);
 app.use("/bloodrequests", bloodrequestRoutes);
+app.use("/auth", authRoutes);
 export default app
