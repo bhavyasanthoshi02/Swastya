@@ -80,6 +80,7 @@ router.get("/me", authenticate, async (req: Request, res: Response) => {
             where: { userid },
             include: {
                 donors: true,
+                requesters: true,
             },
         });
 
@@ -97,6 +98,7 @@ router.get("/me", authenticate, async (req: Request, res: Response) => {
             success: true,
             user: safeUser,
             donor: user.donors || null,
+            requester: user.requesters || null,
         });
     } catch (error) {
         console.error("Auth Me Error:", error);
@@ -293,7 +295,50 @@ router.post("/register", async (req: Request, res: Response) => {
             });
         }
 
-        // Non-donor registration
+        // When registering as a REQUESTER, atomically create linked requester record
+        if (targetRole === user_role.REQUESTER) {
+            const reqCity = (city || donorCity || (req.body as any).patientCity || "").trim() || "Not Specified";
+            const reqState = (state || donorState || "").trim() || "Not Specified";
+            const reqPincode = (pincode || donorPincode || "").trim() || "000000";
+            const reqAddress = (address || "").trim() || `${reqCity}, ${reqState}`;
+
+            const result = await prisma.$transaction(async (tx) => {
+                const user = await tx.users.create({
+                    data: {
+                        name: name.trim(),
+                        email: email.trim().toLowerCase(),
+                        phonenumber: contactNumber,
+                        password: hashedPassword,
+                        role: user_role.REQUESTER,
+                    },
+                });
+
+                const requester = await tx.requesters.create({
+                    data: {
+                        userid: user.userid,
+                        city: reqCity,
+                        state: reqState,
+                        pincode: reqPincode,
+                        address: reqAddress,
+                    },
+                });
+
+                return { user, requester };
+            });
+
+            const token = generateToken(result.user.userid, result.user.role);
+            const { password: _password, ...safeUser } = result.user;
+
+            return res.status(201).json({
+                success: true,
+                token,
+                user: safeUser,
+                donor: null,
+                requester: result.requester,
+            });
+        }
+
+        // Non-donor, non-requester registration (e.g. Hospital, Blood Bank)
         const user = await prisma.users.create({
             data: {
                 name: name.trim(),
@@ -312,6 +357,7 @@ router.post("/register", async (req: Request, res: Response) => {
             token,
             user: safeUser,
             donor: null,
+            requester: null,
         });
     } catch (error) {
         console.error("Register Error:", error);
@@ -344,6 +390,7 @@ router.post("/login", async (req: Request, res: Response) => {
             },
             include: {
                 donors: true,
+                requesters: true,
             },
         });
 
@@ -374,6 +421,7 @@ router.post("/login", async (req: Request, res: Response) => {
             token,
             user: safeUser,
             donor: user.donors || null,
+            requester: user.requesters || null,
         });
     } catch (error) {
         console.error("Login Error:", error);

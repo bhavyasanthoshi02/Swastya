@@ -1,8 +1,10 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
+import { getStoredUser, isAuthenticated } from "@/lib/auth";
 import {
   Activity,
   Heart,
@@ -17,7 +19,19 @@ import {
 } from "lucide-react";
 
 export default function DashboardPage() {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<"all" | "emergency" | "matching" | "fulfilled">("all");
+
+  useEffect(() => {
+    if (isAuthenticated()) {
+      const user = getStoredUser();
+      if (user?.role === "DONOR") {
+        router.replace("/donor/dashboard");
+      } else if (user?.role === "REQUESTER" || (user?.role as any) === "PATIENT") {
+        router.replace("/requester/dashboard");
+      }
+    }
+  }, [router]);
 
   const requests = [
     {

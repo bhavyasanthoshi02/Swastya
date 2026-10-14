@@ -194,3 +194,136 @@ export function mapBackendDonorToProfile(
     quietHours: false,
   };
 }
+
+export function mapBloodComponentToDisplay(component: string | null | undefined): string {
+  if (!component) return "Whole Blood";
+  const c = component.toUpperCase();
+  switch (c) {
+    case "WHOLE_BLOOD":
+      return "Whole Blood";
+    case "PLATELETS":
+      return "Platelets (PRP/SDP)";
+    case "PLASMA":
+      return "Fresh Frozen Plasma (FFP)";
+    case "RBC":
+      return "Packed Red Blood Cells (PRBC)";
+    default:
+      return component.replace(/_/g, " ");
+  }
+}
+
+export function mapRequestStatusToDisplay(status: string | null | undefined): {
+  label: string;
+  badgeClass: string;
+  dotClass: string;
+} {
+  if (!status) {
+    return {
+      label: "Created",
+      badgeClass: "bg-[#053845]/10 text-[#053845] border-[#053845]/20",
+      dotClass: "bg-[#053845]",
+    };
+  }
+
+  const s = status.toUpperCase();
+  switch (s) {
+    case "CREATED":
+      return {
+        label: "Request Created",
+        badgeClass: "bg-[#FAF6EE] text-[#053845] border-[#F3E9D1]",
+        dotClass: "bg-[#317786]",
+      };
+    case "VERIFIED":
+      return {
+        label: "Clinical Verified",
+        badgeClass: "bg-[#e8f3f5] text-[#317786] border-[#317786]/30",
+        dotClass: "bg-[#317786]",
+      };
+    case "HOSPITAL_REVIEW":
+      return {
+        label: "Hospital Review",
+        badgeClass: "bg-indigo-50 text-indigo-700 border-indigo-200",
+        dotClass: "bg-indigo-600",
+      };
+    case "BLOOD_BANK_CHECK":
+      return {
+        label: "Blood Bank Check",
+        badgeClass: "bg-amber-50 text-amber-800 border-amber-200",
+        dotClass: "bg-amber-600",
+      };
+    case "DONOR_MATCHING":
+      return {
+        label: "Donor Matching",
+        badgeClass: "bg-[#EFA27E]/20 text-[#B94F30] border-[#EFA27E]/40",
+        dotClass: "bg-[#B94F30]",
+      };
+    case "BLOOD_ARRANGED":
+      return {
+        label: "Blood Arranged",
+        badgeClass: "bg-teal-50 text-teal-800 border-teal-200",
+        dotClass: "bg-teal-600",
+      };
+    case "FULFILLED":
+      return {
+        label: "Fulfilled & Dispatched",
+        badgeClass: "bg-emerald-50 text-emerald-800 border-emerald-200",
+        dotClass: "bg-emerald-600",
+      };
+    case "CANCELLED":
+      return {
+        label: "Cancelled",
+        badgeClass: "bg-slate-100 text-slate-600 border-slate-200",
+        dotClass: "bg-slate-400",
+      };
+    case "EXPIRED":
+      return {
+        label: "Expired",
+        badgeClass: "bg-rose-50 text-rose-700 border-rose-200",
+        dotClass: "bg-rose-500",
+      };
+    default:
+      return {
+        label: status.replace(/_/g, " "),
+        badgeClass: "bg-slate-100 text-slate-700 border-slate-200",
+        dotClass: "bg-slate-500",
+      };
+  }
+}
+
+export function mapUrgencyBadge(urgency: string | null | undefined): {
+  label: string;
+  badgeClass: string;
+} {
+  if (!urgency) {
+    return {
+      label: "Standard",
+      badgeClass: "bg-slate-100 text-slate-700 border-slate-200",
+    };
+  }
+
+  const u = urgency.toUpperCase();
+  switch (u) {
+    case "CRITICAL":
+      return {
+        label: "Critical Emergency",
+        badgeClass: "bg-[#fdf2f2] text-[#A2363A] border-[#A2363A]/30 font-bold",
+      };
+    case "HIGH":
+      return {
+        label: "Urgent Requisition",
+        badgeClass: "bg-[#f9eee9] text-[#B94F30] border-[#B94F30]/30 font-semibold",
+      };
+    case "MEDIUM":
+      return {
+        label: "Priority Case",
+        badgeClass: "bg-[#e8f3f5] text-[#317786] border-[#317786]/30",
+      };
+    case "LOW":
+    default:
+      return {
+        label: "Standard",
+        badgeClass: "bg-slate-50 text-slate-600 border-slate-200",
+      };
+  }
+}
+

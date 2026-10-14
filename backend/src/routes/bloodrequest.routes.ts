@@ -55,16 +55,37 @@ router.get("/:id", async (req, res) => {
         });
     }
 });
-router.post("/", async (req, res) => {
+router.post("/", authenticate, async (req: Request, res: Response) => {
     try {
+        const user = (req as any).user;
+        let requesterId = req.body.requesterid;
+        let hospitalId = req.body.hospitalid;
+
+        // If authenticated user is a requester, resolve their canonical requester record
+        if (user.role === "REQUESTER" || user.role === "PATIENT") {
+            const requester = await prisma.requesters.findUnique({
+                where: { userid: user.userid },
+            });
+            if (requester) {
+                requesterId = requester.requesterid;
+            }
+        } else if (user.role === "HOSPITAL") {
+            const hospital = await prisma.hospitals.findUnique({
+                where: { userid: user.userid },
+            });
+            if (hospital) {
+                hospitalId = hospital.hospitalid;
+            }
+        }
+
         const bloodRequest = await prisma.bloodrequests.create({
             data: {
-                createdbyuserid: req.body.createdbyuserid,
-                requesterid: req.body.requesterid,
-                hospitalid: req.body.hospitalid,
+                createdbyuserid: user.userid,
+                requesterid: requesterId || null,
+                hospitalid: hospitalId || null,
 
                 patientname: req.body.patientname,
-                patientage: req.body.patientage,
+                patientage: typeof req.body.patientage === "number" ? req.body.patientage : parseInt(req.body.patientage, 10),
                 patientgender: req.body.patientgender,
 
                 patientcontact: req.body.patientcontact,
@@ -72,16 +93,16 @@ router.post("/", async (req, res) => {
                 bloodgroup: req.body.bloodgroup,
                 bloodcomponent: req.body.bloodcomponent,
 
-                unitsrequired: req.body.unitsrequired,
+                unitsrequired: typeof req.body.unitsrequired === "number" ? req.body.unitsrequired : parseInt(req.body.unitsrequired, 10),
 
                 urgencylevel: req.body.urgencylevel,
 
-                isemergency: req.body.isemergency,
-                searchradius: req.body.searchradius,
+                isemergency: req.body.isemergency !== undefined ? Boolean(req.body.isemergency) : false,
+                searchradius: req.body.searchradius ? parseInt(req.body.searchradius, 10) : 5,
 
-                requiredby: req.body.requiredby,
+                requiredby: new Date(req.body.requiredby),
 
-                notes: req.body.notes,
+                notes: req.body.notes || null,
             },
         });
 
@@ -95,32 +116,53 @@ router.post("/", async (req, res) => {
         });
     }
 });
-router.put("/:id", async (req, res) => {
+router.put("/:id", authenticate, async (req: Request, res: Response) => {
     try {
+        const user = (req as any).user;
+        const targetId = (Array.isArray(req.params.id) ? req.params.id[0] : req.params.id) as string;
+
+        const existing = await prisma.bloodrequests.findUnique({
+            where: { requestid: targetId },
+        });
+
+        if (!existing) {
+            return res.status(404).json({
+                success: false,
+                message: "Blood request not found",
+            });
+        }
+
+        if (existing.createdbyuserid !== user.userid && user.role !== "ADMIN") {
+            return res.status(403).json({
+                success: false,
+                message: "Access denied: you do not own this blood request",
+            });
+        }
+
         const bloodRequest = await prisma.bloodrequests.update({
             where: {
-                requestid: req.params.id,
+                requestid: targetId,
             },
             data: {
-                patientname: req.body.patientname,
-                patientage: req.body.patientage,
-                patientgender: req.body.patientgender,
-                patientcontact: req.body.patientcontact,
+                patientname: req.body.patientname !== undefined ? req.body.patientname : existing.patientname,
+                patientage: req.body.patientage !== undefined ? parseInt(req.body.patientage, 10) : existing.patientage,
+                patientgender: req.body.patientgender !== undefined ? req.body.patientgender : existing.patientgender,
+                patientcontact: req.body.patientcontact !== undefined ? req.body.patientcontact : existing.patientcontact,
 
-                bloodgroup: req.body.bloodgroup,
-                bloodcomponent: req.body.bloodcomponent,
+                bloodgroup: req.body.bloodgroup !== undefined ? req.body.bloodgroup : existing.bloodgroup,
+                bloodcomponent: req.body.bloodcomponent !== undefined ? req.body.bloodcomponent : existing.bloodcomponent,
 
-                unitsrequired: req.body.unitsrequired,
-                urgencylevel: req.body.urgencylevel,
+                unitsrequired: req.body.unitsrequired !== undefined ? parseInt(req.body.unitsrequired, 10) : existing.unitsrequired,
+                urgencylevel: req.body.urgencylevel !== undefined ? req.body.urgencylevel : existing.urgencylevel,
 
-                isemergency: req.body.isemergency,
-                searchradius: req.body.searchradius,
+                isemergency: req.body.isemergency !== undefined ? Boolean(req.body.isemergency) : existing.isemergency,
+                searchradius: req.body.searchradius !== undefined ? parseInt(req.body.searchradius, 10) : existing.searchradius,
 
-                requiredby: req.body.requiredby,
+                requiredby: req.body.requiredby !== undefined ? new Date(req.body.requiredby) : existing.requiredby,
 
-                status: req.body.status,
+                status: req.body.status !== undefined ? req.body.status : existing.status,
 
-                notes: req.body.notes,
+                notes: req.body.notes !== undefined ? req.body.notes : existing.notes,
             },
         });
 
@@ -134,11 +176,32 @@ router.put("/:id", async (req, res) => {
         });
     }
 });
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", authenticate, async (req: Request, res: Response) => {
     try {
+        const user = (req as any).user;
+        const targetId = (Array.isArray(req.params.id) ? req.params.id[0] : req.params.id) as string;
+
+        const existing = await prisma.bloodrequests.findUnique({
+            where: { requestid: targetId },
+        });
+
+        if (!existing) {
+            return res.status(404).json({
+                success: false,
+                message: "Blood request not found",
+            });
+        }
+
+        if (existing.createdbyuserid !== user.userid && user.role !== "ADMIN") {
+            return res.status(403).json({
+                success: false,
+                message: "Access denied: you do not own this blood request",
+            });
+        }
+
         await prisma.bloodrequests.delete({
             where: {
-                requestid: req.params.id,
+                requestid: targetId,
             },
         });
 

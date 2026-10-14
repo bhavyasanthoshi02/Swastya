@@ -1,4 +1,4 @@
-import { getAuthToken, clearAuthToken, AuthUser, AuthDonor } from "./auth";
+import { getAuthToken, clearAuthToken, AuthUser, AuthDonor, AuthRequester } from "./auth";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL?.replace(/\/+$/, "") || "http://localhost:5000";
@@ -17,6 +17,58 @@ export class ApiError extends Error {
 
 interface RequestOptions extends RequestInit {
   params?: Record<string, string | number | boolean | undefined>;
+}
+
+export interface BloodRequestItem {
+  requestid: string;
+  createdbyuserid: string;
+  requesterid: string | null;
+  hospitalid: string | null;
+  patientname: string;
+  patientage: number;
+  patientgender: "MALE" | "FEMALE" | "OTHER" | string;
+  patientcontact: string;
+  bloodgroup: string;
+  bloodcomponent: string;
+  unitsrequired: number;
+  urgencylevel: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL" | string;
+  isemergency: boolean | null;
+  searchradius: number | null;
+  requiredby: string;
+  status:
+    | "CREATED"
+    | "VERIFIED"
+    | "HOSPITAL_REVIEW"
+    | "BLOOD_BANK_CHECK"
+    | "DONOR_MATCHING"
+    | "BLOOD_ARRANGED"
+    | "FULFILLED"
+    | "CANCELLED"
+    | "EXPIRED"
+    | string;
+  notes: string | null;
+  createdat: string;
+  updatedat: string;
+  users?: AuthUser;
+  requesters?: AuthRequester;
+  hospitals?: any;
+}
+
+export interface CreateBloodRequestDto {
+  patientname: string;
+  patientage: number;
+  patientgender: "MALE" | "FEMALE" | "OTHER" | string;
+  patientcontact: string;
+  bloodgroup: string;
+  bloodcomponent: string;
+  unitsrequired: number;
+  urgencylevel: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL" | string;
+  isemergency?: boolean;
+  searchradius?: number;
+  requiredby: string;
+  notes?: string;
+  requesterid?: string;
+  hospitalid?: string;
 }
 
 async function request<T = any>(endpoint: string, options: RequestOptions = {}): Promise<T> {
@@ -127,6 +179,7 @@ export const api = {
         token: string;
         user: AuthUser;
         donor: AuthDonor | null;
+        requester: AuthRequester | null;
         message?: string;
       }>("/auth/login", credentials),
 
@@ -136,6 +189,7 @@ export const api = {
         token: string;
         user: AuthUser;
         donor: AuthDonor | null;
+        requester: AuthRequester | null;
         message?: string;
       }>("/auth/register", userData),
 
@@ -144,7 +198,61 @@ export const api = {
         success: boolean;
         user: AuthUser;
         donor: AuthDonor | null;
+        requester: AuthRequester | null;
       }>("/auth/me"),
+  },
+
+  requester: {
+    getDashboard: () =>
+      api.get<{
+        success: boolean;
+        requester: AuthRequester;
+        totalRequests: number;
+        activeRequests: number;
+        completedRequests: number;
+        recentRequests: BloodRequestItem[];
+      }>("/requesters/me/dashboard"),
+
+    getProfile: () =>
+      api.get<{
+        success: boolean;
+        requester: AuthRequester & { users?: AuthUser };
+      }>("/requesters/me"),
+
+    updateProfile: (data: {
+      address?: string;
+      city?: string;
+      state?: string;
+      pincode?: string;
+      latitude?: number;
+      longitude?: number;
+    }) =>
+      api.put<{
+        success: boolean;
+        message: string;
+        requester: AuthRequester;
+      }>("/requesters/me", data),
+
+    getBloodRequests: () =>
+      api.get<{
+        success: boolean;
+        bloodRequests: BloodRequestItem[];
+      }>("/requesters/me/bloodrequests"),
+  },
+
+  bloodRequests: {
+    getAll: () => api.get<BloodRequestItem[]>("/bloodrequests"),
+
+    getById: (id: string) => api.get<BloodRequestItem>(`/bloodrequests/${id}`),
+
+    create: (data: CreateBloodRequestDto) =>
+      api.post<BloodRequestItem>("/bloodrequests", data),
+
+    update: (id: string, data: Partial<CreateBloodRequestDto>) =>
+      api.put<BloodRequestItem>(`/bloodrequests/${id}`, data),
+
+    delete: (id: string) =>
+      api.delete<{ success: boolean; message: string }>(`/bloodrequests/${id}`),
   },
 
   donor: {

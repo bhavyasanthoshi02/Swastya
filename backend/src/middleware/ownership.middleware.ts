@@ -99,9 +99,10 @@ export const checkRequesterOwnership = async (
             return next();
         }
 
+        const requesterId = (req.params.requesterId || req.params.id) as string;
         const requester = await prisma.requesters.findUnique({
             where: {
-                requesterid: req.params.requesterId as string,
+                requesterid: requesterId,
             },
         });
 

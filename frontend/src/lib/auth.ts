@@ -5,7 +5,7 @@ export interface AuthUser {
   name: string;
   email: string;
   phonenumber: string | null;
-  role: "DONOR" | "HOSPITAL" | "BLOOD_BANK" | "PATIENT" | "ADMIN";
+  role: "DONOR" | "REQUESTER" | "HOSPITAL" | "BLOOD_BANK" | "PATIENT" | "ADMIN";
   createdat?: string;
   updatedat?: string;
 }
@@ -27,9 +27,23 @@ export interface AuthDonor {
   updatedat?: string;
 }
 
+export interface AuthRequester {
+  requesterid: string;
+  userid: string;
+  address: string;
+  city: string;
+  state: string;
+  pincode: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  createdat?: string;
+  updatedat?: string;
+}
+
 const TOKEN_KEY = "swastya_auth_token";
 const USER_KEY = "swastya_auth_user";
 const DONOR_KEY = "swastya_auth_donor";
+const REQUESTER_KEY = "swastya_auth_requester";
 
 export const getAuthToken = (): string | null => {
   if (typeof window === "undefined") return null;
@@ -47,7 +61,9 @@ export const clearAuthToken = (): void => {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(USER_KEY);
   localStorage.removeItem(DONOR_KEY);
+  localStorage.removeItem(REQUESTER_KEY);
   sessionStorage.removeItem("swastya_donor_profile");
+  sessionStorage.removeItem("swastya_requester_profile");
   window.dispatchEvent(new Event("swastya-auth-change"));
 };
 
@@ -62,7 +78,11 @@ export const getStoredUser = (): AuthUser | null => {
   }
 };
 
-export const setStoredUser = (user: AuthUser, donor?: AuthDonor | null): void => {
+export const setStoredUser = (
+  user: AuthUser,
+  donor?: AuthDonor | null,
+  requester?: AuthRequester | null
+): void => {
   if (typeof window === "undefined") return;
   localStorage.setItem(USER_KEY, JSON.stringify(user));
   if (donor) {
@@ -70,12 +90,30 @@ export const setStoredUser = (user: AuthUser, donor?: AuthDonor | null): void =>
   } else {
     localStorage.removeItem(DONOR_KEY);
   }
+
+  if (requester) {
+    localStorage.setItem(REQUESTER_KEY, JSON.stringify(requester));
+  } else {
+    localStorage.removeItem(REQUESTER_KEY);
+  }
+
   window.dispatchEvent(new Event("swastya-auth-change"));
 };
 
 export const getStoredDonor = (): AuthDonor | null => {
   if (typeof window === "undefined") return null;
   const raw = localStorage.getItem(DONOR_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+};
+
+export const getStoredRequester = (): AuthRequester | null => {
+  if (typeof window === "undefined") return null;
+  const raw = localStorage.getItem(REQUESTER_KEY);
   if (!raw) return null;
   try {
     return JSON.parse(raw);

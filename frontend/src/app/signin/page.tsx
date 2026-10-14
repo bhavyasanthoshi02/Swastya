@@ -55,10 +55,12 @@ function SignInForm() {
 
       if (res.success && res.token) {
         setAuthToken(res.token);
-        setStoredUser(res.user, res.donor);
+        setStoredUser(res.user, res.donor, res.requester);
 
         if (res.user.role === "DONOR") {
           router.push("/donor/dashboard");
+        } else if (res.user.role === "REQUESTER" || (res.user.role as any) === "PATIENT") {
+          router.push("/requester/dashboard");
         } else {
           router.push("/dashboard");
         }
