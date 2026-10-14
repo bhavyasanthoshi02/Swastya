@@ -23,7 +23,11 @@ import {
   FileBadge,
   Briefcase,
   Check,
+  AlertCircle,
+  Loader2,
 } from "lucide-react";
+import { api } from "@/lib/api";
+import { setAuthToken, setStoredUser } from "@/lib/auth";
 
 type RoleType = "donor" | "hospital" | "bloodbank" | "patient";
 
@@ -87,6 +91,7 @@ export default function SignUpPage() {
   // Donor-Specific Fields
   const [dob, setDob] = useState("");
   const [bloodGroup, setBloodGroup] = useState("O+");
+  const [gender, setGender] = useState<"MALE" | "FEMALE" | "OTHER">("MALE");
   const [donorState, setDonorState] = useState("");
   const [donorCity, setDonorCity] = useState("");
   const [donorPincode, setDonorPincode] = useState("");
@@ -103,14 +108,127 @@ export default function SignUpPage() {
   // Patient / Requester Fields
   const [patientCity, setPatientCity] = useState("");
 
+  // Form error and loading states
+  const [isLoading, setIsLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
   const handleContinueToForm = () => {
+    setErrorMessage(null);
     setStep("form");
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Frontend-only: proceed directly to next page (dashboard)
-    router.push("/dashboard");
+    setErrorMessage(null);
+
+    // Validation
+    const nameToSubmit = role === "hospital" || role === "bloodbank"
+      ? (fullName.trim() || orgName.trim())
+      : fullName.trim();
+
+    if (!nameToSubmit) {
+      setErrorMessage("Full name is required");
+      return;
+    }
+
+    if (!email.trim() || !email.includes("@")) {
+      setErrorMessage("A valid email address is required");
+      return;
+    }
+
+    if (!phone.trim()) {
+      setErrorMessage("Contact phone number is required");
+      return;
+    }
+
+    if (!password || password.length < 6) {
+      setErrorMessage("Password must be at least 6 characters long");
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      setErrorMessage("Passwords do not match");
+      return;
+    }
+
+    if (!agreeTerms) {
+      setErrorMessage("Please accept the Terms of Service to proceed");
+      return;
+    }
+
+    if (role === "donor") {
+      if (!dob) {
+        setErrorMessage("Date of birth is required for clinical donor registration");
+        return;
+      }
+      if (!gender) {
+        setErrorMessage("Please select your gender");
+        return;
+      }
+      if (!donorCity.trim()) {
+        setErrorMessage("City is required");
+        return;
+      }
+      if (!donorState.trim()) {
+        setErrorMessage("State is required");
+        return;
+      }
+      if (!donorPincode.trim()) {
+        setErrorMessage("Area PIN code is required");
+        return;
+      }
+    }
+
+    const roleMap: Record<RoleType, string> = {
+      donor: "DONOR",
+      hospital: "HOSPITAL",
+      bloodbank: "BLOOD_BANK",
+      patient: "PATIENT",
+    };
+
+    const payload: any = {
+      name: nameToSubmit,
+      email: email.trim(),
+      password,
+      phone: phone.trim(),
+      role: roleMap[role],
+    };
+
+    if (role === "donor") {
+      payload.bloodGroup = bloodGroup;
+      payload.dob = dob;
+      payload.gender = gender;
+      payload.city = donorCity.trim();
+      payload.state = donorState.trim();
+      payload.pincode = donorPincode.trim();
+    } else if (role === "hospital" || role === "bloodbank") {
+      payload.address = address.trim() || undefined;
+      payload.city = instCity.trim() || undefined;
+      payload.state = instState.trim() || undefined;
+      payload.pincode = instPincode.trim() || undefined;
+    }
+
+    try {
+      setIsLoading(true);
+      const res = await api.auth.register(payload);
+
+      if (res.success && res.token) {
+        setAuthToken(res.token);
+        setStoredUser(res.user, res.donor);
+
+        if (res.user.role === "DONOR") {
+          router.push("/donor/dashboard");
+        } else {
+          router.push("/dashboard");
+        }
+      } else {
+        setErrorMessage(res.message || "Registration failed. Please check your details.");
+      }
+    } catch (err: any) {
+      setErrorMessage(err?.message || "Registration failed. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const activeRoleConfig = ROLES.find((r) => r.id === role)!;
@@ -292,6 +410,17 @@ export default function SignUpPage() {
                 </button>
               </div>
 
+              {/* Error Message Alert */}
+              {errorMessage && (
+                <div className="mb-4 p-3 rounded-lg bg-[#fdf2f2] border border-[#A2363A]/30 flex items-start gap-2.5 text-xs sm:text-sm text-[#A2363A]">
+                  <AlertCircle className="w-4 h-4 text-[#A2363A] flex-shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-semibold block">Registration Error</span>
+                    <span className="text-slate-700">{errorMessage}</span>
+                  </div>
+                </div>
+              )}
+
               <form onSubmit={handleSubmit} noValidate className="space-y-3">
                 {/* ROLE 1: DONOR */}
                 {role === "donor" && (
@@ -354,6 +483,23 @@ export default function SignUpPage() {
                         </div>
                       </div>
 
+                      <div>
+                        <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-700 mb-1">
+                          Gender
+                        </label>
+                        <select
+                          value={gender}
+                          onChange={(e) => setGender(e.target.value as "MALE" | "FEMALE" | "OTHER")}
+                          className="w-full px-3 py-2 text-xs sm:text-sm rounded-lg border border-slate-200 bg-white text-slate-800 focus:outline-none focus:border-[#317786] focus:ring-2 focus:ring-[#317786]/20 cursor-pointer"
+                        >
+                          <option value="MALE">Male</option>
+                          <option value="FEMALE">Female</option>
+                          <option value="OTHER">Other</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
                         <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-700 mb-1">
                           City
@@ -851,9 +997,11 @@ export default function SignUpPage() {
                 <div className="pt-2">
                   <button
                     type="submit"
-                    className="w-full py-2.5 px-4 rounded-xl font-medium text-xs sm:text-sm text-white bg-[#317786] hover:bg-[#245964] active:bg-[#1b444c] shadow-xs hover:shadow transition-all focus:outline-none focus:ring-2 focus:ring-[#317786] focus:ring-offset-2 cursor-pointer"
+                    disabled={isLoading}
+                    className="w-full py-2.5 px-4 rounded-xl font-medium text-xs sm:text-sm text-white bg-[#317786] hover:bg-[#245964] active:bg-[#1b444c] disabled:opacity-60 disabled:cursor-not-allowed shadow-xs hover:shadow transition-all focus:outline-none focus:ring-2 focus:ring-[#317786] focus:ring-offset-2 cursor-pointer flex items-center justify-center gap-2"
                   >
-                    Create {activeRoleConfig.title} Account
+                    {isLoading && <Loader2 className="w-4 h-4 animate-spin" />}
+                    <span>{isLoading ? "Creating Account..." : `Create ${activeRoleConfig.title} Account`}</span>
                   </button>
                 </div>
               </form>

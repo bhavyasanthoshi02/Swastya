@@ -6,19 +6,14 @@ import Image from "next/image";
 import {
   Activity,
   Heart,
-  Building2,
   Building,
-  Users,
   Search,
   PlusCircle,
   Bell,
   LogOut,
-  Clock,
   CheckCircle2,
-  ShieldCheck,
   Droplet,
   ArrowRight,
-  Filter,
 } from "lucide-react";
 
 export default function DashboardPage() {
@@ -133,6 +128,22 @@ export default function DashboardPage() {
       {/* Main Dashboard Content */}
       <main className="flex-grow py-6 sm:py-8 px-4 sm:px-6 lg:px-8">
         <div className="max-w-7xl mx-auto space-y-6">
+          {/* Voluntary Donor Portal Switcher Banner */}
+          <div className="bg-[#FAF6EE] rounded-xl border border-[#F3E9D1] p-3.5 px-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-2.5">
+              <span className="w-2 h-2 rounded-full bg-[#317786]" />
+              <span className="text-slate-600">
+                Registered as a voluntary blood donor? Access your personalized Donor Dashboard:
+              </span>
+            </div>
+            <Link
+              href="/donor/dashboard"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#317786] text-white font-semibold hover:bg-[#245964] transition-colors self-start sm:self-auto flex-shrink-0"
+            >
+              Open Donor Dashboard →
+            </Link>
+          </div>
+
           {/* Welcome Banner */}
           <div className="bg-white rounded-2xl border border-[#F3E9D1] shadow-xs p-6 sm:p-8 flex flex-col md:flex-row md:items-center justify-between gap-6">
             <div className="space-y-1.5 max-w-2xl">

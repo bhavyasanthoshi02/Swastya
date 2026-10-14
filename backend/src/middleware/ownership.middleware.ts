@@ -56,9 +56,10 @@ export const checkDonorOwnership = async (
             return next();
         }
 
+        const donorId = (req.params.donorId || req.params.id) as string;
         const donor = await prisma.donors.findUnique({
             where: {
-                donorid: req.params.donorId as string,
+                donorid: donorId,
             },
         });
 

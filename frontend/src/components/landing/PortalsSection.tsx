@@ -23,7 +23,7 @@ const portals = [
     description:
       "Manage eligibility information, availability schedules, and emergency notifications.",
     linkText: "Access Donor Portal",
-    href: "#login-donor",
+    href: "/donor/dashboard",
   },
   {
     category: "Patients & Families",

@@ -1,23 +1,75 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect, Suspense } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { Mail, Lock, Eye, EyeOff, ArrowLeft, ShieldCheck, Building2, HeartHandshake, CheckCircle2 } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Mail, Lock, Eye, EyeOff, ArrowLeft, ShieldCheck, Building2, HeartHandshake, CheckCircle2, AlertCircle, Loader2 } from "lucide-react";
+import { api } from "@/lib/api";
+import { setAuthToken, setStoredUser } from "@/lib/auth";
 
-export default function SignInPage() {
+function SignInForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  useEffect(() => {
+    if (searchParams.get("session") === "expired") {
+      setStatusMessage("Your session has expired. Please sign in again to continue.");
+    }
+  }, [searchParams]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    router.push("/dashboard");
+    setErrorMessage(null);
+
+    const newErrors: { email?: string; password?: string } = {};
+    if (!email.trim()) {
+      newErrors.email = "Email is required";
+    } else if (!email.includes("@")) {
+      newErrors.email = "Please enter a valid email address";
+    }
+
+    if (!password) {
+      newErrors.password = "Password is required";
+    }
+
+    if (Object.keys(newErrors).length > 0) {
+      setErrors(newErrors);
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      const res = await api.auth.login({
+        email: email.trim(),
+        password,
+      });
+
+      if (res.success && res.token) {
+        setAuthToken(res.token);
+        setStoredUser(res.user, res.donor);
+
+        if (res.user.role === "DONOR") {
+          router.push("/donor/dashboard");
+        } else {
+          router.push("/dashboard");
+        }
+      } else {
+        setErrorMessage(res.message || "Failed to sign in. Please verify your credentials.");
+      }
+    } catch (err: any) {
+      setErrorMessage(err?.message || "Failed to connect to Swastya server. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -115,6 +167,17 @@ export default function SignInPage() {
                   <div>
                     <span className="font-semibold block">Notice</span>
                     <span className="text-slate-600">{statusMessage}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Error Message Notification */}
+              {errorMessage && (
+                <div className="mb-3.5 p-3 rounded-lg bg-[#fdf2f2] border border-[#A2363A]/30 flex items-start gap-2.5 text-xs sm:text-sm text-[#A2363A]">
+                  <AlertCircle className="w-4 h-4 text-[#A2363A] flex-shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-semibold block">Sign In Failed</span>
+                    <span className="text-slate-700">{errorMessage}</span>
                   </div>
                 </div>
               )}
@@ -218,9 +281,11 @@ export default function SignInPage() {
                 {/* Submit Button */}
                 <button
                   type="submit"
-                  className="w-full py-2.5 px-4 rounded-lg font-medium text-xs sm:text-sm text-white bg-[#317786] hover:bg-[#245964] active:bg-[#1b444c] shadow-sm hover:shadow transition-all focus:outline-none focus:ring-2 focus:ring-[#317786] focus:ring-offset-2 cursor-pointer"
+                  disabled={isLoading}
+                  className="w-full py-2.5 px-4 rounded-lg font-medium text-xs sm:text-sm text-white bg-[#317786] hover:bg-[#245964] active:bg-[#1b444c] disabled:opacity-60 disabled:cursor-not-allowed shadow-sm hover:shadow transition-all focus:outline-none focus:ring-2 focus:ring-[#317786] focus:ring-offset-2 cursor-pointer flex items-center justify-center gap-2"
                 >
-                  Sign In
+                  {isLoading && <Loader2 className="w-4 h-4 animate-spin" />}
+                  <span>{isLoading ? "Signing in..." : "Sign In"}</span>
                 </button>
               </form>
 
@@ -252,5 +317,19 @@ export default function SignInPage() {
         <p>© 2026 Swastya Health Systems. All rights reserved. Platform designed solely for coordination support.</p>
       </footer>
     </div>
+  );
+}
+
+export default function SignInPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-[#FAF6EE] flex items-center justify-center">
+          <Loader2 className="w-8 h-8 text-[#317786] animate-spin" />
+        </div>
+      }
+    >
+      <SignInForm />
+    </Suspense>
   );
 }

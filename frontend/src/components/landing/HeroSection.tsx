@@ -1,5 +1,5 @@
 import React from "react";
-import { LotusIcon } from "./Logo";
+import { LotusIcon } from "@/components/Logo";
 
 export function HeroSection() {
   return (

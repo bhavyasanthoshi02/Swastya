@@ -1,7 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
-
-const JWT_SECRET = process.env.JWT_SECRET || "swastya-secret";
+import { getJwtSecret } from "../utils/jwt";
 
 export const authenticate = (
     req: Request,
@@ -11,7 +10,7 @@ export const authenticate = (
     try {
         const authHeader = req.headers.authorization;
 
-        if (!authHeader) {
+        if (!authHeader || !authHeader.startsWith("Bearer ")) {
             return res.status(401).json({
                 success: false,
                 message: "Token missing",
@@ -20,7 +19,25 @@ export const authenticate = (
 
         const token = authHeader.split(" ")[1];
 
-        const decoded = jwt.verify(token, JWT_SECRET);
+        if (!token || token.trim() === "") {
+            return res.status(401).json({
+                success: false,
+                message: "Token missing",
+            });
+        }
+
+        let secret: string;
+        try {
+            secret = getJwtSecret();
+        } catch (configError) {
+            console.error("JWT Configuration Error:", (configError as Error).message);
+            return res.status(500).json({
+                success: false,
+                message: "Authentication server configuration error",
+            });
+        }
+
+        const decoded = jwt.verify(token, secret);
 
         (req as any).user = decoded;
 
