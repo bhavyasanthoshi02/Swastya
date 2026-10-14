@@ -187,14 +187,14 @@ export function DonorTopNav({
                 <Link
                   key={link.href}
                   href={link.href}
-                  className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all ${
+                  className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
                     isActive
-                      ? "text-[#053845] bg-[#FAF6EE] border border-[#F3E9D1] shadow-2xs"
+                      ? "text-[#053845] bg-[#FAF6EE] border border-[#F3E9D1] shadow-2xs font-bold"
                       : "text-slate-600 hover:text-[#053845] hover:bg-[#FAF6EE]/70"
                   }`}
                 >
-                  <Icon className="w-3.5 h-3.5" />
-                  <span>{link.label}</span>
+                  <Icon className="w-3.5 h-3.5 shrink-0" />
+                  <span className="whitespace-nowrap">{link.label}</span>
                   {link.badge && (
                     <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-[#A2363A]/10 text-[#A2363A] border border-[#A2363A]/20">
                       {link.badge}

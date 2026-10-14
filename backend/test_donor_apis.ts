@@ -265,6 +265,14 @@ async function runLiveTests() {
         const reqRecord = await prisma.bloodrequests.findFirst();
         assert.ok(reqRecord, "Blood request must exist in DB");
 
+        // Clean up any previous test run response for idempotency
+        await prisma.notification.deleteMany({
+            where: {
+                requestid: reqRecord.requestid,
+                userid: realDonor.userid,
+            },
+        });
+
         const res = await makeRequest(server, {
             path: `/bloodrequests/${reqRecord.requestid}/respond`,
             method: "POST",

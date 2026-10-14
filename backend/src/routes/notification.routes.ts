@@ -60,7 +60,11 @@ router.get("/", authenticate, async (req: Request, res: Response) => {
             unreadCount,
             page,
             limit,
-            notifications,
+            notifications: notifications.map((n) => ({
+                ...n,
+                message: n.message.replace(/<!--META:[\s\S]*?-->/g, "").trim(),
+                createdat: n.sentat,
+            })),
         });
     } catch (error) {
         console.error("Error fetching notifications:", error);
@@ -79,6 +83,14 @@ router.patch("/:id/read", authenticate, async (req: Request, res: Response) => {
     try {
         const user = (req as any).user;
         const notificationId = (Array.isArray(req.params.id) ? req.params.id[0] : req.params.id) as string;
+
+        const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+        if (!notificationId || !UUID_REGEX.test(notificationId)) {
+            return res.status(404).json({
+                success: false,
+                message: "Notification not found",
+            });
+        }
 
         const notification = await prisma.notification.findUnique({
             where: {
@@ -165,6 +177,14 @@ router.delete("/:id", authenticate, async (req: Request, res: Response) => {
     try {
         const user = (req as any).user;
         const notificationId = (Array.isArray(req.params.id) ? req.params.id[0] : req.params.id) as string;
+
+        const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+        if (!notificationId || !UUID_REGEX.test(notificationId)) {
+            return res.status(404).json({
+                success: false,
+                message: "Notification not found",
+            });
+        }
 
         const notification = await prisma.notification.findUnique({
             where: {

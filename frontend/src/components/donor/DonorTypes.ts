@@ -37,6 +37,7 @@ export interface RequestPreviewItem {
   contactPhone?: string;
   requiredWithin?: string;
   patientAgeGroup?: string;
+  hasResponded?: boolean;
 }
 
 export interface RecentActivityItem {

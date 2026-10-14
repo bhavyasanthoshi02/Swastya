@@ -199,28 +199,20 @@ export function MatchingRequestsPreview({
                     <span>Details</span>
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={() => handleRespond(item.id)}
-                    disabled={hasResponded}
-                    className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer shadow-2xs ${
-                      hasResponded
-                        ? "bg-emerald-50 text-emerald-700 border border-emerald-200 cursor-default"
-                        : "bg-[#317786] hover:bg-[#245964] text-white"
-                    }`}
-                  >
-                    {hasResponded ? (
-                      <>
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                        <span>Response Sent</span>
-                      </>
-                    ) : (
-                      <>
-                        <Heart className="w-3.5 h-3.5 fill-current" />
-                        <span>Can Donate</span>
-                      </>
-                    )}
-                  </button>
+                  {hasResponded ? (
+                    <div className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Response Sent</span>
+                    </div>
+                  ) : (
+                    <Link
+                      href={`/donor/requests/${item.rawId || item.id.replace(/^REQ-/, "")}/donate`}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold bg-[#317786] hover:bg-[#245964] text-white transition-all cursor-pointer shadow-2xs"
+                    >
+                      <Heart className="w-3.5 h-3.5 fill-current" />
+                      <span>I Can Donate</span>
+                    </Link>
+                  )}
                 </div>
               </div>
             );

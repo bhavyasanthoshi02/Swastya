@@ -100,6 +100,15 @@ export const checkRequesterOwnership = async (
         }
 
         const requesterId = (req.params.requesterId || req.params.id) as string;
+
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (!requesterId || !uuidRegex.test(requesterId)) {
+            return res.status(404).json({
+                success: false,
+                message: "Requester not found",
+            });
+        }
+
         const requester = await prisma.requesters.findUnique({
             where: {
                 requesterid: requesterId,

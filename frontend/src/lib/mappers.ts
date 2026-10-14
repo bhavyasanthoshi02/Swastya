@@ -91,12 +91,13 @@ export function formatDate(dateInput: string | Date | null | undefined): string 
 
 export function mapBackendRequestToPreview(req: any): RequestPreviewItem {
   const hospitalName =
+    req.hospitals?.hospitalname ||
     req.hospital?.name ||
     req.bloodbank?.name ||
     (req.patientname ? `Care Facility (${req.patientname})` : "Certified Regional Hospital");
 
-  const address = req.hospital?.address || req.bloodbank?.address || "";
-  const city = req.hospital?.city || req.bloodbank?.city || "";
+  const address = req.hospitals?.address || req.hospital?.address || req.bloodbank?.address || "";
+  const city = req.hospitals?.city || req.hospital?.city || req.bloodbank?.city || "";
   const location = [address, city].filter(Boolean).join(", ") || "City Medical Center";
 
   return {
@@ -113,14 +114,17 @@ export function mapBackendRequestToPreview(req: any): RequestPreviewItem {
     caseDetails:
       req.notes ||
       `Immediate voluntary whole blood requested for patient ${req.patientname || "in hospital care"}.`,
-    contactPerson: req.contactperson || "Hospital Transfusion Coordinator",
-    contactPhone: req.contactphone || "+91 Regional Helpline",
-    requiredWithin: req.requireddate
+    contactPerson: req.hospitals?.contactpersonname || req.contactperson || "Hospital Transfusion Coordinator",
+    contactPhone: req.hospitals?.contactpersonphone || req.contactphone || "+91 Regional Helpline",
+    requiredWithin: req.requiredby
+      ? `By ${formatDate(req.requiredby)}`
+      : req.requireddate
       ? `By ${formatDate(req.requireddate)}`
       : req.urgencylevel === "CRITICAL"
       ? "Immediate Emergency"
       : "Within 24 hours",
     patientAgeGroup: req.patientname ? `Patient: ${req.patientname}` : "Clinical Care Requisition",
+    hasResponded: Boolean(req.hasResponded),
   };
 }
 

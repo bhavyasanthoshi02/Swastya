@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   X,
   MapPin,
@@ -27,15 +28,15 @@ export function RequestDetailModal({
   onConfirmDonation,
   hasResponded = false,
 }: RequestDetailModalProps) {
+  const router = useRouter();
   const [confirmed, setConfirmed] = useState(hasResponded);
 
   if (!request) return null;
 
   const handleRespond = () => {
-    setConfirmed(true);
-    if (onConfirmDonation) {
-      onConfirmDonation(request.id);
-    }
+    onClose();
+    const targetId = request.rawId || request.id.replace(/^REQ-/, "");
+    router.push(`/donor/requests/${targetId}/donate`);
   };
 
   return (

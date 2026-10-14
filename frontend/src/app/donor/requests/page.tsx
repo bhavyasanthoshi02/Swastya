@@ -43,6 +43,12 @@ export default function DonorBloodRequestsPage() {
         setDonorBloodGroup(mapBloodGroupToDisplay(res.donorBloodGroup));
         const mapped = (res.requests || []).map(mapBackendRequestToPreview);
         setRequests(mapped);
+
+        // Pre-populate responded IDs from genuine backend persistence
+        const alreadyResponded = (res.requests || [])
+          .filter((r: any) => r.hasResponded)
+          .map((r: any) => `REQ-${r.requestid.slice(0, 8).toUpperCase()}`);
+        setRespondedIds((prev) => Array.from(new Set([...prev, ...alreadyResponded])));
       } else {
         setError("Failed to load blood requests.");
       }
@@ -311,28 +317,20 @@ export default function DonorBloodRequestsPage() {
                       <span>View Details</span>
                     </button>
 
-                    <button
-                      type="button"
-                      onClick={() => handleRespond(req.id)}
-                      disabled={hasResponded}
-                      className={`px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer transition-all flex items-center gap-1.5 ${
-                        hasResponded
-                          ? "bg-emerald-50 text-emerald-700 border border-emerald-200 cursor-default"
-                          : "bg-[#317786] hover:bg-[#245964] text-white shadow-2xs"
-                      }`}
-                    >
-                      {hasResponded ? (
-                        <>
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                          <span>Response Sent</span>
-                        </>
-                      ) : (
-                        <>
-                          <Heart className="w-3.5 h-3.5 fill-current" />
-                          <span>Can Donate</span>
-                        </>
-                      )}
-                    </button>
+                    {hasResponded ? (
+                      <div className="px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>Response Sent</span>
+                      </div>
+                    ) : (
+                      <Link
+                        href={`/donor/requests/${req.rawId || req.id.replace(/^REQ-/, "")}/donate`}
+                        className="px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer transition-all flex items-center gap-1.5 bg-[#317786] hover:bg-[#245964] text-white shadow-2xs"
+                      >
+                        <Heart className="w-3.5 h-3.5 fill-current" />
+                        <span>I Can Donate</span>
+                      </Link>
+                    )}
                   </div>
                 </div>
               );

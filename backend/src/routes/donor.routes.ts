@@ -3,7 +3,17 @@ import { prisma } from "../config/prisma";
 import { authenticate } from "../middleware/auth.middleware";
 import { authorize } from "../middleware/role.middleware";
 import { checkDonorOwnership } from "../middleware/ownership.middleware";
-import { blood_group, gender_type, availability_status, request_status } from "../generated/prisma/enums";
+import { blood_group, gender_type, availability_status, request_status, notification_type } from "../generated/prisma/enums";
+
+// Helper: sanitize blood request for donor feeds (protect patient privacy)
+function sanitizeRequestForDonor(req: any, hasResponded: boolean = false) {
+    const { patientcontact, ...safe } = req;
+    return {
+        ...safe,
+        patientcontact: null, // Patient contact protected for privacy on donor feeds
+        hasResponded,
+    };
+}
 
 const router = Router();
 
@@ -510,6 +520,23 @@ router.get("/me/dashboard", authenticate, authorize("DONOR", "ADMIN"), async (re
             })),
         ].sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime()).slice(0, 5);
 
+        // Check which matching requests the donor has already volunteered for
+        const matchingIds = matchingRequests.map((r) => r.requestid);
+        const myVolunteeredResponses = await prisma.notification.findMany({
+            where: {
+                userid: user.userid,
+                type: notification_type.MATCH,
+                title: "Volunteer Response Confirmed",
+                requestid: { in: matchingIds },
+            },
+            select: { requestid: true },
+        });
+        const myRespondedSet = new Set(myVolunteeredResponses.map((v) => v.requestid));
+
+        const sanitizedMatchingRequests = matchingRequests.map((r) =>
+            sanitizeRequestForDonor(r, myRespondedSet.has(r.requestid))
+        );
+
         return res.status(200).json({
             success: true,
             donor,
@@ -521,7 +548,7 @@ router.get("/me/dashboard", authenticate, authorize("DONOR", "ADMIN"), async (re
                 unreadNotificationsCount,
             },
             eligibility,
-            matchingRequests,
+            matchingRequests: sanitizedMatchingRequests,
             lastDonation,
             recentActivities,
         });
@@ -612,6 +639,23 @@ router.get("/me/matching-requests", authenticate, authorize("DONOR", "ADMIN"), a
             prisma.bloodrequests.count({ where: whereClause }),
         ]);
 
+        // Check which matching requests the current donor has already volunteered for
+        const requestIds = requests.map((r) => r.requestid);
+        const myVolunteeredResponses = await prisma.notification.findMany({
+            where: {
+                userid: user.userid,
+                type: notification_type.MATCH,
+                title: "Volunteer Response Confirmed",
+                requestid: { in: requestIds },
+            },
+            select: { requestid: true },
+        });
+        const myRespondedSet = new Set(myVolunteeredResponses.map((v) => v.requestid));
+
+        const sanitizedRequests = requests.map((r) =>
+            sanitizeRequestForDonor(r, myRespondedSet.has(r.requestid))
+        );
+
         return res.status(200).json({
             success: true,
             donorBloodGroup: donor.bloodgroup,
@@ -619,7 +663,7 @@ router.get("/me/matching-requests", authenticate, authorize("DONOR", "ADMIN"), a
             total,
             page,
             limit,
-            requests,
+            requests: sanitizedRequests,
         });
     } catch (error) {
         console.error("Error fetching matching blood requests:", error);
@@ -876,7 +920,7 @@ router.get(
                     unreadNotificationsCount,
                 },
                 eligibility,
-                matchingRequests,
+                matchingRequests: matchingRequests.map((r) => sanitizeRequestForDonor(r, false)),
                 lastDonation: donationHistory[0] || null,
             });
         } catch (error) {
@@ -935,7 +979,7 @@ router.get(
                 donorBloodGroup: donor.bloodgroup,
                 compatibleGroups: targetGroups,
                 total: requests.length,
-                requests,
+                requests: requests.map((r) => sanitizeRequestForDonor(r, false)),
             });
         } catch (error) {
             console.error("Error fetching matching requests:", error);

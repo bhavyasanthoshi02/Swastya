@@ -52,6 +52,141 @@ export interface BloodRequestItem {
   users?: AuthUser;
   requesters?: AuthRequester;
   hospitals?: any;
+  requeststatushistory?: RequestStatusHistoryItem[];
+  volunteers?: VolunteerDonorResponse[];
+}
+
+export interface VolunteerDonorResponse {
+  notificationid: string;
+  donorId?: string;
+  donorName: string;
+  donorBloodGroup: string;
+  donorCity?: string;
+  donorState?: string;
+  donorPhone?: string;
+  donorEmail?: string;
+  respondedAt: string;
+  status: string;
+  transitStatus?: "DONOR_FOUND" | "STARTED" | "REACHED_LOCATION" | "COMPLETED" | string;
+  startedAt?: string | null;
+  reachedAt?: string | null;
+  completedAt?: string | null;
+  estimatedArrival?: string;
+  notes?: string;
+  screening?: {
+    drinksAlcohol?: boolean;
+    alcoholInPast24Hours?: boolean;
+    feelingHealthy?: boolean;
+    recentAntibioticsOrMedication?: boolean;
+    recentTattooOrSurgery?: boolean;
+    donatedInLast90Days?: boolean;
+    chronicIllness?: boolean;
+    isPregnantOrBreastfeeding?: boolean;
+    alcoholClearance?: string;
+    generalHealth?: string;
+    medicationCleared?: string;
+    cooldownPassed?: boolean;
+    eligibilityStatus?: string;
+  };
+  isEligible?: boolean;
+}
+
+export interface AvailableDonorItem {
+  notificationId: string;
+  donorId: string;
+  donorUserId?: string;
+  donorName: string;
+  donorBloodGroup: string;
+  donorCity: string;
+  donorState: string;
+  donorPhone: string;
+  donorEmail: string;
+  donorGender?: string;
+  donorWeight?: number | null;
+  lastDonationDate?: string | null;
+  respondedAt: string;
+  status: string;
+  transitStatus?: "DONOR_FOUND" | "STARTED" | "REACHED_LOCATION" | "COMPLETED" | string;
+  startedAt?: string | null;
+  reachedAt?: string | null;
+  completedAt?: string | null;
+  estimatedArrival: string;
+  notes: string;
+  screening: {
+    drinksAlcohol?: boolean;
+    alcoholInPast24Hours?: boolean;
+    feelingHealthy?: boolean;
+    recentAntibioticsOrMedication?: boolean;
+    recentTattooOrSurgery?: boolean;
+    donatedInLast90Days?: boolean;
+    chronicIllness?: boolean;
+    isPregnantOrBreastfeeding?: boolean;
+    alcoholClearance?: string;
+    generalHealth?: string;
+    medicationCleared?: string;
+    cooldownPassed?: boolean;
+    eligibilityStatus?: string;
+  };
+  isEligible: boolean;
+  requestId: string;
+  patientName: string;
+  requiredBloodGroup: string;
+  unitsRequired: number;
+  bloodComponent: string;
+  urgencyLevel: string;
+  hospitalName: string;
+  hospitalAddress: string;
+  hospitalCity: string;
+  requestStatus: string;
+}
+
+export interface RequestStatusHistoryItem {
+  historyid: string;
+  requestid: string;
+  oldstatus: string | null;
+  newstatus: string;
+  changedbyuserid: string | null;
+  remarks: string | null;
+  changedat: string;
+  users?: {
+    name: string;
+    role: string;
+  } | null;
+}
+
+export interface HospitalItem {
+  hospitalid: string;
+  hospitalname: string;
+  registrationnumber?: string;
+  contactpersonname?: string;
+  contactpersonphone?: string;
+  address: string;
+  city: string;
+  state: string;
+  pincode: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  approvalstatus?: string;
+}
+
+export interface NotificationItem {
+  notificationid: string;
+  userid?: string;
+  requestid?: string | null;
+  type: string;
+  title: string;
+  message: string;
+  isread: boolean;
+  sentat?: string;
+  createdat?: string;
+  readat?: string | null;
+  bloodrequests?: {
+    requestid: string;
+    patientname: string;
+    bloodgroup: string;
+    urgencylevel: string;
+    status: string;
+  } | null;
 }
 
 export interface CreateBloodRequestDto {
@@ -220,6 +355,8 @@ export const api = {
       }>("/requesters/me"),
 
     updateProfile: (data: {
+      name?: string;
+      phonenumber?: string;
       address?: string;
       city?: string;
       state?: string;
@@ -230,7 +367,7 @@ export const api = {
       api.put<{
         success: boolean;
         message: string;
-        requester: AuthRequester;
+        requester: AuthRequester & { users?: AuthUser };
       }>("/requesters/me", data),
 
     getBloodRequests: () =>
@@ -238,6 +375,20 @@ export const api = {
         success: boolean;
         bloodRequests: BloodRequestItem[];
       }>("/requesters/me/bloodrequests"),
+
+    getAvailableDonors: (params?: { requestId?: string }) =>
+      api.get<{
+        success: boolean;
+        count: number;
+        availableDonors: AvailableDonorItem[];
+      }>("/requesters/me/available-donors", { params }),
+
+    updateDonorTransitStatus: (requestId: string, status: string, donorUserId?: string) =>
+      api.patch<{
+        success: boolean;
+        message: string;
+        transitStatus: string;
+      }>(`/bloodrequests/${requestId}/transit-status`, { status, donorUserId }),
   },
 
   bloodRequests: {
@@ -248,11 +399,18 @@ export const api = {
     create: (data: CreateBloodRequestDto) =>
       api.post<BloodRequestItem>("/bloodrequests", data),
 
-    update: (id: string, data: Partial<CreateBloodRequestDto>) =>
-      api.put<BloodRequestItem>(`/bloodrequests/${id}`, data),
+    update: (
+      id: string,
+      data: Partial<CreateBloodRequestDto> & { status?: string; remarks?: string }
+    ) => api.put<BloodRequestItem>(`/bloodrequests/${id}`, data),
 
     delete: (id: string) =>
       api.delete<{ success: boolean; message: string }>(`/bloodrequests/${id}`),
+  },
+
+  hospitals: {
+    getAll: () => api.get<HospitalItem[]>("/hospitals"),
+    getById: (id: string) => api.get<HospitalItem>(`/hospitals/${id}`),
   },
 
   donor: {
@@ -345,40 +503,72 @@ export const api = {
         donor: AuthDonor;
       }>("/donors/me/availability", availabilitystatus ? { availabilitystatus } : {}),
 
-    respondToRequest: (requestId: string) =>
+    respondToRequest: (
+      requestId: string,
+      payload?: {
+        screeningAnswers?: {
+          drinksAlcohol?: boolean;
+          alcoholInPast24Hours?: boolean;
+          feelingHealthy?: boolean;
+          recentAntibioticsOrMedication?: boolean;
+          recentTattooOrSurgery?: boolean;
+          donatedInLast90Days?: boolean;
+          chronicIllness?: boolean;
+          isPregnantOrBreastfeeding?: boolean;
+        };
+        estimatedArrival?: string;
+        contactPhone?: string;
+        notes?: string;
+      }
+    ) =>
       api.post<{
         success: boolean;
         message: string;
         requestId: string;
         patientName?: string;
-      }>(`/bloodrequests/${requestId}/respond`),
+      }>(`/bloodrequests/${requestId}/respond`, payload || {}),
+
+    updateTransitStatus: (requestId: string, status: "DONOR_FOUND" | "STARTED" | "REACHED_LOCATION" | "COMPLETED" | string) =>
+      api.patch<{
+        success: boolean;
+        message: string;
+        transitStatus: string;
+        meta: any;
+      }>(`/bloodrequests/${requestId}/transit-status`, { status }),
   },
 
   notifications: {
-    getAll: (unreadOnly = false) =>
-      api.get<{
+    getAll: (params?: boolean | { unreadOnly?: boolean; page?: number; limit?: number }) => {
+      let unreadOnly = false;
+      let page: number | undefined;
+      let limit: number | undefined;
+
+      if (typeof params === "boolean") {
+        unreadOnly = params;
+      } else if (params && typeof params === "object") {
+        unreadOnly = Boolean(params.unreadOnly);
+        page = params.page;
+        limit = params.limit;
+      }
+
+      return api.get<{
         success: boolean;
         total: number;
         unreadCount: number;
         page: number;
         limit: number;
-        notifications: Array<{
-          notificationid: string;
-          title: string;
-          message: string;
-          type: string;
-          isread: boolean;
-          createdat: string;
-        }>;
-      }>("/notifications", { params: { unreadOnly } }),
+        notifications: NotificationItem[];
+      }>("/notifications", { params: { unreadOnly, page, limit } });
+    },
 
     markRead: (id: string) =>
-      api.patch<{ success: boolean; message: string }>(`/notifications/${id}/read`),
+      api.patch<{ success: boolean; message: string; notification?: NotificationItem }>(`/notifications/${id}/read`),
 
     markAllRead: () =>
-      api.patch<{ success: boolean; message: string }>("/notifications/mark-all-read"),
+      api.patch<{ success: boolean; message: string; updatedCount?: number }>("/notifications/mark-all-read"),
 
     delete: (id: string) =>
       api.delete<{ success: boolean; message: string }>(`/notifications/${id}`),
   },
 };
+
