@@ -4,6 +4,7 @@ import React from "react";
 import Link from "next/link";
 import { ArrowRight, Activity, Clock, ShieldCheck, Heart, AlertCircle } from "lucide-react";
 import { RecentActivityItem } from "./DonorTypes";
+import { cleanNotificationMessage } from "@/lib/mappers";
 
 interface RecentActivityPreviewProps {
   activities: RecentActivityItem[];
@@ -68,7 +69,7 @@ export function RecentActivityPreview({ activities }: RecentActivityPreviewProps
                 </span>
               </div>
               <p className="text-[11px] text-slate-500 leading-relaxed">
-                {item.description}
+                {cleanNotificationMessage(item.description)}
               </p>
             </div>
           </div>

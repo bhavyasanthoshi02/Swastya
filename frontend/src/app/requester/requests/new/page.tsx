@@ -13,6 +13,9 @@ import {
   ArrowRight,
   Loader2,
   Check,
+  UploadCloud,
+  FileText,
+  X,
 } from "lucide-react";
 import { api, CreateBloodRequestDto, HospitalItem } from "@/lib/api";
 import {
@@ -130,6 +133,11 @@ export default function NewBloodRequestPage() {
   const [hospitalLocationManual, setHospitalLocationManual] = useState("");
   const [notes, setNotes] = useState("");
 
+  // Prescription Upload States (Mandatory Phase 2)
+  const [prescriptionFile, setPrescriptionFile] = useState<File | null>(null);
+  const [doctorName, setDoctorName] = useState("");
+  const [prescriptionHospitalName, setPrescriptionHospitalName] = useState("");
+
   // Validation & UI State
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [showReviewModal, setShowReviewModal] = useState(false);
@@ -223,6 +231,19 @@ export default function NewBloodRequestPage() {
       }
     }
 
+    // Prescription validation (Phase 2 Mandatory requirement for requesters)
+    if (!prescriptionFile) {
+      errs.prescriptionFile = "Clinical prescription document is required. Please upload a valid PDF, JPEG, or PNG.";
+    } else {
+      const allowedExts = [".pdf", ".jpg", ".jpeg", ".png"];
+      const ext = prescriptionFile.name.slice(prescriptionFile.name.lastIndexOf(".")).toLowerCase();
+      if (!allowedExts.includes(ext)) {
+        errs.prescriptionFile = "Invalid file type. Allowed formats: PDF, JPEG, JPG, PNG.";
+      } else if (prescriptionFile.size > 5 * 1024 * 1024) {
+        errs.prescriptionFile = `Prescription file size exceeds the 5 MB limit (${(prescriptionFile.size / (1024 * 1024)).toFixed(2)} MB).`;
+      }
+    }
+
     setErrors(errs);
     return Object.keys(errs).length === 0;
   };
@@ -275,26 +296,39 @@ export default function NewBloodRequestPage() {
 
       const finalNotes = notesParts.join(" | ");
 
-      const payload: CreateBloodRequestDto = {
-        patientname: patientName.trim(),
-        patientage: parseInt(patientAge, 10),
-        patientgender: patientGender,
-        patientcontact: patientContact.trim(),
-        bloodgroup: bloodGroup,
-        bloodcomponent: bloodComponent,
-        unitsrequired: unitsRequired,
-        urgencylevel: urgencyLevel,
-        isemergency: isEmergency,
-        searchradius: searchRadius,
-        requiredby: requiredDateTime.toISOString(),
-        notes: finalNotes || undefined,
-        hospitalid:
-          selectedHospitalId && selectedHospitalId !== "OTHER"
-            ? selectedHospitalId
-            : undefined,
-      };
+      // Build multipart/form-data payload with required prescription file
+      const formData = new FormData();
+      formData.append("patientname", patientName.trim());
+      formData.append("patientage", String(parseInt(patientAge, 10)));
+      formData.append("patientgender", patientGender);
+      formData.append("patientcontact", patientContact.trim());
+      formData.append("bloodgroup", bloodGroup);
+      formData.append("bloodcomponent", bloodComponent);
+      formData.append("unitsrequired", String(unitsRequired));
+      formData.append("urgencylevel", urgencyLevel);
+      formData.append("isemergency", String(isEmergency));
+      formData.append("searchradius", String(searchRadius));
+      formData.append("requiredby", requiredDateTime.toISOString());
+      if (finalNotes) {
+        formData.append("notes", finalNotes);
+      }
+      if (selectedHospitalId && selectedHospitalId !== "OTHER") {
+        formData.append("hospitalid", selectedHospitalId);
+      }
+      if (prescriptionFile) {
+        formData.append("prescription", prescriptionFile);
+      }
+      if (doctorName.trim()) {
+        formData.append("doctorname", doctorName.trim());
+      }
+      if (prescriptionHospitalName.trim()) {
+        formData.append("hospitalname", prescriptionHospitalName.trim());
+      } else if (selectedHospitalId && selectedHospitalId !== "OTHER") {
+        const h = hospitals.find((item) => item.hospitalid === selectedHospitalId);
+        if (h) formData.append("hospitalname", h.hospitalname);
+      }
 
-      const res = await api.bloodRequests.create(payload);
+      const res = await api.bloodRequests.create(formData);
 
       if (res && res.requestid) {
         setCreatedSuccess({
@@ -938,40 +972,140 @@ export default function NewBloodRequestPage() {
           </div>
         </div>
 
-        {/* SECTION 5: Clinical Prescription & Verification Notice */}
-        {/*
-          NOTE: As documented in Step 2.6 audit, the Prescription model exists in the database
-          schema, but the dedicated upload API / document storage route is deferred to Phase 2.7.
-          We provide clear, honest clinical documentation here rather than a non-functional file upload.
-        */}
-        <div className="bg-white rounded-2xl border border-[#F3E9D1] shadow-2xs p-6 space-y-3">
-          <div className="flex items-start gap-3">
-            <div className="w-9 h-9 rounded-xl bg-amber-50 border border-amber-200/80 text-amber-700 flex items-center justify-center flex-shrink-0">
-              <ShieldCheck className="w-5 h-5" />
+        {/* SECTION 5: Mandatory Clinical Prescription Upload */}
+        <div id="prescriptionFile" className="bg-white rounded-2xl border border-[#F3E9D1] shadow-2xs p-6 space-y-4">
+          <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-[#A2363A]/10 text-[#A2363A] flex items-center justify-center font-bold text-xs">
+                5
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="font-serif text-base font-bold text-[#053845]">
+                    Clinical Prescription Upload
+                  </h2>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-[#A2363A] uppercase tracking-wider">
+                    Mandatory
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-500">
+                  Transfusion safety regulations mandate a physician-signed prescription for requester blood requests
+                </p>
+              </div>
             </div>
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <h3 className="font-serif text-sm font-bold text-[#053845]">
-                  Clinical Prescription Verification Notice
-                </h3>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 uppercase">
-                  Physical Verification
+          </div>
+
+          {/* Upload Zone */}
+          <div className="space-y-3">
+            <label className="block text-xs font-bold text-[#053845]">
+              Upload Prescription Document <span className="text-[#A2363A]">*</span>
+            </label>
+
+            {!prescriptionFile ? (
+              <label
+                htmlFor="prescriptionInput"
+                className={`flex flex-col items-center justify-center p-6 border-2 border-dashed rounded-2xl cursor-pointer transition-all ${
+                  errors.prescriptionFile
+                    ? "border-rose-400 bg-rose-50/40 hover:bg-rose-50/70"
+                    : "border-slate-300 bg-[#FAF6EE]/50 hover:bg-[#FAF6EE] hover:border-[#317786]"
+                }`}
+              >
+                <div className="w-12 h-12 rounded-xl bg-white border border-[#F3E9D1] flex items-center justify-center text-[#317786] mb-3 shadow-2xs">
+                  <UploadCloud className="w-6 h-6" />
+                </div>
+                <span className="text-xs font-bold text-[#053845] text-center">
+                  Click to browse or drag &amp; drop prescription file
                 </span>
+                <span className="text-[11px] text-slate-500 text-center mt-1">
+                  Supported formats: PDF, JPEG, JPG, PNG (Max file size: 5 MB)
+                </span>
+                <input
+                  id="prescriptionInput"
+                  type="file"
+                  accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
+                  className="hidden"
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files[0]) {
+                      setPrescriptionFile(e.target.files[0]);
+                      setErrors((prev) => {
+                        const copy = { ...prev };
+                        delete copy.prescriptionFile;
+                        return copy;
+                      });
+                    }
+                  }}
+                />
+              </label>
+            ) : (
+              <div className="p-4 rounded-xl bg-emerald-50/60 border border-emerald-200 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3 overflow-hidden">
+                  <div className="w-10 h-10 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center flex-shrink-0">
+                    <FileText className="w-5 h-5" />
+                  </div>
+                  <div className="overflow-hidden">
+                    <span className="text-xs font-bold text-[#053845] block truncate">
+                      {prescriptionFile.name}
+                    </span>
+                    <span className="text-[11px] text-slate-500 block">
+                      {(prescriptionFile.size / (1024 * 1024)).toFixed(2)} MB • {prescriptionFile.type || "Document"}
+                    </span>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setPrescriptionFile(null)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                  title="Remove file"
+                >
+                  <X className="w-4 h-4" />
+                </button>
               </div>
-              <p className="text-xs text-slate-600 leading-relaxed">
-                In compliance with clinical transfusion protocols, blood components cannot be dispatched without a valid physician prescription.
+            )}
+
+            {errors.prescriptionFile && (
+              <p className="text-xs text-[#A2363A] flex items-center gap-1 mt-1">
+                <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                <span>{errors.prescriptionFile}</span>
               </p>
-              <div className="pt-1 text-[11px] text-slate-500 space-y-1 bg-[#FAF6EE] p-3 rounded-xl border border-[#F3E9D1]">
-                <p>
-                  • <strong>Online Requisition:</strong> Submitting this form immediately activates donor matching algorithms and checks regional blood bank inventories.
-                </p>
-                <p>
-                  • <strong>Physical Handover:</strong> Present the original physical prescription to the attending hospital coordinator or blood bank upon donor arrival.
-                </p>
-                <p className="text-slate-400 italic">
-                  * Note: Direct digital prescription document upload integration is deferred to Phase 2.7 clinical document storage rollout.
-                </p>
+            )}
+
+            {/* Prescribing Doctor & Facility Metadata */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+              <div className="space-y-1">
+                <label className="block text-xs font-semibold text-[#053845]">
+                  Prescribing Doctor / Attending Physician
+                </label>
+                <input
+                  type="text"
+                  value={doctorName}
+                  onChange={(e) => setDoctorName(e.target.value)}
+                  placeholder="e.g., Dr. Rajesh Kumar, MD"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs sm:text-sm bg-white focus:outline-none focus:border-[#317786]"
+                />
               </div>
+
+              <div className="space-y-1">
+                <label className="block text-xs font-semibold text-[#053845]">
+                  Issuing Clinic / Hospital Name
+                </label>
+                <input
+                  type="text"
+                  value={prescriptionHospitalName}
+                  onChange={(e) => setPrescriptionHospitalName(e.target.value)}
+                  placeholder="e.g., City Memorial Hospital"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs sm:text-sm bg-white focus:outline-none focus:border-[#317786]"
+                />
+              </div>
+            </div>
+
+            <div className="p-3 rounded-xl bg-[#FAF6EE] border border-[#F3E9D1] text-[11px] text-slate-600 space-y-1">
+              <p>
+                • <strong>Hospital Verification Workflow:</strong> The assigned hospital will review and clinically verify this prescription before blood arrangement and transfusion.
+              </p>
+              <p>
+                • <strong>Privacy Protection:</strong> Prescription files are stored in private encrypted storage and accessible solely to you, the treating hospital, and clinical admins.
+              </p>
             </div>
           </div>
         </div>
@@ -1088,6 +1222,36 @@ export default function NewBloodRequestPage() {
                   <span className="text-slate-600 block text-[11px]">
                     Ward / Room: {hospitalLocationManual}
                   </span>
+                )}
+              </div>
+
+              {/* Prescription Document Summary */}
+              <div className="p-3 bg-emerald-50/70 rounded-xl border border-emerald-200 space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-emerald-800 font-bold uppercase tracking-wider block">
+                    Mandatory Prescription Attached
+                  </span>
+                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-200/80 text-emerald-800">
+                    Ready for Review
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 pt-0.5">
+                  <FileText className="w-4 h-4 text-emerald-700 flex-shrink-0" />
+                  <span className="font-semibold text-[#053845] text-xs truncate">
+                    {prescriptionFile ? prescriptionFile.name : "Prescription Document"}
+                  </span>
+                  {prescriptionFile && (
+                    <span className="text-[11px] text-slate-500 flex-shrink-0">
+                      ({(prescriptionFile.size / (1024 * 1024)).toFixed(2)} MB)
+                    </span>
+                  )}
+                </div>
+                {(doctorName || prescriptionHospitalName) && (
+                  <p className="text-[11px] text-slate-600 pt-0.5">
+                    {doctorName && <span>Doctor: {doctorName}</span>}
+                    {doctorName && prescriptionHospitalName && <span> • </span>}
+                    {prescriptionHospitalName && <span>Clinic: {prescriptionHospitalName}</span>}
+                  </p>
                 )}
               </div>
             </div>

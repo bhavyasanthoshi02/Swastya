@@ -15,7 +15,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { api } from "@/lib/api";
-import { formatTimeAgo } from "@/lib/mappers";
+import { formatTimeAgo, cleanNotificationMessage } from "@/lib/mappers";
 
 interface NotificationItem {
   id: string;
@@ -49,11 +49,11 @@ export default function DonorNotificationsPage() {
           return {
             id: n.notificationid,
             title: n.title,
-            description: n.message,
+            description: cleanNotificationMessage(n.message),
             time: formatTimeAgo(n.createdat),
             type: isUrgent ? "emergency" : "info",
             isRead: n.isread,
-            href: isUrgent ? "/donor/requests" : "/donor/dashboard",
+            href: isUrgent ? (n.requestid ? `/donor/requests?requestId=${n.requestid}` : "/donor/requests") : "/donor/dashboard",
           };
         });
         setItems(mapped);

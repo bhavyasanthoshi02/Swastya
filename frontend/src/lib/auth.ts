@@ -23,6 +23,8 @@ export interface AuthDonor {
   address?: string;
   availabilitystatus: "AVAILABLE" | "TEMPORARILY_UNAVAILABLE" | "PERMANENTLY_UNAVAILABLE";
   lastdonationdate?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
   createdat?: string;
   updatedat?: string;
 }
@@ -40,10 +42,29 @@ export interface AuthRequester {
   updatedat?: string;
 }
 
+export interface AuthHospital {
+  hospitalid: string;
+  userid: string;
+  hospitalname: string;
+  registrationnumber: string;
+  contactpersonname: string;
+  contactpersonphone: string;
+  address: string;
+  city: string;
+  state: string;
+  pincode: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  approvalstatus: "PENDING" | "VERIFIED" | "REJECTED" | string;
+  createdat?: string;
+  updatedat?: string;
+}
+
 const TOKEN_KEY = "swastya_auth_token";
 const USER_KEY = "swastya_auth_user";
 const DONOR_KEY = "swastya_auth_donor";
 const REQUESTER_KEY = "swastya_auth_requester";
+const HOSPITAL_KEY = "swastya_auth_hospital";
 
 export const getAuthToken = (): string | null => {
   if (typeof window === "undefined") return null;
@@ -62,8 +83,12 @@ export const clearAuthToken = (): void => {
   localStorage.removeItem(USER_KEY);
   localStorage.removeItem(DONOR_KEY);
   localStorage.removeItem(REQUESTER_KEY);
-  sessionStorage.removeItem("swastya_donor_profile");
-  sessionStorage.removeItem("swastya_requester_profile");
+  localStorage.removeItem(HOSPITAL_KEY);
+  if (typeof sessionStorage !== "undefined") {
+    sessionStorage.removeItem("swastya_donor_profile");
+    sessionStorage.removeItem("swastya_requester_profile");
+    sessionStorage.removeItem("swastya_hospital_profile");
+  }
   window.dispatchEvent(new Event("swastya-auth-change"));
 };
 
@@ -81,7 +106,8 @@ export const getStoredUser = (): AuthUser | null => {
 export const setStoredUser = (
   user: AuthUser,
   donor?: AuthDonor | null,
-  requester?: AuthRequester | null
+  requester?: AuthRequester | null,
+  hospital?: AuthHospital | null
 ): void => {
   if (typeof window === "undefined") return;
   localStorage.setItem(USER_KEY, JSON.stringify(user));
@@ -95,6 +121,12 @@ export const setStoredUser = (
     localStorage.setItem(REQUESTER_KEY, JSON.stringify(requester));
   } else {
     localStorage.removeItem(REQUESTER_KEY);
+  }
+
+  if (hospital) {
+    localStorage.setItem(HOSPITAL_KEY, JSON.stringify(hospital));
+  } else {
+    localStorage.removeItem(HOSPITAL_KEY);
   }
 
   window.dispatchEvent(new Event("swastya-auth-change"));
@@ -114,6 +146,17 @@ export const getStoredDonor = (): AuthDonor | null => {
 export const getStoredRequester = (): AuthRequester | null => {
   if (typeof window === "undefined") return null;
   const raw = localStorage.getItem(REQUESTER_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+};
+
+export const getStoredHospital = (): AuthHospital | null => {
+  if (typeof window === "undefined") return null;
+  const raw = localStorage.getItem(HOSPITAL_KEY);
   if (!raw) return null;
   try {
     return JSON.parse(raw);

@@ -3,6 +3,7 @@
 import React from "react";
 import Link from "next/link";
 import { ArrowRight, Activity, Clock, ShieldCheck, Heart, AlertCircle, Droplet } from "lucide-react";
+import { cleanNotificationMessage } from "@/lib/mappers";
 
 export interface RequesterActivityItem {
   id: string;
@@ -79,7 +80,7 @@ export function RequesterRecentActivityPreview({
                 </span>
               </div>
               <p className="text-[11px] text-slate-500 leading-relaxed">
-                {item.description}
+                {cleanNotificationMessage(item.description)}
               </p>
             </div>
           </div>

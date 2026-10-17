@@ -30,6 +30,7 @@ import {
   mapBackendRequestToPreview,
   mapBackendHistoryToRecord,
   formatTimeAgo,
+  cleanNotificationMessage,
 } from "@/lib/mappers";
 
 export default function DonorDashboardOverviewPage() {
@@ -65,7 +66,7 @@ export default function DonorDashboardOverviewPage() {
           const mappedActs: RecentActivityItem[] = res.recentActivities.map((act: any) => ({
             id: act.id || `ACT-${Math.random().toString(36).substring(2, 7)}`,
             title: act.title || "Clinical Coordination Update",
-            description: act.description || "",
+            description: cleanNotificationMessage(act.description),
             timeAgo: formatTimeAgo(act.timestamp),
             type: act.type === "alert" || act.type === "donation" ? act.type : "availability",
           }));

@@ -13,6 +13,8 @@ import {
   AlertCircle,
   RefreshCw,
   HeartHandshake,
+  Clock,
+  XCircle,
 } from "lucide-react";
 import { LastDonationRecord } from "@/components/donor/DonorTypes";
 import { api } from "@/lib/api";
@@ -197,14 +199,38 @@ export default function DonorHistoryPage() {
                 className="p-5 sm:p-7 hover:bg-[#FAF6EE]/40 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-5"
               >
                 <div className="space-y-2">
-                  <div className="flex items-center gap-2.5">
+                  <div className="flex items-center flex-wrap gap-2.5">
                     <h2 className="font-serif text-base sm:text-lg font-bold text-[#053845]">
                       {rec.location}
                     </h2>
-                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 inline-flex items-center gap-1">
-                      <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                      <span>{rec.status}</span>
-                    </span>
+                    {rec.isImported ? (
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200 inline-flex items-center gap-1">
+                        <span>Historical Import</span>
+                      </span>
+                    ) : (
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200 inline-flex items-center gap-1">
+                        <span>Swastya Live Donation</span>
+                      </span>
+                    )}
+
+                    {rec.verificationStatus === "VERIFIED" && (
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 inline-flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                        <span>Verified</span>
+                      </span>
+                    )}
+                    {rec.verificationStatus === "PENDING" && (
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 inline-flex items-center gap-1">
+                        <Clock className="w-3 h-3 text-amber-600" />
+                        <span>Pending Clinical Verification</span>
+                      </span>
+                    )}
+                    {rec.verificationStatus === "REJECTED" && (
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200 inline-flex items-center gap-1">
+                        <XCircle className="w-3 h-3 text-rose-600" />
+                        <span>Rejected Record</span>
+                      </span>
+                    )}
                   </div>
 
                   <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
@@ -228,10 +254,22 @@ export default function DonorHistoryPage() {
                 </div>
 
                 <div className="shrink-0 self-start sm:self-center">
-                  <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200">
-                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>Clinical Record Verified</span>
-                  </span>
+                  {rec.verificationStatus === "VERIFIED" ? (
+                    <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200">
+                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Clinical Record Verified</span>
+                    </span>
+                  ) : rec.verificationStatus === "PENDING" ? (
+                    <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-200">
+                      <Clock className="w-3.5 h-3.5 text-amber-600" />
+                      <span>Pending Verification</span>
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold text-rose-800 bg-rose-50 border border-rose-200">
+                      <AlertCircle className="w-3.5 h-3.5 text-rose-600" />
+                      <span>Unverified / Rejected</span>
+                    </span>
+                  )}
                 </div>
               </div>
             ))}

@@ -119,9 +119,15 @@ export function RequestDetailModal({
               <div>
                 <span className="font-bold text-[#053845] block">Hospital Address:</span>
                 <span className="text-slate-600">{request.location}</span>
-                <span className="text-[#317786] font-semibold block mt-0.5">
-                  Approx. {request.distance} from your location
-                </span>
+                {request.locationMatch === "COORDINATES" ? (
+                  <span className="text-[#317786] font-semibold block mt-0.5">
+                    📍 Approx. {request.distance} from your location (within {request.searchradius || 25} km radius)
+                  </span>
+                ) : (
+                  <span className="text-amber-700 font-medium block mt-0.5">
+                    📍 {request.distance} ({request.location})
+                  </span>
+                )}
               </div>
             </div>
 

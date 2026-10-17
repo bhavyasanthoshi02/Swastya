@@ -105,8 +105,10 @@ export function mapBackendRequestToPreview(req: any): RequestPreviewItem {
     rawId: req.requestid,
     hospitalName,
     bloodGroup: mapBloodGroupToDisplay(req.bloodgroup),
-    distance: city ? `${city} Center` : "Local Area",
-    distanceKm: 4.5,
+    distance: req.distanceDisplay || (city ? `${city} Center` : "Local Area"),
+    distanceKm: req.distanceKm != null ? req.distanceKm : null,
+    locationMatch: req.locationMatch || "CITY_FALLBACK",
+    searchradius: req.searchradius || 5,
     urgency: mapUrgencyToDisplay(req.urgencylevel),
     units: req.unitsrequired || 1,
     location,
@@ -129,22 +131,50 @@ export function mapBackendRequestToPreview(req: any): RequestPreviewItem {
 }
 
 export function mapBackendHistoryToRecord(item: any): LastDonationRecord {
+  const isHistorical = Boolean(item.isImported ?? item.isimported);
   const location =
+    item.sourceHospital ||
+    item.hospitals?.hospitalname ||
     item.hospital?.name ||
+    item.bloodbanks?.bloodbankname ||
     item.bloodbank?.name ||
-    "Authorized Blood Bank / Transfusion Center";
+    (isHistorical ? "Historical Facility Record" : "Authorized Transfusion Center");
+
+  const verification =
+    item.verificationStatus || item.verificationstatus || (isHistorical ? "PENDING" : "VERIFIED");
+
+  let statusText = "Verified & Transfused";
+  if (isHistorical) {
+    if (verification === "VERIFIED") statusText = "Verified Historical Record";
+    else if (verification === "REJECTED") statusText = "Rejected Historical Record";
+    else statusText = "Historical Record (Pending Review)";
+  }
+
+  const recordId = item.donationhistoryid || item.historyid;
 
   return {
-    id: item.historyid ? `DON-${item.historyid.slice(0, 8).toUpperCase()}` : "DON-RECORD",
+    id: recordId ? `DON-${recordId.slice(0, 8).toUpperCase()}` : "DON-RECORD",
     date: formatDate(item.donationdate),
     location,
     associatedRequest: item.requestid ? `REQ-${item.requestid.slice(0, 8).toUpperCase()}` : undefined,
     bloodGroup: item.bloodgroup ? mapBloodGroupToDisplay(item.bloodgroup) : "O+",
-    status: "Verified & Transfused",
-    recordReference: item.historyid ? `REC-${item.historyid.slice(0, 10).toUpperCase()}` : "REC-UNKNOWN",
-    units: item.unitsdonated || 1,
-    componentType: item.componenttype || "Whole Blood (450 ml)",
-    notes: item.notes || "Voluntary donation. Transfusion cross-match verified successfully.",
+    status: statusText,
+    recordReference:
+      item.sourcerecordid ||
+      item.sourceRecordId ||
+      (recordId ? `REC-${recordId.slice(0, 10).toUpperCase()}` : "REC-UNKNOWN"),
+    units: item.unitsdonated || item.units || 1,
+    componentType: mapBloodComponentToDisplay(
+      item.bloodcomponent || item.bloodComponent || item.componentType
+    ),
+    notes:
+      item.remarks ||
+      item.notes ||
+      (isHistorical
+        ? "Historical donation record imported by hospital registry."
+        : "Voluntary donation. Transfusion cross-match verified successfully."),
+    isImported: isHistorical,
+    verificationStatus: verification,
   };
 }
 
@@ -184,6 +214,8 @@ export function mapBackendDonorToProfile(
     city,
     state,
     pincode,
+    latitude: donor?.latitude != null ? Number(donor.latitude) : null,
+    longitude: donor?.longitude != null ? Number(donor.longitude) : null,
     availability,
     eligibility,
     lastDonationDate: lastDate,
@@ -329,5 +361,10 @@ export function mapUrgencyBadge(urgency: string | null | undefined): {
         badgeClass: "bg-slate-50 text-slate-600 border-slate-200",
       };
   }
+}
+
+export function cleanNotificationMessage(message: string | null | undefined): string {
+  if (!message) return "";
+  return message.replace(/<!--META:[\s\S]*?-->/g, "").trim();
 }
 

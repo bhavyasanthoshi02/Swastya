@@ -19,7 +19,7 @@ import {
   Users,
 } from "lucide-react";
 import { api, NotificationItem } from "@/lib/api";
-import { formatTimeAgo, mapBloodGroupToDisplay } from "@/lib/mappers";
+import { formatTimeAgo, mapBloodGroupToDisplay, cleanNotificationMessage } from "@/lib/mappers";
 
 type FilterTab = "all" | "unread";
 
@@ -465,7 +465,7 @@ export default function RequesterNotificationsPage() {
                       </h3>
 
                       <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-                        {item.message}
+                        {cleanNotificationMessage(item.message)}
                       </p>
 
                       {/* Related Blood Request Badge & Navigation Link */}

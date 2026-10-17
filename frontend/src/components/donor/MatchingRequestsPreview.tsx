@@ -37,7 +37,7 @@ export function MatchingRequestsPreview({
 
   const filteredRequests = previews.filter((item) => {
     if (filter === "critical") return item.urgency === "Critical Emergency";
-    if (filter === "near") return item.distanceKm <= 5.0;
+    if (filter === "near") return typeof item.distanceKm === "number" && item.distanceKm <= 5.0;
     return true;
   });
 

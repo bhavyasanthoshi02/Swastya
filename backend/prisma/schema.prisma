@@ -44,6 +44,8 @@ model bloodrequests {
   urgencylevel         urgency_level
   isemergency          Boolean?               @default(false)
   searchradius         Int?                   @default(5)
+  latitude             Decimal?               @db.Decimal(9, 6)
+  longitude            Decimal?               @db.Decimal(9, 6)
   requiredby           DateTime               @db.Timestamp(6)
   status               request_status?        @default(CREATED)
   notes                String?
@@ -56,25 +58,32 @@ model bloodrequests {
   hospitalcoordination hospitalcoordination[]
   notification         notification[]
   prescription         prescription?
+  prescriptionhistory  prescriptionhistory[]
   requeststatushistory requeststatushistory[]
+  emergencybroadcasts  emergencybroadcasts[]
+  broadcastdeliveries  broadcastdeliveries[]
 
   @@index([status], map: "idx_bloodrequests_status")
 }
 
 model donationhistory {
-  donationhistoryid String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  donorid           String        @db.Uuid
-  requestid         String        @db.Uuid
-  unitsdonated      Int
-  donationdate      DateTime      @db.Date
-  bloodbankid       String?       @db.Uuid
-  hospitalid        String?       @db.Uuid
-  remarks           String?
-  createdat         DateTime?     @default(now()) @db.Timestamp(6)
-  bloodbanks        bloodbanks?   @relation(fields: [bloodbankid], references: [bloodbankid], onDelete: NoAction, onUpdate: NoAction, map: "fk_donation_bloodbank")
-  donors            donors        @relation(fields: [donorid], references: [donorid], onDelete: NoAction, onUpdate: NoAction, map: "fk_donation_donor")
-  hospitals         hospitals?    @relation(fields: [hospitalid], references: [hospitalid], onDelete: NoAction, onUpdate: NoAction, map: "fk_donation_hospital")
-  bloodrequests     bloodrequests @relation(fields: [requestid], references: [requestid], onDelete: NoAction, onUpdate: NoAction, map: "fk_donation_request")
+  donationhistoryid  String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  donorid            String               @db.Uuid
+  requestid          String?              @db.Uuid
+  unitsdonated       Int
+  donationdate       DateTime             @db.Date
+  bloodbankid        String?              @db.Uuid
+  hospitalid         String?              @db.Uuid
+  remarks            String?
+  isimported         Boolean?             @default(false)
+  sourcerecordid     String?              @db.VarChar(100)
+  bloodcomponent     blood_component?     @default(WHOLE_BLOOD)
+  verificationstatus verification_status? @default(PENDING)
+  createdat          DateTime?            @default(now()) @db.Timestamp(6)
+  bloodbanks         bloodbanks?          @relation(fields: [bloodbankid], references: [bloodbankid], onDelete: NoAction, onUpdate: NoAction, map: "fk_donation_bloodbank")
+  donors             donors               @relation(fields: [donorid], references: [donorid], onDelete: NoAction, onUpdate: NoAction, map: "fk_donation_donor")
+  hospitals          hospitals?           @relation(fields: [hospitalid], references: [hospitalid], onDelete: NoAction, onUpdate: NoAction, map: "fk_donation_hospital")
+  bloodrequests      bloodrequests?       @relation(fields: [requestid], references: [requestid], onDelete: NoAction, onUpdate: NoAction, map: "fk_donation_request")
 }
 
 model donors {
@@ -96,6 +105,8 @@ model donors {
   updatedat          DateTime?            @default(now()) @db.Timestamp(6)
   address            String?              @db.VarChar(255)
   donationhistory    donationhistory[]
+  hospitaldonors     hospitaldonors[]
+  broadcastdeliveries broadcastdeliveries[]
   users              users                @relation(fields: [userid], references: [userid], onDelete: Cascade, onUpdate: NoAction, map: "fk_donor_user")
 
   @@index([bloodgroup], map: "idx_donors_bloodgroup")
@@ -133,10 +144,12 @@ model hospitals {
   updatedat                                                           DateTime?              @default(now()) @db.Timestamp(6)
   bloodrequests                                                       bloodrequests[]
   donationhistory                                                     donationhistory[]
+  hospitaldonors                                                      hospitaldonors[]
   hospitalcoordination_hospitalcoordination_fromhospitalidTohospitals hospitalcoordination[] @relation("hospitalcoordination_fromhospitalidTohospitals")
   hospitalcoordination_hospitalcoordination_tohospitalidTohospitals   hospitalcoordination[] @relation("hospitalcoordination_tohospitalidTohospitals")
   users                                                               users                  @relation(fields: [userid], references: [userid], onDelete: Cascade, onUpdate: NoAction, map: "fk_hospital_user")
   prescription                                                        prescription[]
+  prescriptionhistory                                                 prescriptionhistory[]
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -169,25 +182,104 @@ model notification {
   readat         DateTime?         @db.Timestamp(6)
   bloodrequests  bloodrequests?    @relation(fields: [requestid], references: [requestid], onDelete: NoAction, onUpdate: NoAction, map: "fk_notification_request")
   users          users             @relation(fields: [userid], references: [userid], onDelete: Cascade, onUpdate: NoAction, map: "fk_notification_user")
+  broadcastdeliveries broadcastdeliveries[]
 
   @@index([userid], map: "idx_notification_user")
 }
 
 model prescription {
-  prescriptionid       String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  requestid            String               @unique @db.Uuid
+  prescriptionid       String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  requestid            String                @unique @db.Uuid
   fileurl              String
-  doctorname           String               @db.VarChar(100)
-  hospitalname         String               @db.VarChar(255)
-  status               prescription_status? @default(PENDING)
-  verifiedbyhospitalid String?              @db.Uuid
-  verificationdate     DateTime?            @db.Timestamp(6)
+  originalfilename     String?               @db.VarChar(255)
+  mimetype             String?               @db.VarChar(100)
+  filesize             Int?
+  doctorname           String                @db.VarChar(100)
+  hospitalname         String                @db.VarChar(255)
+  status               prescription_status?  @default(PENDING)
+  verifiedbyhospitalid String?               @db.Uuid
+  verificationdate     DateTime?             @db.Timestamp(6)
   remarks              String?
-  uploadedat           DateTime?            @default(now()) @db.Timestamp(6)
+  uploadedat           DateTime?             @default(now()) @db.Timestamp(6)
+  createdat            DateTime?             @default(now()) @db.Timestamp(6)
+  updatedat            DateTime?             @default(now()) @db.Timestamp(6)
+  hospitals            hospitals?            @relation(fields: [verifiedbyhospitalid], references: [hospitalid], onDelete: NoAction, onUpdate: NoAction, map: "fk_prescription_hospital")
+  bloodrequests        bloodrequests         @relation(fields: [requestid], references: [requestid], onDelete: NoAction, onUpdate: NoAction, map: "fk_prescription_request")
+  prescriptionhistory  prescriptionhistory[]
+}
+
+model prescriptionhistory {
+  historyid            String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  prescriptionid       String               @db.Uuid
+  requestid            String               @db.Uuid
+  fileurl              String
+  originalfilename     String?              @db.VarChar(255)
+  mimetype             String?              @db.VarChar(100)
+  filesize             Int?
+  status               prescription_status
+  reviewedbyhospitalid String?              @db.Uuid
+  remarks              String?
   createdat            DateTime?            @default(now()) @db.Timestamp(6)
-  updatedat            DateTime?            @default(now()) @db.Timestamp(6)
-  hospitals            hospitals?           @relation(fields: [verifiedbyhospitalid], references: [hospitalid], onDelete: NoAction, onUpdate: NoAction, map: "fk_prescription_hospital")
-  bloodrequests        bloodrequests        @relation(fields: [requestid], references: [requestid], onDelete: NoAction, onUpdate: NoAction, map: "fk_prescription_request")
+  prescription         prescription         @relation(fields: [prescriptionid], references: [prescriptionid], onDelete: Cascade, onUpdate: NoAction, map: "fk_history_prescription")
+  bloodrequests        bloodrequests        @relation(fields: [requestid], references: [requestid], onDelete: Cascade, onUpdate: NoAction, map: "fk_history_request")
+  hospitals            hospitals?           @relation(fields: [reviewedbyhospitalid], references: [hospitalid], onDelete: SetNull, onUpdate: NoAction, map: "fk_history_hospital")
+}
+
+model emergencybroadcasts {
+  broadcastid         String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  requestid           String                @db.Uuid
+  triggeredbyuserid   String                @db.Uuid
+  triggertype         String                @db.VarChar(50)
+  triggerreason       String?
+  radiuskm            Int                   @default(5)
+  status              String                @default("ACTIVE") @db.VarChar(50)
+  totalmatched        Int                   @default(0)
+  totalnotified       Int                   @default(0)
+  totalresponded      Int                   @default(0)
+  createdat           DateTime?             @default(now()) @db.Timestamp(6)
+  updatedat           DateTime?             @default(now()) @db.Timestamp(6)
+  bloodrequests       bloodrequests         @relation(fields: [requestid], references: [requestid], onDelete: Cascade, onUpdate: NoAction, map: "fk_broadcast_request")
+  users               users                 @relation(fields: [triggeredbyuserid], references: [userid], onDelete: NoAction, onUpdate: NoAction, map: "fk_broadcast_trigger_user")
+  broadcastdeliveries broadcastdeliveries[]
+
+  @@index([requestid], map: "idx_emergencybroadcasts_request")
+  @@index([status], map: "idx_emergencybroadcasts_status")
+}
+
+model broadcastdeliveries {
+  deliveryid          String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  broadcastid         String               @db.Uuid
+  requestid           String               @db.Uuid
+  donorid             String               @db.Uuid
+  donoruserid         String               @db.Uuid
+  matchtype           String               @db.VarChar(50)
+  distancekm          Decimal?             @db.Decimal(6, 2)
+  deliverystatus      String               @default("DELIVERED") @db.VarChar(50)
+  notificationid      String?              @db.Uuid
+  attemptcount        Int                  @default(1)
+  firstattemptat      DateTime?            @default(now()) @db.Timestamp(6)
+  lastattemptat       DateTime?            @default(now()) @db.Timestamp(6)
+  failuremessage      String?
+  response            String?              @db.VarChar(50)
+  respondedat         DateTime?            @db.Timestamp(6)
+  transitstatus       String?              @db.VarChar(50)
+  transitnotes        String?
+  estimatedarrival    String?              @db.VarChar(100)
+  startedat           DateTime?            @db.Timestamp(6)
+  reachedat           DateTime?            @db.Timestamp(6)
+  completedat         DateTime?            @db.Timestamp(6)
+  createdat           DateTime?            @default(now()) @db.Timestamp(6)
+  updatedat           DateTime?            @default(now()) @db.Timestamp(6)
+  emergencybroadcasts emergencybroadcasts  @relation(fields: [broadcastid], references: [broadcastid], onDelete: Cascade, onUpdate: NoAction, map: "fk_delivery_broadcast")
+  bloodrequests       bloodrequests        @relation(fields: [requestid], references: [requestid], onDelete: Cascade, onUpdate: NoAction, map: "fk_delivery_request")
+  donors              donors               @relation(fields: [donorid], references: [donorid], onDelete: Cascade, onUpdate: NoAction, map: "fk_delivery_donor")
+  users               users                @relation(fields: [donoruserid], references: [userid], onDelete: Cascade, onUpdate: NoAction, map: "fk_delivery_donoruser")
+  notification        notification?        @relation(fields: [notificationid], references: [notificationid], onDelete: SetNull, onUpdate: NoAction, map: "fk_delivery_notification")
+
+  @@unique([broadcastid, donorid], map: "uq_broadcast_donor")
+  @@index([requestid], map: "idx_broadcastdeliveries_request")
+  @@index([donorid], map: "idx_broadcastdeliveries_donor")
+  @@index([donoruserid], map: "idx_broadcastdeliveries_donoruser")
 }
 
 model requesters {
@@ -235,8 +327,34 @@ model users {
   notification         notification[]
   requesters           requesters?
   requeststatushistory requeststatushistory[]
+  donoractivationtokens donoractivationtokens[]
+  emergencybroadcasts  emergencybroadcasts[]
+  broadcastdeliveries  broadcastdeliveries[]
 
   @@index([email], map: "idx_users_email")
+}
+
+model hospitaldonors {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  hospitalid       String    @db.Uuid
+  donorid          String    @db.Uuid
+  sourceidentifier String?   @db.VarChar(100)
+  status           String?   @default("ACTIVE") @db.VarChar(50)
+  createdat        DateTime? @default(now()) @db.Timestamp(6)
+  donors           donors    @relation(fields: [donorid], references: [donorid], onDelete: Cascade, onUpdate: NoAction)
+  hospitals        hospitals @relation(fields: [hospitalid], references: [hospitalid], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([hospitalid, donorid], map: "uq_hospital_donor")
+}
+
+model donoractivationtokens {
+  tokenid   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userid    String    @db.Uuid
+  tokenhash String    @db.VarChar(255)
+  expiresat DateTime  @db.Timestamp(6)
+  usedat    DateTime? @db.Timestamp(6)
+  createdat DateTime? @default(now()) @db.Timestamp(6)
+  users     users     @relation(fields: [userid], references: [userid], onDelete: Cascade, onUpdate: NoAction)
 }
 
 enum approval_status {

@@ -4,10 +4,11 @@ import { authenticate } from "../middleware/auth.middleware";
 import { authorize } from "../middleware/role.middleware";
 import { checkDonorOwnership } from "../middleware/ownership.middleware";
 import { blood_group, gender_type, availability_status, request_status, notification_type } from "../generated/prisma/enums";
+import { validateCoordinates, evaluateLocationDistance } from "../utils/distance";
 
 // Helper: sanitize blood request for donor feeds (protect patient privacy)
 function sanitizeRequestForDonor(req: any, hasResponded: boolean = false) {
-    const { patientcontact, ...safe } = req;
+    const { patientcontact, patientphone, ...safe } = req;
     return {
         ...safe,
         patientcontact: null, // Patient contact protected for privacy on donor feeds
@@ -272,6 +273,22 @@ router.put("/me", authenticate, authorize("DONOR", "ADMIN"), async (req: Request
         if (req.body.pincode !== undefined) updateData.pincode = req.body.pincode.trim();
         if (req.body.address !== undefined) updateData.address = req.body.address.trim();
 
+        // Optional coordinate updates (rejects invalid, never overwrites valid with null)
+        if (
+            (req.body.latitude !== undefined && req.body.latitude !== null && String(req.body.latitude).trim() !== "") ||
+            (req.body.longitude !== undefined && req.body.longitude !== null && String(req.body.longitude).trim() !== "")
+        ) {
+            const coordValidation = validateCoordinates(req.body.latitude, req.body.longitude);
+            if (!coordValidation.valid) {
+                return res.status(400).json({
+                    success: false,
+                    message: coordValidation.error,
+                });
+            }
+            updateData.latitude = coordValidation.latitude;
+            updateData.longitude = coordValidation.longitude;
+        }
+
         if (req.body.availabilitystatus || req.body.availability) {
             const status = normalizeAvailability(req.body.availabilitystatus || req.body.availability);
             if (!status) {
@@ -507,7 +524,7 @@ router.get("/me/dashboard", authenticate, authorize("DONOR", "ADMIN"), async (re
             ...recentNotifications.map((n) => ({
                 id: n.notificationid,
                 title: n.title,
-                description: n.message,
+                description: n.message.replace(/<!--META:[\s\S]*?-->/g, "").trim(),
                 timestamp: n.sentat || new Date(),
                 type: n.type.toLowerCase(),
             })),
@@ -566,6 +583,11 @@ router.get("/me/dashboard", authenticate, authorize("DONOR", "ADMIN"), async (re
  * GET /donors/me/matching-requests
  * Query params: exactOnly (boolean), urgency (string), city (string), limit (number), page (number)
  */
+/*
+ * MATCHING BLOOD REQUESTS FOR CURRENT DONOR (LOCATION-AWARE)
+ * GET /donors/me/matching-requests
+ * Query params: exactOnly (boolean), urgency (string), city (string), limit (number), page (number)
+ */
 router.get("/me/matching-requests", authenticate, authorize("DONOR", "ADMIN"), async (req: Request, res: Response) => {
     try {
         const user = (req as any).user;
@@ -575,6 +597,42 @@ router.get("/me/matching-requests", authenticate, authorize("DONOR", "ADMIN"), a
             return res.status(404).json({
                 success: false,
                 message: "Donor profile not found for this user account.",
+            });
+        }
+
+        const donorLat = donor.latitude != null ? Number(donor.latitude) : null;
+        const donorLng = donor.longitude != null ? Number(donor.longitude) : null;
+        const donorCity = donor.city ? donor.city.trim() : "";
+
+        // Check availability status and donation cooldown
+        const isAvailable = donor.availabilitystatus === availability_status.AVAILABLE;
+        const latestDonation = await prisma.donationhistory.findFirst({
+            where: { donorid: donor.donorid },
+            orderBy: { donationdate: "desc" },
+            select: { donationdate: true },
+        });
+        const effectiveLastDonation = donor.lastdonationdate || latestDonation?.donationdate || null;
+        const eligibility = computeEligibility({
+            iseligible: donor.iseligible,
+            lastdonationdate: effectiveLastDonation,
+        });
+
+        if (!isAvailable || !eligibility.isEligible) {
+            return res.status(200).json({
+                success: true,
+                donorBloodGroup: donor.bloodgroup,
+                compatibleGroups: [donor.bloodgroup],
+                donorLocation: {
+                    hasCoordinates: donorLat !== null && donorLng !== null,
+                    city: donor.city,
+                    state: donor.state,
+                },
+                availabilityStatus: donor.availabilitystatus,
+                eligibility,
+                total: 0,
+                page: 1,
+                limit: 10,
+                requests: [],
             });
         }
 
@@ -598,49 +656,135 @@ router.get("/me/matching-requests", authenticate, authorize("DONOR", "ADMIN"), a
             whereClause.urgencylevel = urgency;
         }
 
-        if (cityFilter) {
-            whereClause.OR = [
-                { hospitals: { city: { contains: cityFilter, mode: "insensitive" } } },
-                { requesters: { city: { contains: cityFilter, mode: "insensitive" } } },
-            ];
-        }
-
-        const [requests, total] = await Promise.all([
-            prisma.bloodrequests.findMany({
-                where: whereClause,
-                include: {
-                    hospitals: {
-                        select: {
-                            hospitalid: true,
-                            hospitalname: true,
-                            city: true,
-                            state: true,
-                            address: true,
-                            contactpersonname: true,
-                            contactpersonphone: true,
-                        },
-                    },
-                    requesters: {
-                        select: {
-                            requesterid: true,
-                            city: true,
-                            state: true,
-                        },
+        // Fetch candidate active requests with location metadata
+        const rawCandidates = await prisma.bloodrequests.findMany({
+            where: whereClause,
+            include: {
+                hospitals: {
+                    select: {
+                        hospitalid: true,
+                        hospitalname: true,
+                        city: true,
+                        state: true,
+                        address: true,
+                        contactpersonname: true,
+                        contactpersonphone: true,
+                        latitude: true,
+                        longitude: true,
                     },
                 },
-                orderBy: [
-                    { isemergency: "desc" },
-                    { urgencylevel: "desc" },
-                    { createdat: "desc" },
-                ],
-                skip,
-                take: limit,
-            }),
-            prisma.bloodrequests.count({ where: whereClause }),
-        ]);
+                requesters: {
+                    select: {
+                        requesterid: true,
+                        city: true,
+                        state: true,
+                        latitude: true,
+                        longitude: true,
+                    },
+                },
+            },
+        });
 
-        // Check which matching requests the current donor has already volunteered for
-        const requestIds = requests.map((r) => r.requestid);
+        // Evaluate location and filter by search radius or city fallback
+        interface EvaluatedRequest {
+            request: any;
+            distanceKm: number | null;
+            distanceDisplay: string;
+            locationMatch: "COORDINATES" | "CITY_FALLBACK" | "NONE";
+        }
+
+        const matchedList: EvaluatedRequest[] = [];
+
+        for (const candidate of rawCandidates) {
+            // Resolve request coordinate points (explicit request coords -> hospital coords -> requester coords)
+            const reqLat = candidate.latitude != null
+                ? Number(candidate.latitude)
+                : (candidate.hospitals?.latitude != null
+                    ? Number(candidate.hospitals.latitude)
+                    : (candidate.requesters?.latitude != null ? Number(candidate.requesters.latitude) : null));
+
+            const reqLng = candidate.longitude != null
+                ? Number(candidate.longitude)
+                : (candidate.hospitals?.longitude != null
+                    ? Number(candidate.hospitals.longitude)
+                    : (candidate.requesters?.longitude != null ? Number(candidate.requesters.longitude) : null));
+
+            const radiusKm = candidate.searchradius || 5;
+            const locEval = evaluateLocationDistance(donorLat, donorLng, reqLat, reqLng, radiusKm);
+
+            if (locEval.hasCoordinates) {
+                // Both points have coordinates: apply strictly accurate Haversine radius filtering
+                if (locEval.isWithinRadius) {
+                    matchedList.push({
+                        request: candidate,
+                        distanceKm: locEval.distanceKm,
+                        distanceDisplay: locEval.distanceDisplay,
+                        locationMatch: "COORDINATES",
+                    });
+                }
+                // If coordinates are outside search radius, excluded
+            } else {
+                // Missing coordinates on donor or request: safely fallback to city/state matching
+                const reqCity = (candidate.hospitals?.city || candidate.requesters?.city || "").trim();
+
+                let isCityMatch = false;
+                if (cityFilter) {
+                    isCityMatch = reqCity.toLowerCase().includes(cityFilter.toLowerCase());
+                } else if (donorCity && reqCity) {
+                    isCityMatch =
+                        donorCity.toLowerCase() === reqCity.toLowerCase() ||
+                        donorCity.toLowerCase().includes(reqCity.toLowerCase()) ||
+                        reqCity.toLowerCase().includes(donorCity.toLowerCase());
+                } else {
+                    // When neither coordinates nor specific cities conflict, retain in broad feed
+                    isCityMatch = true;
+                }
+
+                if (isCityMatch) {
+                    matchedList.push({
+                        request: candidate,
+                        distanceKm: null,
+                        distanceDisplay: "Distance unavailable - City match",
+                        locationMatch: "CITY_FALLBACK",
+                    });
+                }
+            }
+        }
+
+        // Sorting: 1. Emergency first -> 2. Urgency rank -> 3. Distance (closer first) -> 4. Newest
+        const URGENCY_RANK: Record<string, number> = {
+            CRITICAL: 4,
+            HIGH: 3,
+            MEDIUM: 2,
+            LOW: 1,
+        };
+
+        matchedList.sort((a, b) => {
+            const emA = a.request.isemergency ? 1 : 0;
+            const emB = b.request.isemergency ? 1 : 0;
+            if (emB !== emA) return emB - emA;
+
+            const urgA = URGENCY_RANK[a.request.urgencylevel] || 0;
+            const urgB = URGENCY_RANK[b.request.urgencylevel] || 0;
+            if (urgB !== urgA) return urgB - urgA;
+
+            // Distance sorting: known distances ascending, then city fallbacks
+            if (a.distanceKm !== null && b.distanceKm !== null) {
+                if (a.distanceKm !== b.distanceKm) return a.distanceKm - b.distanceKm;
+            } else if (a.distanceKm !== null && b.distanceKm === null) {
+                return -1;
+            } else if (a.distanceKm === null && b.distanceKm !== null) {
+                return 1;
+            }
+
+            return new Date(b.request.createdat || 0).getTime() - new Date(a.request.createdat || 0).getTime();
+        });
+
+        const total = matchedList.length;
+        const paginated = matchedList.slice(skip, skip + limit);
+
+        // Check which requests the current donor has already volunteered for
+        const requestIds = paginated.map((item) => item.request.requestid);
         const myVolunteeredResponses = await prisma.notification.findMany({
             where: {
                 userid: user.userid,
@@ -652,14 +796,39 @@ router.get("/me/matching-requests", authenticate, authorize("DONOR", "ADMIN"), a
         });
         const myRespondedSet = new Set(myVolunteeredResponses.map((v) => v.requestid));
 
-        const sanitizedRequests = requests.map((r) =>
-            sanitizeRequestForDonor(r, myRespondedSet.has(r.requestid))
-        );
+        // Format and sanitize output (strip patient contact and exact raw coordinates)
+        const sanitizedRequests = paginated.map((item) => {
+            const sanitized = sanitizeRequestForDonor(item.request, myRespondedSet.has(item.request.requestid));
+            // Remove raw coordinate numbers from payload to protect patient and facility precise geolocation
+            delete (sanitized as any).latitude;
+            delete (sanitized as any).longitude;
+            if (sanitized.hospitals) {
+                delete (sanitized.hospitals as any).latitude;
+                delete (sanitized.hospitals as any).longitude;
+            }
+            if (sanitized.requesters) {
+                delete (sanitized.requesters as any).latitude;
+                delete (sanitized.requesters as any).longitude;
+            }
+
+            return {
+                ...sanitized,
+                distanceKm: item.distanceKm,
+                distanceDisplay: item.distanceDisplay,
+                locationMatch: item.locationMatch,
+                searchradius: item.request.searchradius || 5,
+            };
+        });
 
         return res.status(200).json({
             success: true,
             donorBloodGroup: donor.bloodgroup,
             compatibleGroups: targetGroups,
+            donorLocation: {
+                hasCoordinates: donorLat !== null && donorLng !== null,
+                city: donor.city,
+                state: donor.state,
+            },
             total,
             page,
             limit,
@@ -734,6 +903,15 @@ router.get("/me/history", authenticate, authorize("DONOR", "ADMIN"), async (req:
         const totalUnitsDonated = history.reduce((sum, h) => sum + (h.unitsdonated || 1), 0);
         const estimatedLivesSaved = totalUnitsDonated * 3;
 
+        const formattedHistory = history.map((h) => ({
+            ...h,
+            isImported: h.isimported ?? false,
+            verificationStatus: h.verificationstatus ?? (h.isimported ? "PENDING" : "VERIFIED"),
+            bloodComponent: h.bloodcomponent || h.bloodrequests?.bloodcomponent || "WHOLE_BLOOD",
+            sourceHospital: h.hospitals?.hospitalname || (h.isimported ? "Historical Import" : null),
+            sourceRecordId: h.sourcerecordid,
+        }));
+
         return res.status(200).json({
             success: true,
             stats: {
@@ -744,7 +922,7 @@ router.get("/me/history", authenticate, authorize("DONOR", "ADMIN"), async (req:
             page,
             limit,
             total,
-            history,
+            history: formattedHistory,
         });
     } catch (error) {
         console.error("Error fetching donation history:", error);
@@ -1016,6 +1194,15 @@ router.get(
 
             const totalUnits = history.reduce((sum, h) => sum + (h.unitsdonated || 1), 0);
 
+            const formattedHistory = history.map((h) => ({
+                ...h,
+                isImported: h.isimported ?? false,
+                verificationStatus: h.verificationstatus ?? (h.isimported ? "PENDING" : "VERIFIED"),
+                bloodComponent: h.bloodcomponent || h.bloodrequests?.bloodcomponent || "WHOLE_BLOOD",
+                sourceHospital: h.hospitals?.hospitalname || (h.isimported ? "Historical Import" : null),
+                sourceRecordId: h.sourcerecordid,
+            }));
+
             return res.status(200).json({
                 success: true,
                 stats: {
@@ -1024,7 +1211,7 @@ router.get(
                     estimatedLivesSaved: totalUnits * 3,
                 },
                 total: history.length,
-                history,
+                history: formattedHistory,
             });
         } catch (error) {
             console.error("Error fetching donation history:", error);

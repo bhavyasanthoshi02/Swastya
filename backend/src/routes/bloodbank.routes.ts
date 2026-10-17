@@ -9,7 +9,15 @@ router.get("/", async (_req, res) => {
     try {
         const bloodbanks = await prisma.bloodbanks.findMany({
             include: {
-                users: true,
+                users: {
+                    select: {
+                        userid: true,
+                        name: true,
+                        email: true,
+                        phonenumber: true,
+                        role: true,
+                    },
+                },
             },
         });
 

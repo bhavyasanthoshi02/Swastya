@@ -21,14 +21,13 @@ import {
 } from "lucide-react";
 import { ActiveRequisitionsPreview } from "@/components/requester/ActiveRequisitionsPreview";
 import { LatestRequisitionCard } from "@/components/requester/LatestRequisitionCard";
-import { RequesterProfileSummary } from "@/components/requester/RequesterProfileSummary";
 import {
   RequesterRecentActivityPreview,
   RequesterActivityItem,
 } from "@/components/requester/RequesterRecentActivityPreview";
 import { api, BloodRequestItem } from "@/lib/api";
 import { getStoredUser, AuthUser, AuthRequester } from "@/lib/auth";
-import { formatTimeAgo, formatDate } from "@/lib/mappers";
+import { formatTimeAgo, formatDate, cleanNotificationMessage } from "@/lib/mappers";
 
 interface DashboardData {
   totalRequests: number;
@@ -95,7 +94,7 @@ export default function RequesterDashboardOverviewPage() {
             return {
               id: n.notificationid,
               title: n.title,
-              description: n.message,
+              description: cleanNotificationMessage(n.message),
               timeAgo: formatTimeAgo(n.sentat || n.createdat),
               type: actType,
             };
@@ -342,13 +341,6 @@ export default function RequesterDashboardOverviewPage() {
 
         {/* Right Column: Profile Coordination & Guidance (5 cols) */}
         <div className="lg:col-span-5 space-y-6 lg:space-y-8">
-          {/* Requester Profile Summary Widget */}
-          <RequesterProfileSummary
-            user={user}
-            requester={requester}
-            activeRequestsCount={data.activeRequests}
-            totalRequestsCount={data.totalRequests}
-          />
 
           {/* Clinical Guidance & Transfusion Protocol Advisory */}
           <div className="bg-white rounded-3xl border border-[#F3E9D1] p-5 sm:p-6 shadow-xs space-y-3.5">

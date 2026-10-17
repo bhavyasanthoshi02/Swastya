@@ -14,9 +14,19 @@ export const checkHospitalOwnership = async (
             return next();
         }
 
+        const hospitalId = (req.params.hospitalId || req.params.id) as string;
+
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (!hospitalId || !uuidRegex.test(hospitalId)) {
+            return res.status(404).json({
+                success: false,
+                message: "Hospital not found",
+            });
+        }
+
         const hospital = await prisma.hospitals.findUnique({
             where: {
-                hospitalid: req.params.hospitalId as string,
+                hospitalid: hospitalId,
             },
         });
 

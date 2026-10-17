@@ -7,6 +7,8 @@ export interface DonorProfile {
   city: string;
   state?: string;
   pincode?: string;
+  latitude?: number | null;
+  longitude?: number | null;
   availability: "Available" | "Paused";
   eligibility: "Eligible" | "Cooldown" | "Review Required";
   lastDonationDate: string;
@@ -27,7 +29,9 @@ export interface RequestPreviewItem {
   hospitalName: string;
   bloodGroup: string;
   distance: string;
-  distanceKm: number;
+  distanceKm?: number | null;
+  locationMatch?: "COORDINATES" | "CITY_FALLBACK" | "NONE";
+  searchradius?: number;
   urgency: "Critical Emergency" | "Urgent" | "Standard";
   units: number;
   location: string;
@@ -59,4 +63,6 @@ export interface LastDonationRecord {
   units: number;
   componentType: string;
   notes?: string;
+  isImported?: boolean;
+  verificationStatus?: "PENDING" | "VERIFIED" | "REJECTED" | string;
 }

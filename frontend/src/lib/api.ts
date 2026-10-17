@@ -1,4 +1,4 @@
-import { getAuthToken, clearAuthToken, AuthUser, AuthDonor, AuthRequester } from "./auth";
+import { getAuthToken, clearAuthToken, AuthUser, AuthDonor, AuthRequester, AuthHospital } from "./auth";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL?.replace(/\/+$/, "") || "http://localhost:5000";
@@ -52,8 +52,49 @@ export interface BloodRequestItem {
   users?: AuthUser;
   requesters?: AuthRequester;
   hospitals?: any;
+  prescription?: PrescriptionItem | null;
+  prescriptionhistory?: PrescriptionHistoryItem[];
   requeststatushistory?: RequestStatusHistoryItem[];
   volunteers?: VolunteerDonorResponse[];
+}
+
+export interface PrescriptionItem {
+  prescriptionid: string;
+  requestid: string;
+  fileurl: string;
+  downloadUrl?: string;
+  originalfilename?: string | null;
+  mimetype?: string | null;
+  filesize?: number | null;
+  doctorname: string;
+  hospitalname: string;
+  status: "PENDING" | "VERIFIED" | "REJECTED";
+  verifiedbyhospitalid?: string | null;
+  verificationdate?: string | null;
+  remarks?: string | null;
+  uploadedat?: string;
+  hospitals?: {
+    hospitalid: string;
+    hospitalname: string;
+  } | null;
+}
+
+export interface PrescriptionHistoryItem {
+  historyid: string;
+  prescriptionid: string;
+  requestid: string;
+  fileurl: string;
+  originalfilename?: string | null;
+  mimetype?: string | null;
+  filesize?: number | null;
+  status: "PENDING" | "VERIFIED" | "REJECTED";
+  reviewedbyhospitalid?: string | null;
+  remarks?: string | null;
+  createdat: string;
+  hospitals?: {
+    hospitalid: string;
+    hospitalname: string;
+  } | null;
 }
 
 export interface VolunteerDonorResponse {
@@ -200,10 +241,106 @@ export interface CreateBloodRequestDto {
   urgencylevel: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL" | string;
   isemergency?: boolean;
   searchradius?: number;
+  latitude?: number;
+  longitude?: number;
   requiredby: string;
   notes?: string;
   requesterid?: string;
   hospitalid?: string;
+}
+
+export interface DonorRegistryItem {
+  registryId: string;
+  donorId: string;
+  userId: string;
+  name: string;
+  email: string;
+  phoneNumber?: string;
+  bloodGroup: string;
+  gender: string;
+  city: string;
+  state?: string;
+  accountStatus: "ACTIVATED" | "PENDING_ACTIVATION";
+  isEligible: boolean;
+  donationCount: number;
+  lastDonationDate?: string | null;
+  historicalVerificationStatus: "NONE" | "PENDING" | "VERIFIED" | "REJECTED";
+  sourceIdentifier?: string | null;
+  registryStatus?: string;
+  createdAt: string;
+}
+
+export interface DonorDetailItem {
+  registryId: string;
+  donorId: string;
+  userId: string;
+  name: string;
+  email: string;
+  phoneNumber?: string;
+  bloodGroup: string;
+  gender: string;
+  city: string;
+  state?: string;
+  pincode?: string;
+  address?: string;
+  accountStatus: "ACTIVATED" | "PENDING_ACTIVATION";
+  isEligible: boolean;
+  sourceIdentifier?: string | null;
+  registryStatus?: string;
+  registeredAt: string;
+  donations: Array<{
+    donationHistoryId: string;
+    donationDate: string;
+    unitsDonated: number;
+    bloodComponent: string;
+    isImported: boolean;
+    verificationStatus: "PENDING" | "VERIFIED" | "REJECTED";
+    sourceRecordId?: string | null;
+    remarks?: string | null;
+    createdAt: string;
+  }>;
+}
+
+export interface ImportPreviewResult {
+  success: boolean;
+  message: string;
+  summary: {
+    totalRows: number;
+    validRowsCount: number;
+    invalidRowsCount: number;
+    toCreateCount: number;
+    toLinkCount: number;
+    alreadyLinkedCount: number;
+    conflictCount: number;
+    historicalDonationsCount: number;
+    invalidDonationsCount: number;
+  };
+  toCreate: any[];
+  toLink: any[];
+  alreadyLinked: any[];
+  conflicts: any[];
+  invalidRows: any[];
+  validDonations: any[];
+  invalidDonations: any[];
+}
+
+export interface ImportCommitResult {
+  success: boolean;
+  message: string;
+  importedCount: number;
+  linkedCount: number;
+  historicalDonationsImported: number;
+  deliveryStatus: string;
+  deliveryNote: string;
+  activationRecords: Array<{
+    name: string;
+    email: string;
+    phoneNumber?: string;
+    activationToken: string;
+    activationUrl: string;
+    expiresAt: string;
+  }>;
+  errors: any[];
 }
 
 async function request<T = any>(endpoint: string, options: RequestOptions = {}): Promise<T> {
@@ -225,12 +362,16 @@ async function request<T = any>(endpoint: string, options: RequestOptions = {}):
   }
 
   const token = getAuthToken();
+  const isFormData = typeof FormData !== "undefined" && customConfig.body instanceof FormData;
 
   const reqHeaders: Record<string, string> = {
-    "Content-Type": "application/json",
     Accept: "application/json",
     ...(headers as Record<string, string>),
   };
+
+  if (!isFormData && !reqHeaders["Content-Type"]) {
+    reqHeaders["Content-Type"] = "application/json";
+  }
 
   if (token) {
     reqHeaders["Authorization"] = `Bearer ${token}`;
@@ -282,26 +423,32 @@ export const api = {
   get: <T = any>(endpoint: string, options?: RequestOptions) =>
     request<T>(endpoint, { ...options, method: "GET" }),
 
-  post: <T = any>(endpoint: string, body?: any, options?: RequestOptions) =>
-    request<T>(endpoint, {
+  post: <T = any>(endpoint: string, body?: any, options?: RequestOptions) => {
+    const isFormData = typeof FormData !== "undefined" && body instanceof FormData;
+    return request<T>(endpoint, {
       ...options,
       method: "POST",
-      body: body ? JSON.stringify(body) : undefined,
-    }),
+      body: body ? (isFormData ? body : JSON.stringify(body)) : undefined,
+    });
+  },
 
-  put: <T = any>(endpoint: string, body?: any, options?: RequestOptions) =>
-    request<T>(endpoint, {
+  put: <T = any>(endpoint: string, body?: any, options?: RequestOptions) => {
+    const isFormData = typeof FormData !== "undefined" && body instanceof FormData;
+    return request<T>(endpoint, {
       ...options,
       method: "PUT",
-      body: body ? JSON.stringify(body) : undefined,
-    }),
+      body: body ? (isFormData ? body : JSON.stringify(body)) : undefined,
+    });
+  },
 
-  patch: <T = any>(endpoint: string, body?: any, options?: RequestOptions) =>
-    request<T>(endpoint, {
+  patch: <T = any>(endpoint: string, body?: any, options?: RequestOptions) => {
+    const isFormData = typeof FormData !== "undefined" && body instanceof FormData;
+    return request<T>(endpoint, {
       ...options,
       method: "PATCH",
-      body: body ? JSON.stringify(body) : undefined,
-    }),
+      body: body ? (isFormData ? body : JSON.stringify(body)) : undefined,
+    });
+  },
 
   delete: <T = any>(endpoint: string, options?: RequestOptions) =>
     request<T>(endpoint, { ...options, method: "DELETE" }),
@@ -315,6 +462,7 @@ export const api = {
         user: AuthUser;
         donor: AuthDonor | null;
         requester: AuthRequester | null;
+        hospital: AuthHospital | null;
         message?: string;
       }>("/auth/login", credentials),
 
@@ -325,6 +473,7 @@ export const api = {
         user: AuthUser;
         donor: AuthDonor | null;
         requester: AuthRequester | null;
+        hospital: AuthHospital | null;
         message?: string;
       }>("/auth/register", userData),
 
@@ -334,7 +483,25 @@ export const api = {
         user: AuthUser;
         donor: AuthDonor | null;
         requester: AuthRequester | null;
+        hospital: AuthHospital | null;
       }>("/auth/me"),
+
+    verifyActivationToken: (token: string) =>
+      api.get<{
+        success: boolean;
+        valid: boolean;
+        user: { name: string; email: string; phone?: string };
+        message?: string;
+      }>("/auth/verify-activation-token", { params: { token } }),
+
+    activateDonor: (data: { token: string; password: string }) =>
+      api.post<{
+        success: boolean;
+        message: string;
+        token: string;
+        user: AuthUser;
+        donor?: AuthDonor;
+      }>("/auth/activate-donor", data),
   },
 
   requester: {
@@ -391,21 +558,163 @@ export const api = {
       }>(`/bloodrequests/${requestId}/transit-status`, { status, donorUserId }),
   },
 
+  hospital: {
+    getProfile: () =>
+      api.get<{
+        success: boolean;
+        hospital: AuthHospital & { users?: AuthUser };
+      }>("/hospitals/me"),
+
+    updateProfile: (data: {
+      hospitalname?: string;
+      contactpersonname?: string;
+      contactpersonphone?: string;
+      address?: string;
+      city?: string;
+      state?: string;
+      pincode?: string;
+      latitude?: number;
+      longitude?: number;
+    }) =>
+      api.put<{
+        success: boolean;
+        message: string;
+        hospital: AuthHospital & { users?: AuthUser };
+      }>("/hospitals/me", data),
+
+    getDashboard: () =>
+      api.get<{
+        success: boolean;
+        totalRequests: number;
+        emergencyRequests: number;
+        fulfilledRequests: number;
+        recentRequests: BloodRequestItem[];
+      }>("/hospitals/me/dashboard"),
+
+    getBloodRequests: () =>
+      api.get<BloodRequestItem[]>("/hospitals/me/bloodrequests"),
+
+    getRequestDetails: (id: string) =>
+      api.get<BloodRequestItem>(`/bloodrequests/${id}`),
+
+    updateBloodRequest: (
+      id: string,
+      data: { status?: string; remarks?: string; notes?: string }
+    ) =>
+      api.put<{
+        success: boolean;
+        message: string;
+        bloodRequest: BloodRequestItem;
+      }>(`/bloodrequests/${id}`, data),
+
+    createBloodRequest: (data: CreateBloodRequestDto) =>
+      api.post<BloodRequestItem>("/hospitals/me/bloodrequests", data),
+
+    getDonors: (params?: {
+      search?: string;
+      bloodGroup?: string;
+      accountStatus?: string;
+      verificationStatus?: string;
+      page?: number;
+      limit?: number;
+    }) =>
+      api.get<{
+        success: boolean;
+        page: number;
+        limit: number;
+        total: number;
+        donors: DonorRegistryItem[];
+      }>("/hospitals/me/donors", { params }),
+
+    getDonorDetails: (donorId: string) =>
+      api.get<{
+        success: boolean;
+        donor: DonorDetailItem;
+      }>(`/hospitals/me/donors/${donorId}`),
+
+    previewImport: (formData: FormData) =>
+      api.post<ImportPreviewResult>("/hospitals/me/donors/import/preview", formData),
+
+    commitImport: (data: { toCreate: any[]; toLink: any[]; validDonations?: any[] }) =>
+      api.post<ImportCommitResult>("/hospitals/me/donors/import/commit", data),
+
+    getTemplateUrl: (format: "csv" | "xlsx" = "csv") =>
+      `${API_BASE_URL}/hospitals/me/donors/import/template?format=${format}`,
+
+    downloadTemplate: async (format: "csv" | "xlsx" = "csv"): Promise<Blob> => {
+      const token = getAuthToken();
+      const res = await fetch(`${API_BASE_URL}/hospitals/me/donors/import/template?format=${format}`, {
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+      if (!res.ok) {
+        throw new Error(`Failed to download template (HTTP ${res.status})`);
+      }
+      return await res.blob();
+    },
+
+    updateDonationStatus: (
+      donorId: string,
+      historyId: string,
+      data: { status: "PENDING" | "VERIFIED" | "REJECTED"; remarks?: string }
+    ) =>
+      api.patch<{
+        success: boolean;
+        message: string;
+        record: any;
+      }>(`/hospitals/me/donors/${donorId}/history/${historyId}`, data),
+  },
+
   bloodRequests: {
     getAll: () => api.get<BloodRequestItem[]>("/bloodrequests"),
 
     getById: (id: string) => api.get<BloodRequestItem>(`/bloodrequests/${id}`),
 
-    create: (data: CreateBloodRequestDto) =>
+    create: (data: CreateBloodRequestDto | FormData) =>
       api.post<BloodRequestItem>("/bloodrequests", data),
 
     update: (
       id: string,
-      data: Partial<CreateBloodRequestDto> & { status?: string; remarks?: string }
+      data: Partial<CreateBloodRequestDto> & { status?: string; remarks?: string; notes?: string }
     ) => api.put<BloodRequestItem>(`/bloodrequests/${id}`, data),
 
     delete: (id: string) =>
       api.delete<{ success: boolean; message: string }>(`/bloodrequests/${id}`),
+
+    verifyPrescription: (
+      id: string,
+      data: { status: "VERIFIED" | "REJECTED"; remarks?: string }
+    ) =>
+      api.post<{ success: boolean; message: string; prescription: PrescriptionItem }>(
+        `/bloodrequests/${id}/prescription/verify`,
+        data
+      ),
+
+    uploadReplacementPrescription: (id: string, formData: FormData) =>
+      api.post<{ success: boolean; message: string; prescription: PrescriptionItem }>(
+        `/bloodrequests/${id}/prescription/replacement`,
+        formData
+      ),
+
+    getPrescriptionDownloadUrl: (id: string, download: boolean = false) =>
+      `${API_BASE_URL}/bloodrequests/${id}/prescription/file${download ? "?download=true" : ""}`,
+
+    getBroadcastStatus: (id: string) =>
+      api.get<{
+        success: boolean;
+        hasBroadcast: boolean;
+        broadcast: any;
+        deliveries: any[];
+        history: any[];
+      }>(`/bloodrequests/${id}/broadcast`),
+
+    triggerBroadcast: (id: string, data?: { radiusKm?: number; reason?: string }) =>
+      api.post<{
+        success: boolean;
+        message: string;
+        broadcast: any;
+      }>(`/bloodrequests/${id}/broadcast`, data),
   },
 
   hospitals: {
