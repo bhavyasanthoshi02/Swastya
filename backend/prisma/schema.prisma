@@ -26,6 +26,11 @@ model bloodbanks {
   users              users             @relation(fields: [userid], references: [userid], onDelete: Cascade, onUpdate: NoAction, map: "fk_bloodbank_user")
   donationhistory    donationhistory[]
   inventory          inventory[]
+  inventoryledger    inventoryledger[]
+  inventoryunits     inventoryunits[]
+  requisitionassignments requisitionassignments[]
+  bloodreservations  bloodreservations[]
+  unitdispositionhistory unitdispositionhistory[]
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -62,6 +67,10 @@ model bloodrequests {
   requeststatushistory requeststatushistory[]
   emergencybroadcasts  emergencybroadcasts[]
   broadcastdeliveries  broadcastdeliveries[]
+  emergencyschedulerjobs emergencyschedulerjobs[]
+  requisitionassignments requisitionassignments[]
+  bloodreservations    bloodreservations[]
+  clinicalcrossmatches clinicalcrossmatches[]
 
   @@index([status], map: "idx_bloodrequests_status")
 }
@@ -160,11 +169,15 @@ model inventory {
   bloodcomponent blood_component
   unitsavailable Int             @default(0)
   unitsreserved  Int             @default(0)
+  unitsquarantined Int           @default(0)
+  islegacyreconciled Boolean       @default(true)
   expirydate     DateTime        @db.Date
   lastupdated    DateTime?       @default(now()) @db.Timestamp(6)
   createdat      DateTime?       @default(now()) @db.Timestamp(6)
   updatedat      DateTime?       @default(now()) @db.Timestamp(6)
-  bloodbanks     bloodbanks      @relation(fields: [bloodbankid], references: [bloodbankid], onDelete: Cascade, onUpdate: NoAction, map: "fk_inventory_bloodbank")
+  bloodbanks     bloodbanks        @relation(fields: [bloodbankid], references: [bloodbankid], onDelete: Cascade, onUpdate: NoAction, map: "fk_inventory_bloodbank")
+  inventoryledger inventoryledger[]
+  inventoryunits inventoryunits[]
 
   @@unique([bloodbankid, bloodgroup, bloodcomponent, expirydate], map: "uq_inventory")
   @@index([bloodgroup], map: "idx_inventory_bloodgroup")
@@ -282,6 +295,28 @@ model broadcastdeliveries {
   @@index([donoruserid], map: "idx_broadcastdeliveries_donoruser")
 }
 
+model emergencyschedulerjobs {
+  jobid          String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  requestid      String        @db.Uuid
+  jobtype        String        @default("FOLLOW_UP_ESCALATION") @db.VarChar(50)
+  status         String        @default("PENDING") @db.VarChar(50)
+  scheduledfor   DateTime      @db.Timestamp(6)
+  lockeduntil    DateTime?     @db.Timestamp(6)
+  lockedby       String?       @db.VarChar(100)
+  attemptcount   Int           @default(0)
+  maxattempts    Int           @default(5)
+  lasterror      String?
+  idempotencykey String?       @unique @db.VarChar(255)
+  createdat      DateTime?     @default(now()) @db.Timestamp(6)
+  updatedat      DateTime?     @default(now()) @db.Timestamp(6)
+  completedat    DateTime?     @db.Timestamp(6)
+  bloodrequests  bloodrequests @relation(fields: [requestid], references: [requestid], onDelete: Cascade, onUpdate: NoAction, map: "fk_scheduler_job_request")
+
+  @@index([status, scheduledfor], map: "idx_scheduler_jobs_claim")
+  @@index([requestid], map: "idx_scheduler_jobs_request")
+  @@index([status], map: "idx_scheduler_jobs_status")
+}
+
 model requesters {
   requesterid   String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userid        String          @unique @db.Uuid
@@ -330,6 +365,17 @@ model users {
   donoractivationtokens donoractivationtokens[]
   emergencybroadcasts  emergencybroadcasts[]
   broadcastdeliveries  broadcastdeliveries[]
+  inventoryledger      inventoryledger[]
+  unitscreeningrecords_testedby unitscreeningrecords[] @relation("ScreeningTestedBy")
+  unitscreeningrecords_verifiedby unitscreeningrecords[] @relation("ScreeningVerifiedBy")
+  unitscreeningrecords_supersededby unitscreeningrecords[] @relation("ScreeningSupersededBy")
+  requisitionassignments_assignedby requisitionassignments[] @relation("AssignmentAssignedBy")
+  requisitionassignments_respondedby requisitionassignments[] @relation("AssignmentRespondedBy")
+  bloodreservations_reservedby bloodreservations[] @relation("ReservationReservedBy")
+  bloodreservations_cancelledby bloodreservations[] @relation("ReservationCancelledBy")
+  clinicalcrossmatches_testedby clinicalcrossmatches[] @relation("CrossmatchTestedBy")
+  clinicalcrossmatches_verifiedby clinicalcrossmatches[] @relation("CrossmatchVerifiedBy")
+  unitdispositionhistory_actor unitdispositionhistory[] @relation("DispositionActor")
 
   @@index([email], map: "idx_users_email")
 }
@@ -355,6 +401,209 @@ model donoractivationtokens {
   usedat    DateTime? @db.Timestamp(6)
   createdat DateTime? @default(now()) @db.Timestamp(6)
   users     users     @relation(fields: [userid], references: [userid], onDelete: Cascade, onUpdate: NoAction)
+}
+
+model inventoryledger {
+  ledgerid          String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  inventoryid       String                   @db.Uuid
+  bloodbankid       String                   @db.Uuid
+  actoruserid       String                   @db.Uuid
+  operationtype     inventory_operation_type
+  quantitydelta     Int
+  previousavailable Int
+  newavailable      Int
+  previousreserved  Int
+  newreserved       Int
+  reason            String                   @db.VarChar(255)
+  idempotencykey    String                   @unique @db.VarChar(255)
+  requesthash       String                   @db.VarChar(64)
+  responsecode      Int                      @default(200)
+  responsebody      Json                     @db.JsonB
+  createdat         DateTime?                @default(now()) @db.Timestamp(6)
+  inventory         inventory                @relation(fields: [inventoryid], references: [inventoryid], onDelete: Restrict, onUpdate: NoAction, map: "fk_ledger_inventory")
+  bloodbanks        bloodbanks               @relation(fields: [bloodbankid], references: [bloodbankid], onDelete: Restrict, onUpdate: NoAction, map: "fk_ledger_bloodbank")
+  users             users                    @relation(fields: [actoruserid], references: [userid], onDelete: Restrict, onUpdate: NoAction, map: "fk_ledger_user")
+
+  @@index([inventoryid], map: "idx_ledger_inventory")
+  @@index([bloodbankid], map: "idx_ledger_bloodbank")
+  @@index([actoruserid], map: "idx_ledger_actor")
+  @@index([createdat], map: "idx_ledger_createdat")
+}
+
+enum inventory_operation_type {
+  STOCK_ADDITION
+  CORRECTION_INCREMENT
+  CORRECTION_DECREMENT
+  STOCK_INTAKE
+  SCREENING_CLEARANCE
+  RESERVATION_ALLOCATE
+  RESERVATION_CANCEL
+  UNIT_PACKED_COLD_BOX
+  DISPATCH_DEPARTURE
+  HOSPITAL_RECEIPT_CONFIRM
+  TRANSIT_EXCURSION_RETURN
+  UNIT_DISPOSAL
+  OPENING_BALANCE_INITIALIZATION
+}
+
+model inventoryunits {
+  unitid                       String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  inventoryid                  String                 @db.Uuid
+  bloodbankid                  String                 @db.Uuid
+  unitbarcode                  String                 @db.VarChar(50)
+  donationidentificationnumber String?                @db.VarChar(50)
+  bloodgroup                   blood_group
+  bloodcomponent               blood_component
+  collectiondate               DateTime?              @db.Timestamp(6)
+  expirydate                   DateTime               @db.Timestamp(6)
+  status                       String                 @default("QUARANTINED") @db.VarChar(30)
+  ttiscreeningstatus           String                 @default("PENDING") @db.VarChar(20)
+  currentscreeningid           String?                @db.Uuid
+  storagebinlocation           String?                @db.VarChar(50)
+  createdat                    DateTime?              @default(now()) @db.Timestamp(6)
+  updatedat                    DateTime?              @default(now()) @db.Timestamp(6)
+  inventory                    inventory              @relation(fields: [inventoryid], references: [inventoryid], onDelete: Restrict, onUpdate: NoAction, map: "fk_unit_inventory")
+  bloodbanks                   bloodbanks             @relation(fields: [bloodbankid], references: [bloodbankid], onDelete: Restrict, onUpdate: NoAction, map: "fk_unit_bloodbank")
+  currentscreening             unitscreeningrecords?  @relation("UnitCurrentScreening", fields: [currentscreeningid], references: [screeningid], onDelete: Restrict, onUpdate: NoAction, map: "fk_unit_current_screening")
+  screeninghistory             unitscreeningrecords[] @relation("UnitScreeningHistory")
+  reservationitems             reservationitems[]
+  clinicalcrossmatches         clinicalcrossmatches[]
+  unitdispositionhistory       unitdispositionhistory[]
+
+  @@unique([bloodbankid, unitbarcode], map: "uq_bloodbank_unitbarcode")
+}
+
+model unitscreeningrecords {
+  screeningid        String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  unitid             String                 @db.Uuid
+  revisionnumber     Int                    @default(1)
+  iscurrent          Boolean                @default(true)
+  supersededat       DateTime?              @db.Timestamp(6)
+  supersededbyuserid String?                @db.Uuid
+  hivresult          String                 @db.VarChar(20)
+  hbvresult          String                 @db.VarChar(20)
+  hcvresult          String                 @db.VarChar(20)
+  syphilisresult     String                 @db.VarChar(20)
+  malariaresult      String                 @db.VarChar(20)
+  overallstatus      String                 @db.VarChar(20)
+  testedat           DateTime               @default(now()) @db.Timestamp(6)
+  testedbyuserid     String                 @db.Uuid
+  verifiedat         DateTime               @default(now()) @db.Timestamp(6)
+  verifiedbyuserid   String                 @db.Uuid
+  laboratoryremarks  String?
+  createdat          DateTime?              @default(now()) @db.Timestamp(6)
+  unit               inventoryunits         @relation("UnitScreeningHistory", fields: [unitid], references: [unitid], onDelete: Restrict, onUpdate: NoAction, map: "fk_screening_unit")
+  currentforunits    inventoryunits[]       @relation("UnitCurrentScreening")
+  testedby           users                  @relation("ScreeningTestedBy", fields: [testedbyuserid], references: [userid], onDelete: Restrict, onUpdate: NoAction, map: "fk_screening_tester")
+  verifiedby         users                  @relation("ScreeningVerifiedBy", fields: [verifiedbyuserid], references: [userid], onDelete: Restrict, onUpdate: NoAction, map: "fk_screening_verifier")
+  supersededby       users?                 @relation("ScreeningSupersededBy", fields: [supersededbyuserid], references: [userid], onDelete: Restrict, onUpdate: NoAction, map: "fk_screening_supersededby")
+
+  @@unique([unitid, revisionnumber], map: "uq_unit_screening_revision")
+}
+
+model requisitionassignments {
+  assignmentid     String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  requestid        String             @db.Uuid
+  bloodbankid      String             @db.Uuid
+  assignedbyuserid String             @db.Uuid
+  assignedat       DateTime           @default(now()) @db.Timestamp(6)
+  assignmentstatus String             @default("PENDING_ACCEPTANCE") @db.VarChar(30)
+  respondedat      DateTime?          @db.Timestamp(6)
+  respondedbyuserid String?           @db.Uuid
+  declinereason    String?
+  createdat        DateTime?          @default(now()) @db.Timestamp(6)
+  updatedat        DateTime?          @default(now()) @db.Timestamp(6)
+  bloodrequests    bloodrequests      @relation(fields: [requestid], references: [requestid], onDelete: Restrict, onUpdate: NoAction, map: "fk_assignment_request")
+  bloodbanks       bloodbanks         @relation(fields: [bloodbankid], references: [bloodbankid], onDelete: Restrict, onUpdate: NoAction, map: "fk_assignment_bloodbank")
+  assignedby       users              @relation("AssignmentAssignedBy", fields: [assignedbyuserid], references: [userid], onDelete: Restrict, onUpdate: NoAction, map: "fk_assignment_assignedby")
+  respondedby      users?             @relation("AssignmentRespondedBy", fields: [respondedbyuserid], references: [userid], onDelete: Restrict, onUpdate: NoAction, map: "fk_assignment_respondedby")
+  bloodreservations bloodreservations[]
+}
+
+model bloodreservations {
+  reservationid      String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  requestid          String                 @db.Uuid
+  assignmentid       String                 @db.Uuid
+  bloodbankid        String                 @db.Uuid
+  reservationstatus  String                 @default("ACTIVE") @db.VarChar(30)
+  reservedbyuserid   String                 @db.Uuid
+  reservedat         DateTime               @default(now()) @db.Timestamp(6)
+  expiresat          DateTime               @db.Timestamp(6)
+  cancelledat        DateTime?              @db.Timestamp(6)
+  cancelledbyuserid  String?                @db.Uuid
+  cancellationreason String?
+  createdat          DateTime?              @default(now()) @db.Timestamp(6)
+  updatedat          DateTime?              @default(now()) @db.Timestamp(6)
+  bloodrequests      bloodrequests          @relation(fields: [requestid], references: [requestid], onDelete: Restrict, onUpdate: NoAction, map: "fk_reservation_request")
+  assignment         requisitionassignments @relation(fields: [assignmentid], references: [assignmentid], onDelete: Restrict, onUpdate: NoAction, map: "fk_reservation_assignment")
+  bloodbanks         bloodbanks             @relation(fields: [bloodbankid], references: [bloodbankid], onDelete: Restrict, onUpdate: NoAction, map: "fk_reservation_bloodbank")
+  reservedby         users                  @relation("ReservationReservedBy", fields: [reservedbyuserid], references: [userid], onDelete: Restrict, onUpdate: NoAction, map: "fk_reservation_reservedby")
+  cancelledby        users?                 @relation("ReservationCancelledBy", fields: [cancelledbyuserid], references: [userid], onDelete: Restrict, onUpdate: NoAction, map: "fk_reservation_cancelledby")
+  reservationitems   reservationitems[]
+  clinicalcrossmatches clinicalcrossmatches[]
+}
+
+model reservationitems {
+  itemid           String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reservationid    String                 @db.Uuid
+  unitid           String                 @db.Uuid
+  itemstatus       String                 @default("RESERVED") @db.VarChar(30)
+  allocatedat      DateTime               @default(now()) @db.Timestamp(6)
+  preparedat       DateTime?              @db.Timestamp(6)
+  dispatchedat     DateTime?              @db.Timestamp(6)
+  deliveredat      DateTime?              @db.Timestamp(6)
+  releasedat       DateTime?              @db.Timestamp(6)
+  createdat        DateTime?              @default(now()) @db.Timestamp(6)
+  updatedat        DateTime?              @default(now()) @db.Timestamp(6)
+  reservation      bloodreservations      @relation(fields: [reservationid], references: [reservationid], onDelete: Restrict, onUpdate: NoAction, map: "fk_item_reservation")
+  unit             inventoryunits         @relation(fields: [unitid], references: [unitid], onDelete: Restrict, onUpdate: NoAction, map: "fk_item_unit")
+  clinicalcrossmatches clinicalcrossmatches[]
+
+  @@unique([reservationid, unitid], map: "uq_reservation_unit")
+}
+
+model clinicalcrossmatches {
+  crossmatchid       String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reservationitemid  String             @db.Uuid
+  reservationid      String             @db.Uuid
+  requestid          String             @db.Uuid
+  unitid             String             @db.Uuid
+  attemptnumber      Int                @default(1)
+  iscurrent          Boolean            @default(true)
+  isinvalidated      Boolean            @default(false)
+  invalidationreason String?
+  methodology        String             @db.VarChar(50)
+  testresult         String             @db.VarChar(30)
+  validuntil         DateTime           @db.Timestamp(6)
+  testedat           DateTime           @default(now()) @db.Timestamp(6)
+  testedbyuserid     String             @db.Uuid
+  verifiedat         DateTime           @default(now()) @db.Timestamp(6)
+  verifiedbyuserid   String             @db.Uuid
+  createdat          DateTime?          @default(now()) @db.Timestamp(6)
+  item               reservationitems   @relation(fields: [reservationitemid], references: [itemid], onDelete: Restrict, onUpdate: NoAction, map: "fk_crossmatch_item")
+  reservation        bloodreservations  @relation(fields: [reservationid], references: [reservationid], onDelete: Restrict, onUpdate: NoAction, map: "fk_crossmatch_reservation")
+  request            bloodrequests      @relation(fields: [requestid], references: [requestid], onDelete: Restrict, onUpdate: NoAction, map: "fk_crossmatch_request")
+  unit               inventoryunits     @relation(fields: [unitid], references: [unitid], onDelete: Restrict, onUpdate: NoAction, map: "fk_crossmatch_unit")
+  testedby           users              @relation("CrossmatchTestedBy", fields: [testedbyuserid], references: [userid], onDelete: Restrict, onUpdate: NoAction, map: "fk_crossmatch_tester")
+  verifiedby         users              @relation("CrossmatchVerifiedBy", fields: [verifiedbyuserid], references: [userid], onDelete: Restrict, onUpdate: NoAction, map: "fk_crossmatch_verifier")
+
+  @@unique([reservationitemid, attemptnumber], map: "uq_crossmatch_item_attempt")
+}
+
+model unitdispositionhistory {
+  dispositionid      String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  unitid             String         @db.Uuid
+  bloodbankid        String         @db.Uuid
+  actoruserid        String         @db.Uuid
+  previousstatus     String         @db.VarChar(30)
+  newstatus          String         @db.VarChar(30)
+  reason             String         @db.VarChar(255)
+  temperaturereading Decimal?       @db.Decimal(4, 2)
+  notes              String?
+  createdat          DateTime?      @default(now()) @db.Timestamp(6)
+  unit               inventoryunits @relation(fields: [unitid], references: [unitid], onDelete: Restrict, onUpdate: NoAction, map: "fk_disposition_unit")
+  bloodbank          bloodbanks     @relation(fields: [bloodbankid], references: [bloodbankid], onDelete: Restrict, onUpdate: NoAction, map: "fk_disposition_bloodbank")
+  actor              users          @relation("DispositionActor", fields: [actoruserid], references: [userid], onDelete: Restrict, onUpdate: NoAction, map: "fk_disposition_actor")
 }
 
 enum approval_status {

@@ -56,7 +56,7 @@ function SignInForm() {
 
       if (res.success && res.token) {
         setAuthToken(res.token);
-        setStoredUser(res.user, res.donor, res.requester, res.hospital);
+        setStoredUser(res.user, res.donor, res.requester, res.hospital, res.bloodbank);
 
         if (res.user.role === "DONOR") {
           router.push("/donor/dashboard");
@@ -64,6 +64,8 @@ function SignInForm() {
           router.push("/requester/dashboard");
         } else if (res.user.role === "HOSPITAL") {
           router.push("/hospital/dashboard");
+        } else if (res.user.role === "BLOOD_BANK") {
+          router.push("/bloodbank/dashboard");
         } else {
           router.push("/dashboard");
         }

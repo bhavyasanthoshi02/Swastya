@@ -15,6 +15,7 @@ import {
   ExternalLink,
   Plus,
   Users,
+  Truck,
 } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { api } from "@/lib/api";
@@ -165,6 +166,12 @@ export function HospitalTopNav({
       label: "Blood Requests",
       icon: Droplets,
       active: pathname.startsWith("/hospital/requests") && pathname !== "/hospital/requests/new",
+    },
+    {
+      href: "/hospital/receipt",
+      label: "Delivery Receipt",
+      icon: Truck,
+      active: pathname.startsWith("/hospital/receipt"),
     },
     {
       href: "/hospital/donors",

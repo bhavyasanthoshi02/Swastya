@@ -156,15 +156,19 @@ export const checkBloodBankOwnership = async (
 ) => {
     try {
         const user = (req as any).user;
+        const bloodBankId = (req.params.bloodBankId || req.params.id) as string;
 
-        // Admin can access everything
-        if (user.role === "ADMIN") {
-            return next();
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (!bloodBankId || !uuidRegex.test(bloodBankId)) {
+            return res.status(404).json({
+                success: false,
+                message: "Blood bank not found",
+            });
         }
 
         const bloodBank = await prisma.bloodbanks.findUnique({
             where: {
-                bloodbankid: req.params.bloodBankId as string,
+                bloodbankid: bloodBankId,
             },
         });
 
@@ -175,6 +179,12 @@ export const checkBloodBankOwnership = async (
             });
         }
 
+        // Admin can access everything
+        if (user.role === "ADMIN") {
+            (req as any).bloodBank = bloodBank;
+            return next();
+        }
+
         if (bloodBank.userid !== user.userid) {
             return res.status(403).json({
                 success: false,
@@ -182,6 +192,7 @@ export const checkBloodBankOwnership = async (
             });
         }
 
+        (req as any).bloodBank = bloodBank;
         next();
     } catch (error) {
         console.error("Blood Bank Ownership Error:", error);

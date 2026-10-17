@@ -1,4 +1,4 @@
-import { getAuthToken, clearAuthToken, AuthUser, AuthDonor, AuthRequester, AuthHospital } from "./auth";
+import { getAuthToken, clearAuthToken, AuthUser, AuthDonor, AuthRequester, AuthHospital, AuthBloodBank } from "./auth";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL?.replace(/\/+$/, "") || "http://localhost:5000";
@@ -343,6 +343,118 @@ export interface ImportCommitResult {
   errors: any[];
 }
 
+export interface InventoryItem {
+  inventoryid: string;
+  bloodbankid: string;
+  bloodgroup: string;
+  bloodcomponent: string;
+  unitsavailable: number;
+  unitsreserved: number;
+  expirydate: string;
+  lastupdated?: string;
+  createdat?: string;
+  updatedat?: string;
+}
+
+export interface BloodBankDashboardData {
+  totalInventoryRecords: number;
+  totalUnitsAvailable: number;
+  totalUnitsReserved: number;
+  recentInventory: InventoryItem[];
+}
+
+export interface InventoryUnitItem {
+  unitid: string;
+  bloodbankid: string;
+  inventoryid: string;
+  unitbarcode: string;
+  bloodgroup: string;
+  bloodcomponent: string;
+  volume_ml: number;
+  status: "QUARANTINED" | "AVAILABLE" | "RESERVED" | "IN_TRANSIT" | "DELIVERED" | "DISCARDED";
+  screeningstatus: "PENDING" | "PASSED" | "FAILED";
+  collectiondate: string;
+  expirydate: string;
+  islegacyreconciled: boolean;
+  createdat: string;
+  updatedat: string;
+  screeningrecords?: UnitScreeningRecordItem[];
+}
+
+export interface UnitScreeningRecordItem {
+  recordid: string;
+  unitid: string;
+  hivstatus: string;
+  hbvstatus: string;
+  hcvstatus: string;
+  syphilisstatus: string;
+  malariastatus: string;
+  overallstatus: "PASSED" | "FAILED";
+  testedat: string;
+  labtechnicianname: string;
+  medicalofficername: string;
+  testkitdetails?: string | null;
+  notes?: string | null;
+}
+
+export interface RequisitionAssignmentItem {
+  assignmentid: string;
+  requestid: string;
+  bloodbankid: string;
+  assignedbyuserid?: string | null;
+  status: "PENDING" | "ACCEPTED" | "REJECTED" | "SUPERSEDED";
+  assignedat: string;
+  respondedat?: string | null;
+  rejectionreason?: string | null;
+  notes?: string | null;
+  bloodrequests?: BloodRequestItem;
+  bloodbanks?: AuthBloodBank;
+  bloodreservations?: BloodReservationItem[];
+}
+
+export interface BloodReservationItem {
+  reservationid: string;
+  requestid: string;
+  bloodbankid: string;
+  assignmentid: string;
+  reservedbyuserid?: string | null;
+  status: "RESERVED" | "PREPARED" | "DISPATCHED" | "DELIVERED" | "CANCELLED";
+  reservedat: string;
+  dispatchedat?: string | null;
+  deliveredat?: string | null;
+  cancelledat?: string | null;
+  cancellationreason?: string | null;
+  couriertemperature_c?: number | null;
+  items?: ReservationItemDetail[];
+  bloodrequests?: BloodRequestItem;
+  bloodbanks?: AuthBloodBank;
+}
+
+export interface ReservationItemDetail {
+  reservationitemid: string;
+  reservationid: string;
+  unitid: string;
+  status: "RESERVED" | "PREPARED" | "DISPATCHED" | "DELIVERED" | "CANCELLED" | "RETURNED_EXCURSION";
+  unitbarcode?: string;
+  bloodgroup?: string;
+  bloodcomponent?: string;
+  inventoryunits?: InventoryUnitItem;
+  crossmatches?: ClinicalCrossmatchItem[];
+}
+
+export interface ClinicalCrossmatchItem {
+  crossmatchid: string;
+  reservationid: string;
+  reservationitemid: string;
+  unitid: string;
+  requestid: string;
+  crossmatchresult: "COMPATIBLE" | "INCOMPATIBLE" | "INCONCLUSIVE";
+  testedat: string;
+  technologistname: string;
+  method?: string | null;
+  notes?: string | null;
+}
+
 async function request<T = any>(endpoint: string, options: RequestOptions = {}): Promise<T> {
   const { params, headers, ...customConfig } = options;
 
@@ -463,6 +575,7 @@ export const api = {
         donor: AuthDonor | null;
         requester: AuthRequester | null;
         hospital: AuthHospital | null;
+        bloodbank: AuthBloodBank | null;
         message?: string;
       }>("/auth/login", credentials),
 
@@ -474,6 +587,7 @@ export const api = {
         donor: AuthDonor | null;
         requester: AuthRequester | null;
         hospital: AuthHospital | null;
+        bloodbank: AuthBloodBank | null;
         message?: string;
       }>("/auth/register", userData),
 
@@ -484,6 +598,7 @@ export const api = {
         donor: AuthDonor | null;
         requester: AuthRequester | null;
         hospital: AuthHospital | null;
+        bloodbank: AuthBloodBank | null;
       }>("/auth/me"),
 
     verifyActivationToken: (token: string) =>
@@ -664,6 +779,50 @@ export const api = {
         message: string;
         record: any;
       }>(`/hospitals/me/donors/${donorId}/history/${historyId}`, data),
+
+    assignRequisition: (
+      requestId: string,
+      data: {
+        bloodbankid: string;
+        notes?: string;
+      },
+      idempotencyKey?: string
+    ) => {
+      const headers: Record<string, string> = {};
+      if (idempotencyKey) {
+        headers["Idempotency-Key"] = idempotencyKey;
+      }
+      return api.post<{
+        success: boolean;
+        message: string;
+        assignment: RequisitionAssignmentItem;
+      }>(`/bloodrequests/${requestId}/assign`, data, { headers });
+    },
+
+    confirmReceipt: (
+      reservationId: string,
+      data: {
+        itemReceipts: Array<{
+          itemId: string;
+          receivedStatus: "ACCEPTED" | "REJECTED_EXCURSION";
+          tempReading?: number;
+          notes?: string;
+        }>;
+      },
+      idempotencyKey?: string
+    ) => {
+      const headers: Record<string, string> = {};
+      if (idempotencyKey) {
+        headers["Idempotency-Key"] = idempotencyKey;
+      }
+      return api.post<{
+        success: boolean;
+        message?: string;
+        deliveredCount: number;
+        excursionCount: number;
+        reservation?: BloodReservationItem;
+      }>(`/bloodrequests/reservations/${reservationId}/receipt`, data, { headers });
+    },
   },
 
   bloodRequests: {
@@ -878,6 +1037,321 @@ export const api = {
 
     delete: (id: string) =>
       api.delete<{ success: boolean; message: string }>(`/notifications/${id}`),
+  },
+
+  bloodbank: {
+    getProfile: () =>
+      api.get<{
+        success: boolean;
+        bloodbank: AuthBloodBank;
+      }>("/bloodbanks/me"),
+
+    updateProfile: (data: Partial<AuthBloodBank>) =>
+      api.put<{
+        success: boolean;
+        message: string;
+        bloodbank: AuthBloodBank;
+      }>("/bloodbanks/me", data),
+
+    createProfile: (data: {
+      bloodbankname: string;
+      licensenumber: string;
+      contactpersonname: string;
+      contactpersonphone: string;
+      address: string;
+      city: string;
+      state: string;
+      pincode: string;
+      latitude?: number | null;
+      longitude?: number | null;
+    }) =>
+      api.post<AuthBloodBank>("/bloodbanks", data),
+
+    getDashboard: (bloodBankId: string) =>
+      api.get<BloodBankDashboardData>(`/bloodbanks/${bloodBankId}/dashboard`),
+
+    getInventory: (bloodBankId: string) =>
+      api.get<{
+        success: boolean;
+        total: number;
+        inventory: InventoryItem[];
+      }>(`/bloodbanks/${bloodBankId}/inventory`),
+
+    addInventory: (
+      bloodBankId: string,
+      data: {
+        bloodgroup: string;
+        bloodcomponent: string;
+        quantity: number;
+        expirydate: string;
+        reason?: string;
+      },
+      idempotencyKey?: string
+    ) => {
+      const headers: Record<string, string> = {};
+      if (idempotencyKey) {
+        headers["Idempotency-Key"] = idempotencyKey;
+      }
+      return api.post<{
+        success: boolean;
+        message: string;
+        inventory: InventoryItem;
+        merged: boolean;
+      }>(`/bloodbanks/${bloodBankId}/inventory`, data, { headers });
+    },
+
+    adjustInventory: (
+      bloodBankId: string,
+      inventoryId: string,
+      data: {
+        operation: "INCREMENT" | "DECREMENT";
+        quantity: number;
+        reason: string;
+      },
+      idempotencyKey?: string
+    ) => {
+      const headers: Record<string, string> = {};
+      if (idempotencyKey) {
+        headers["Idempotency-Key"] = idempotencyKey;
+      }
+      return api.patch<{
+        success: boolean;
+        message: string;
+        inventory: InventoryItem;
+        operation: string;
+        delta: number;
+      }>(`/bloodbanks/${bloodBankId}/inventory/${inventoryId}`, data, { headers });
+    },
+
+    // Phase 6.2.3 & 6.2.4: Unit Traceability, Screening, Requisitions, Crossmatching, and Dispatch
+    getUnits: (
+      bloodBankId: string,
+      params?: { status?: string; bloodgroup?: string; bloodcomponent?: string }
+    ) =>
+      api.get<{
+        success: boolean;
+        total: number;
+        units: InventoryUnitItem[];
+      }>(`/bloodbanks/${bloodBankId}/units`, { params }),
+
+    intakeUnit: (
+      bloodBankId: string,
+      data: {
+        inventoryid: string;
+        unitbarcode: string;
+        bloodgroup: string;
+        bloodcomponent: string;
+        volume_ml?: number;
+        collectiondate?: string;
+        expirydate: string;
+      },
+      idempotencyKey?: string
+    ) => {
+      const headers: Record<string, string> = {};
+      if (idempotencyKey) {
+        headers["Idempotency-Key"] = idempotencyKey;
+      }
+      return api.post<{
+        success: boolean;
+        message: string;
+        unit: InventoryUnitItem;
+      }>(`/bloodbanks/${bloodBankId}/units/intake`, data, { headers });
+    },
+
+    recordScreening: (
+      bloodBankId: string,
+      unitId: string,
+      data: {
+        testresults: {
+          hiv: string;
+          hbv: string;
+          hcv: string;
+          syphilis: string;
+          malaria: string;
+        };
+        overallstatus: "PASSED" | "FAILED";
+        labtechnicianname: string;
+        medicalofficername: string;
+        testkitdetails?: string;
+        notes?: string;
+      },
+      idempotencyKey?: string
+    ) => {
+      const headers: Record<string, string> = {};
+      if (idempotencyKey) {
+        headers["Idempotency-Key"] = idempotencyKey;
+      }
+      return api.post<{
+        success: boolean;
+        message: string;
+        record: UnitScreeningRecordItem;
+        unit: InventoryUnitItem;
+      }>(`/bloodbanks/${bloodBankId}/units/${unitId}/screening`, data, { headers });
+    },
+
+    getScreeningHistory: (bloodBankId: string, unitId: string) =>
+      api.get<{
+        success: boolean;
+        unitid: string;
+        total: number;
+        history: UnitScreeningRecordItem[];
+      }>(`/bloodbanks/${bloodBankId}/units/${unitId}/screening-history`),
+
+    getAssignments: (
+      bloodBankId: string,
+      params?: { status?: string }
+    ) =>
+      api.get<{
+        success: boolean;
+        total: number;
+        assignments: RequisitionAssignmentItem[];
+      }>(`/bloodbanks/${bloodBankId}/assignments`, { params }),
+
+    updateAssignment: (
+      bloodBankId: string,
+      assignmentId: string,
+      data: {
+        status: "ACCEPTED" | "REJECTED";
+        rejectionreason?: string;
+      },
+      idempotencyKey?: string
+    ) => {
+      const headers: Record<string, string> = {};
+      if (idempotencyKey) {
+        headers["Idempotency-Key"] = idempotencyKey;
+      }
+      return api.patch<{
+        success: boolean;
+        message: string;
+        assignment: RequisitionAssignmentItem;
+      }>(`/bloodbanks/${bloodBankId}/assignments/${assignmentId}`, data, { headers });
+    },
+
+    createReservation: (
+      bloodBankId: string,
+      data: {
+        assignmentid: string;
+        bloodgroup: string;
+        bloodcomponent: string;
+        quantity: number;
+        notes?: string;
+        requestedunitids?: string[];
+      },
+      idempotencyKey?: string
+    ) => {
+      const headers: Record<string, string> = {};
+      if (idempotencyKey) {
+        headers["Idempotency-Key"] = idempotencyKey;
+      }
+      return api.post<{
+        success: boolean;
+        message: string;
+        reservation: BloodReservationItem;
+      }>(`/bloodbanks/${bloodBankId}/reservations`, data, { headers });
+    },
+
+    recordCrossmatch: (
+      bloodBankId: string,
+      data: {
+        reservationid: string;
+        reservationitemid: string;
+        unitid: string;
+        crossmatchresult: "COMPATIBLE" | "INCOMPATIBLE" | "INCONCLUSIVE";
+        method?: string;
+        technologistname: string;
+        notes?: string;
+      },
+      idempotencyKey?: string
+    ) => {
+      const headers: Record<string, string> = {};
+      if (idempotencyKey) {
+        headers["Idempotency-Key"] = idempotencyKey;
+      }
+      return api.post<{
+        success: boolean;
+        message: string;
+        crossmatch: ClinicalCrossmatchItem;
+        item: ReservationItemDetail;
+      }>(`/bloodbanks/${bloodBankId}/crossmatches`, data, { headers });
+    },
+
+    dispatchReservation: (
+      bloodBankId: string,
+      reservationId: string,
+      data: {
+        couriertemperature_c: number;
+        dispatchnotes?: string;
+      },
+      idempotencyKey?: string
+    ) => {
+      const headers: Record<string, string> = {};
+      if (idempotencyKey) {
+        headers["Idempotency-Key"] = idempotencyKey;
+      }
+      return api.post<{
+        success: boolean;
+        message: string;
+        reservation: BloodReservationItem;
+      }>(`/bloodbanks/${bloodBankId}/reservations/${reservationId}/dispatch`, data, { headers });
+    },
+
+    cancelReservation: (
+      bloodBankId: string,
+      reservationId: string,
+      data: {
+        reason: string;
+      },
+      idempotencyKey?: string
+    ) => {
+      const headers: Record<string, string> = {};
+      if (idempotencyKey) {
+        headers["Idempotency-Key"] = idempotencyKey;
+      }
+      return api.post<{
+        success: boolean;
+        message: string;
+        reservation: BloodReservationItem;
+      }>(`/bloodbanks/${bloodBankId}/reservations/${reservationId}/cancel`, data, { headers });
+    },
+
+    discardUnit: (
+      bloodBankId: string,
+      unitId: string,
+      data: {
+        reason: string;
+        disposalnotes?: string;
+      },
+      idempotencyKey?: string
+    ) => {
+      const headers: Record<string, string> = {};
+      if (idempotencyKey) {
+        headers["Idempotency-Key"] = idempotencyKey;
+      }
+      return api.post<{
+        success: boolean;
+        message: string;
+        unit: InventoryUnitItem;
+      }>(`/bloodbanks/${bloodBankId}/units/${unitId}/discard`, data, { headers });
+    },
+
+    getReconciliation: (bloodBankId: string) =>
+      api.get<{
+        success: boolean;
+        reconciliation: {
+          bloodBankId: string;
+          aggregateAvailableUnits: number;
+          aggregateReservedUnits: number;
+          aggregateQuarantinedUnits: number;
+          totalVaultPhysicalStock: number;
+          activeUnitsTotal: number;
+          reconciled: boolean;
+        };
+      }>(`/bloodbanks/${bloodBankId}/inventory/reconciliation`),
+  },
+
+  bloodbanks: {
+    getAll: () => api.get<AuthBloodBank[]>("/bloodbanks"),
+    getById: (id: string) => api.get<AuthBloodBank>(`/bloodbanks/${id}`),
   },
 };
 

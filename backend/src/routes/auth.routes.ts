@@ -84,6 +84,7 @@ router.get("/me", authenticate, async (req: Request, res: Response) => {
                 donors: true,
                 requesters: true,
                 hospitals: true,
+                bloodbanks: true,
             },
         });
 
@@ -103,6 +104,7 @@ router.get("/me", authenticate, async (req: Request, res: Response) => {
             donor: user.donors || null,
             requester: user.requesters || null,
             hospital: user.hospitals || null,
+            bloodbank: user.bloodbanks || null,
         });
     } catch (error) {
         console.error("Auth Me Error:", error);
@@ -506,6 +508,7 @@ router.post("/login", async (req: Request, res: Response) => {
                 donors: true,
                 requesters: true,
                 hospitals: true,
+                bloodbanks: true,
             },
         });
 
@@ -546,6 +549,7 @@ router.post("/login", async (req: Request, res: Response) => {
             donor: user.donors || null,
             requester: user.requesters || null,
             hospital: user.hospitals || null,
+            bloodbank: user.bloodbanks || null,
         });
     } catch (error) {
         console.error("Login Error:", error);

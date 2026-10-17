@@ -29,6 +29,10 @@ export default function DashboardPage() {
         router.replace("/donor/dashboard");
       } else if (user?.role === "REQUESTER" || (user?.role as any) === "PATIENT") {
         router.replace("/requester/dashboard");
+      } else if (user?.role === "HOSPITAL") {
+        router.replace("/hospital/dashboard");
+      } else if (user?.role === "BLOOD_BANK") {
+        router.replace("/bloodbank/dashboard");
       }
     }
   }, [router]);

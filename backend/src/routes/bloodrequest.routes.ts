@@ -5,11 +5,14 @@ import crypto from "crypto";
 import multer from "multer";
 import { prisma } from "../config/prisma";
 import { authenticate } from "../middleware/auth.middleware";
+import { authorize } from "../middleware/role.middleware";
 import { blood_group, availability_status, notification_type } from "../generated/prisma/enums";
 import { validateCoordinates } from "../utils/distance";
 import { validatePrescriptionFile, getPrescriptionStorageDir } from "../utils/fileValidation";
 import { triggerEmergencyBroadcast, getRequestBroadcastStatus } from "../services/broadcast.service";
 import { isDonorCompatibleWithRecipient } from "../utils/bloodCompatibility";
+import { scheduleEmergencyFollowUp, cancelPendingJobs } from "../services/scheduler.service";
+import { UnitTraceabilityService } from "../services/unitTraceability.service";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -809,6 +812,13 @@ router.post("/", authenticate, handlePrescriptionUpload, async (req: Request, re
             }).catch((err) => {
                 console.error("Emergency broadcast creation error:", err);
             });
+
+            // Schedule persistent follow-up job for emergency escalation
+            await scheduleEmergencyFollowUp({
+                requestId: bloodRequest.requestid,
+            }).catch((err) => {
+                console.error("Emergency scheduler follow-up creation error:", err);
+            });
         }
 
         res.status(201).json(fullRequest || bloodRequest);
@@ -1101,14 +1111,22 @@ router.put("/:id", authenticate, async (req: Request, res: Response) => {
             }).catch((err) => {
                 console.error("Emergency broadcast trigger on update error:", err);
             });
+
+            await scheduleEmergencyFollowUp({
+                requestId: targetId,
+            }).catch((err) => {
+                console.error("Emergency scheduler follow-up on escalation error:", err);
+            });
         }
 
-        // If requisition transitioned to a terminal status, complete/cancel any active broadcasts
+        // If requisition transitioned to a terminal status, complete/cancel any active broadcasts & pending scheduler jobs
         if (terminalStatuses.includes(bloodRequest.status || "")) {
             await prisma.emergencybroadcasts.updateMany({
                 where: { requestid: targetId, status: "ACTIVE" },
                 data: { status: bloodRequest.status || "CANCELLED" },
             }).catch(() => {});
+
+            await cancelPendingJobs(targetId, `Request transitioned to ${bloodRequest.status}`).catch(() => {});
         }
 
         res.status(200).json(bloodRequest);
@@ -1754,6 +1772,13 @@ router.post("/:id/broadcast", authenticate, async (req: Request, res: Response) 
             return res.status(400).json(result);
         }
 
+        // If manual trigger/expansion succeeded, ensure an emergency follow-up job is scheduled
+        await scheduleEmergencyFollowUp({
+            requestId: targetId,
+        }).catch((err) => {
+            console.error("Emergency scheduler follow-up on manual trigger error:", err);
+        });
+
         return res.status(200).json(result);
     } catch (error) {
         console.error("Error triggering emergency broadcast:", error);
@@ -2357,6 +2382,188 @@ router.patch("/:id/transit-status", authenticate, async (req: Request, res: Resp
         return res.status(500).json({
             success: false,
             message: "Failed to update transit status",
+        });
+    }
+});
+
+/**
+ * GET /bloodrequests/:id/scheduler-jobs
+ * Inspect persistent background scheduler jobs for an emergency requisition.
+ * Restricted to:
+ * - Request Owner / Requester
+ * - Assigned Hospital
+ * - ADMIN
+ */
+router.get("/:id/scheduler-jobs", authenticate, async (req: Request, res: Response) => {
+    try {
+        const user = (req as any).user;
+        const targetId = (Array.isArray(req.params.id) ? req.params.id[0] : req.params.id) as string;
+
+        if (!targetId || !UUID_REGEX.test(targetId)) {
+            return res.status(404).json({ success: false, message: "Blood request not found" });
+        }
+
+        const bloodRequest = await prisma.bloodrequests.findUnique({
+            where: { requestid: targetId },
+            include: { requesters: true, hospitals: true },
+        });
+
+        if (!bloodRequest) {
+            return res.status(404).json({ success: false, message: "Blood request not found" });
+        }
+
+        const isOwner = bloodRequest.createdbyuserid === user.userid;
+        const isAdmin = user.role === "ADMIN";
+        let isRequesterOwner = false;
+        if (user.role === "REQUESTER") {
+            const requester = await prisma.requesters.findUnique({ where: { userid: user.userid } });
+            if (requester && bloodRequest.requesterid === requester.requesterid) {
+                isRequesterOwner = true;
+            }
+        }
+        let isHospitalOwner = false;
+        if (user.role === "HOSPITAL") {
+            const hospital = await prisma.hospitals.findUnique({ where: { userid: user.userid } });
+            if (hospital && bloodRequest.hospitalid === hospital.hospitalid) {
+                isHospitalOwner = true;
+            }
+        }
+
+        if (!isOwner && !isAdmin && !isRequesterOwner && !isHospitalOwner) {
+            return res.status(403).json({
+                success: false,
+                message: "Access denied: you are not authorized to inspect scheduler jobs for this request",
+            });
+        }
+
+        const jobs = await prisma.emergencyschedulerjobs.findMany({
+            where: { requestid: targetId },
+            orderBy: { scheduledfor: "asc" },
+            select: {
+                jobid: true,
+                requestid: true,
+                jobtype: true,
+                status: true,
+                scheduledfor: true,
+                attemptcount: true,
+                maxattempts: true,
+                lasterror: true,
+                idempotencykey: true,
+                createdat: true,
+                updatedat: true,
+                completedat: true,
+            },
+        });
+
+        return res.status(200).json({
+            success: true,
+            requestId: targetId,
+            totalJobs: jobs.length,
+            jobs,
+        });
+    } catch (error) {
+        console.error("Error inspecting scheduler jobs:", error);
+        return res.status(500).json({ success: false, message: "Failed to inspect scheduler jobs" });
+    }
+});
+
+
+/*
+ * ============================================================================
+ * SWASTYA PHASE 6.2.3: REQUISITION ASSIGNMENT & HOSPITAL RECEIPT
+ * ============================================================================
+ */
+
+/*
+ * ASSIGN BLOOD REQUEST TO BLOOD BANK
+ * POST /bloodrequests/:requestId/assign
+ */
+router.post("/:requestId/assign", authenticate, async (req: Request, res: Response) => {
+    try {
+        const user = (req as any).user;
+        const requestId = (Array.isArray(req.params.requestId) ? req.params.requestId[0] : req.params.requestId) as string;
+        const { bloodBankId } = req.body;
+
+        if (!bloodBankId) {
+            return res.status(400).json({
+                success: false,
+                message: "bloodBankId is required to assign requisition",
+            });
+        }
+
+        const result = await UnitTraceabilityService.assignRequisition(requestId, bloodBankId, user.userid);
+        return res.status(201).json(result);
+    } catch (error: any) {
+        console.error("Error assigning requisition:", error);
+        const status = error.statusCode || 500;
+        return res.status(status).json({
+            success: false,
+            message: error.message || "Failed to assign requisition",
+        });
+    }
+});
+
+/*
+ * CONFIRM HOSPITAL RECEIPT AND EXCURSION QUARANTINE
+ * POST /bloodrequests/reservations/:reservationId/receipt
+ */
+router.post("/reservations/:reservationId/receipt", authenticate, authorize("HOSPITAL", "ADMIN"), async (req: Request, res: Response) => {
+    try {
+        const user = (req as any).user;
+        const reservationId = (Array.isArray(req.params.reservationId) ? req.params.reservationId[0] : req.params.reservationId) as string;
+
+        if (user.role !== "ADMIN") {
+            const reservationRecord = await prisma.bloodreservations.findUnique({
+                where: { reservationid: reservationId },
+                include: { bloodrequests: true },
+            });
+            if (!reservationRecord) {
+                return res.status(404).json({ success: false, message: "Reservation not found" });
+            }
+            const userHospital = await prisma.hospitals.findFirst({
+                where: { userid: user.userid },
+            });
+            const matchesHospital = userHospital && reservationRecord.bloodrequests.hospitalid && userHospital.hospitalid === reservationRecord.bloodrequests.hospitalid;
+            const matchesCreator = reservationRecord.bloodrequests.createdbyuserid === user.userid;
+            if (!matchesHospital && !matchesCreator) {
+                return res.status(403).json({
+                    success: false,
+                    message: "Forbidden: You do not have ownership of the requesting hospital facility",
+                });
+            }
+        }
+
+        const rawIdempotencyKey = req.headers["idempotency-key"];
+        if (!rawIdempotencyKey || typeof rawIdempotencyKey !== "string" || !rawIdempotencyKey.trim()) {
+            return res.status(400).json({
+                success: false,
+                message: "A valid Idempotency-Key header is required for receipt confirmation",
+            });
+        }
+        const idempotencyKey = rawIdempotencyKey.trim();
+
+        const { itemReceipts } = req.body;
+        if (!itemReceipts || !Array.isArray(itemReceipts) || itemReceipts.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: "itemReceipts array is required",
+            });
+        }
+
+        const result = await UnitTraceabilityService.confirmHospitalReceipt(
+            reservationId,
+            user.userid,
+            itemReceipts,
+            idempotencyKey
+        );
+
+        return res.status(200).json(result);
+    } catch (error: any) {
+        console.error("Error confirming hospital receipt:", error);
+        const status = error.statusCode || 500;
+        return res.status(status).json({
+            success: false,
+            message: error.message || "Failed to confirm receipt",
         });
     }
 });

@@ -60,11 +60,30 @@ export interface AuthHospital {
   updatedat?: string;
 }
 
+export interface AuthBloodBank {
+  bloodbankid: string;
+  userid: string;
+  bloodbankname: string;
+  licensenumber: string;
+  contactpersonname: string;
+  contactpersonphone: string;
+  address: string;
+  city: string;
+  state: string;
+  pincode: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  approvalstatus: "PENDING" | "APPROVED" | "REJECTED" | string;
+  createdat?: string;
+  updatedat?: string;
+}
+
 const TOKEN_KEY = "swastya_auth_token";
 const USER_KEY = "swastya_auth_user";
 const DONOR_KEY = "swastya_auth_donor";
 const REQUESTER_KEY = "swastya_auth_requester";
 const HOSPITAL_KEY = "swastya_auth_hospital";
+const BLOOD_BANK_KEY = "swastya_auth_bloodbank";
 
 export const getAuthToken = (): string | null => {
   if (typeof window === "undefined") return null;
@@ -84,10 +103,12 @@ export const clearAuthToken = (): void => {
   localStorage.removeItem(DONOR_KEY);
   localStorage.removeItem(REQUESTER_KEY);
   localStorage.removeItem(HOSPITAL_KEY);
+  localStorage.removeItem(BLOOD_BANK_KEY);
   if (typeof sessionStorage !== "undefined") {
     sessionStorage.removeItem("swastya_donor_profile");
     sessionStorage.removeItem("swastya_requester_profile");
     sessionStorage.removeItem("swastya_hospital_profile");
+    sessionStorage.removeItem("swastya_bloodbank_profile");
   }
   window.dispatchEvent(new Event("swastya-auth-change"));
 };
@@ -107,7 +128,8 @@ export const setStoredUser = (
   user: AuthUser,
   donor?: AuthDonor | null,
   requester?: AuthRequester | null,
-  hospital?: AuthHospital | null
+  hospital?: AuthHospital | null,
+  bloodbank?: AuthBloodBank | null
 ): void => {
   if (typeof window === "undefined") return;
   localStorage.setItem(USER_KEY, JSON.stringify(user));
@@ -127,6 +149,12 @@ export const setStoredUser = (
     localStorage.setItem(HOSPITAL_KEY, JSON.stringify(hospital));
   } else {
     localStorage.removeItem(HOSPITAL_KEY);
+  }
+
+  if (bloodbank) {
+    localStorage.setItem(BLOOD_BANK_KEY, JSON.stringify(bloodbank));
+  } else {
+    localStorage.removeItem(BLOOD_BANK_KEY);
   }
 
   window.dispatchEvent(new Event("swastya-auth-change"));
@@ -157,6 +185,17 @@ export const getStoredRequester = (): AuthRequester | null => {
 export const getStoredHospital = (): AuthHospital | null => {
   if (typeof window === "undefined") return null;
   const raw = localStorage.getItem(HOSPITAL_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+};
+
+export const getStoredBloodBank = (): AuthBloodBank | null => {
+  if (typeof window === "undefined") return null;
+  const raw = localStorage.getItem(BLOOD_BANK_KEY);
   if (!raw) return null;
   try {
     return JSON.parse(raw);
