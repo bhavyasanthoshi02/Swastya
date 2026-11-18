@@ -859,6 +859,63 @@ export const api = {
     getPrescriptionDownloadUrl: (id: string, download: boolean = false) =>
       `${API_BASE_URL}/bloodrequests/${id}/prescription/file${download ? "?download=true" : ""}`,
 
+    fetchPrescriptionBlob: async (
+      id: string,
+      download: boolean = false
+    ): Promise<{ blob: Blob; filename: string; contentType: string }> => {
+      const token = getAuthToken();
+      if (!token) {
+        throw new ApiError("Authentication required to access prescription documents.", 401);
+      }
+
+      const url = `${API_BASE_URL}/bloodrequests/${id}/prescription/file${download ? "?download=true" : ""}`;
+      let response: Response;
+      try {
+        response = await fetch(url, {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+      } catch (error: any) {
+        throw new ApiError(
+          error?.message || "Network error while downloading prescription document.",
+          0
+        );
+      }
+
+      if (response.status === 401) {
+        clearAuthToken();
+        if (typeof window !== "undefined" && !window.location.pathname.startsWith("/signin")) {
+          window.location.href = "/signin?session=expired";
+        }
+        throw new ApiError("Your session has expired. Please sign in again.", 401);
+      }
+
+      if (!response.ok) {
+        let message = `Failed to retrieve prescription document (HTTP ${response.status}).`;
+        try {
+          const errJson = await response.json();
+          if (errJson?.message) message = errJson.message;
+        } catch {
+          // ignore non-JSON error body
+        }
+        if (response.status === 403) {
+          message = message || "Access denied: you are not authorized to view this prescription.";
+        } else if (response.status === 404) {
+          message = message || "Prescription document not found.";
+        }
+        throw new ApiError(message, response.status);
+      }
+
+      const contentType = response.headers.get("content-type") || "application/octet-stream";
+      const disposition = response.headers.get("content-disposition") || "";
+      const match = disposition.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)["']?/i);
+      const filename = match ? decodeURIComponent(match[1]) : `prescription-${id.slice(0, 8)}`;
+      const blob = await response.blob();
+      return { blob, filename, contentType };
+    },
+
     getBroadcastStatus: (id: string) =>
       api.get<{
         success: boolean;

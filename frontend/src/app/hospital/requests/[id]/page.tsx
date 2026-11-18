@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
@@ -73,6 +73,63 @@ export default function HospitalRequestDetailsPage() {
   const [reviewError, setReviewError] = useState<string | null>(null);
   const [reviewSuccess, setReviewSuccess] = useState<string | null>(null);
   const [showPrescriptionHistory, setShowPrescriptionHistory] = useState(false);
+  const [isLoadingPrescription, setIsLoadingPrescription] = useState(false);
+  const [prescriptionViewError, setPrescriptionViewError] = useState<string | null>(null);
+  const objectUrlsRef = useRef<string[]>([]);
+
+  useEffect(() => {
+    return () => {
+      objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+      objectUrlsRef.current = [];
+    };
+  }, []);
+
+  const handleOpenPrescription = async (download: boolean) => {
+    if (!request) return;
+    try {
+      setIsLoadingPrescription(true);
+      setPrescriptionViewError(null);
+      const { blob, filename } = await api.bloodRequests.fetchPrescriptionBlob(
+        request.requestid,
+        download
+      );
+      const objectUrl = URL.createObjectURL(blob);
+      objectUrlsRef.current.push(objectUrl);
+
+      if (download) {
+        const link = document.createElement("a");
+        link.href = objectUrl;
+        link.download = request.prescription?.originalfilename || filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        setTimeout(() => {
+          URL.revokeObjectURL(objectUrl);
+          objectUrlsRef.current = objectUrlsRef.current.filter((u) => u !== objectUrl);
+        }, 1000);
+      } else {
+        const opened = window.open(objectUrl, "_blank", "noopener,noreferrer");
+        if (!opened) {
+          URL.revokeObjectURL(objectUrl);
+          objectUrlsRef.current = objectUrlsRef.current.filter((u) => u !== objectUrl);
+          setPrescriptionViewError(
+            "Your browser blocked opening the prescription in a new tab. Please allow pop-ups or use the Download button."
+          );
+          return;
+        }
+        setTimeout(() => {
+          URL.revokeObjectURL(objectUrl);
+          objectUrlsRef.current = objectUrlsRef.current.filter((u) => u !== objectUrl);
+        }, 60000);
+      }
+    } catch (err: any) {
+      setPrescriptionViewError(
+        err?.message || "Unable to retrieve prescription document. Please try again."
+      );
+    } finally {
+      setIsLoadingPrescription(false);
+    }
+  };
 
   // Edit Clinical Notes inline state
   const [isEditingNotes, setIsEditingNotes] = useState(false);
@@ -689,24 +746,29 @@ export default function HospitalRequestDetailsPage() {
               {/* Review Actions Bar */}
               <div className="pt-2 flex flex-wrap items-center justify-between gap-3 text-xs border-t border-slate-100">
                 <div className="flex items-center gap-2">
-                  <a
-                    href={api.bloodRequests.getPrescriptionDownloadUrl(request.requestid)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#FAF6EE] hover:bg-[#F3E9D1] text-[#053845] font-semibold border border-[#F3E9D1] transition-colors cursor-pointer"
+                  <button
+                    type="button"
+                    disabled={isLoadingPrescription}
+                    onClick={() => handleOpenPrescription(false)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#FAF6EE] hover:bg-[#F3E9D1] text-[#053845] font-semibold border border-[#F3E9D1] transition-colors cursor-pointer disabled:opacity-50"
                   >
-                    <Eye className="w-3.5 h-3.5" />
+                    {isLoadingPrescription ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Eye className="w-3.5 h-3.5" />
+                    )}
                     <span>View Document</span>
-                  </a>
+                  </button>
 
-                  <a
-                    href={api.bloodRequests.getPrescriptionDownloadUrl(request.requestid, true)}
-                    download
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white hover:bg-slate-50 text-slate-600 font-semibold border border-slate-200 transition-colors cursor-pointer"
+                  <button
+                    type="button"
+                    disabled={isLoadingPrescription}
+                    onClick={() => handleOpenPrescription(true)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white hover:bg-slate-50 text-slate-600 font-semibold border border-slate-200 transition-colors cursor-pointer disabled:opacity-50"
                   >
                     <Download className="w-3.5 h-3.5" />
                     <span>Download</span>
-                  </a>
+                  </button>
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -747,6 +809,13 @@ export default function HospitalRequestDetailsPage() {
               </div>
 
               {/* Version History Collapsible */}
+              {prescriptionViewError && (
+                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{prescriptionViewError}</span>
+                </div>
+              )}
+
               {request.prescriptionhistory && request.prescriptionhistory.length > 0 && (
                 <div className="pt-2 border-t border-slate-100">
                   <button

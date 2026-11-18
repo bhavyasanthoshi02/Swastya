@@ -78,25 +78,46 @@ export default function DonorScreeningAndDonatePage() {
         }
 
         // Load matching blood requests
-        const reqRes = await api.donor.getMatchingRequests({ limit: 100 });
+        const reqRes = await api.donor.getMatchingRequests({ limit: 50 });
         if (reqRes.success && reqRes.requests) {
-          const cleanedParam = (requestIdParam || "").toLowerCase().replace(/^req-/, "");
-          const match = reqRes.requests.find((r: any) => {
-            const rawId = (r.requestid || "").toLowerCase();
-            const formatted = `req-${rawId.slice(0, 8)}`;
-            return (
-              rawId === cleanedParam ||
-              formatted === (requestIdParam || "").toLowerCase() ||
-              rawId.startsWith(cleanedParam)
-            );
-          });
+          const rawParam = (requestIdParam || "").trim().toLowerCase();
+          const cleanedParam = rawParam.replace(/^req-/, "");
+          const match = rawParam
+            ? reqRes.requests.find((r: any) => {
+                const rawId = (r.requestid || "").toLowerCase();
+                const formatted = `req-${rawId.slice(0, 8)}`;
+                return (
+                  rawId === rawParam ||
+                  rawId === cleanedParam ||
+                  formatted === rawParam ||
+                  (cleanedParam.length >= 8 && rawId.startsWith(cleanedParam))
+                );
+              })
+            : undefined;
 
           if (match) {
-            setRequest(mapBackendRequestToPreview(match));
-          } else if (reqRes.requests.length > 0) {
-            // Fallback to first available if exact match not found
-            setRequest(mapBackendRequestToPreview(reqRes.requests[0]));
+            const mapped = mapBackendRequestToPreview(match);
+            const verifiedRawId = (mapped.rawId || "").toLowerCase();
+            if (
+              verifiedRawId === rawParam ||
+              verifiedRawId === cleanedParam ||
+              `req-${verifiedRawId.slice(0, 8)}` === rawParam ||
+              (cleanedParam.length >= 8 && verifiedRawId.startsWith(cleanedParam))
+            ) {
+              setRequest(mapped);
+            } else {
+              setRequest(null);
+              setErrorMessage("Requested blood requisition ID mismatch. Please return to the requests list.");
+            }
+          } else {
+            setRequest(null);
+            setErrorMessage(
+              "Blood request not found or no longer available for matching. It may have been fulfilled, cancelled, or outside your current eligibility/radius."
+            );
           }
+        } else {
+          setRequest(null);
+          setErrorMessage("Unable to load matching blood requests.");
         }
       } catch (err: any) {
         setErrorMessage(err?.message || "Failed to load requisition details.");
@@ -240,6 +261,33 @@ export default function DonorScreeningAndDonatePage() {
       <div className="min-h-[60vh] flex flex-col items-center justify-center p-6 space-y-4">
         <div className="w-10 h-10 border-3 border-[#317786] border-t-transparent rounded-full animate-spin" />
         <p className="text-xs text-slate-500 font-medium">Loading clinical screening form...</p>
+      </div>
+    );
+  }
+
+  if (!request) {
+    return (
+      <div className="max-w-xl mx-auto py-12 px-4">
+        <div className="bg-white rounded-3xl border border-[#F3E9D1] shadow-sm p-6 sm:p-8 text-center space-y-4">
+          <div className="w-14 h-14 rounded-2xl bg-rose-50 border border-rose-200 text-rose-600 flex items-center justify-center mx-auto">
+            <AlertTriangle className="w-7 h-7" />
+          </div>
+          <div className="space-y-1.5">
+            <h1 className="font-serif text-xl font-bold text-[#053845]">
+              Blood Request Not Found
+            </h1>
+            <p className="text-xs sm:text-sm text-slate-600">
+              {errorMessage || "The requested blood requisition could not be located or is no longer active for matching."}
+            </p>
+          </div>
+          <Link
+            href="/donor/requests"
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#053845] hover:bg-[#03252e] text-white text-xs font-semibold transition-colors"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            <span>Back to Matching Requests</span>
+          </Link>
+        </div>
       </div>
     );
   }

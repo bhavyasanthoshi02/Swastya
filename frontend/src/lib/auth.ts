@@ -93,7 +93,7 @@ export const getAuthToken = (): string | null => {
 export const setAuthToken = (token: string): void => {
   if (typeof window === "undefined") return;
   localStorage.setItem(TOKEN_KEY, token);
-  window.dispatchEvent(new Event("swastya-auth-change"));
+  window.dispatchEvent(new CustomEvent("swastya-auth-change", { detail: { reason: "session-change" } }));
 };
 
 export const clearAuthToken = (): void => {
@@ -110,7 +110,7 @@ export const clearAuthToken = (): void => {
     sessionStorage.removeItem("swastya_hospital_profile");
     sessionStorage.removeItem("swastya_bloodbank_profile");
   }
-  window.dispatchEvent(new Event("swastya-auth-change"));
+  window.dispatchEvent(new CustomEvent("swastya-auth-change", { detail: { reason: "session-change" } }));
 };
 
 export const getStoredUser = (): AuthUser | null => {
@@ -129,7 +129,8 @@ export const setStoredUser = (
   donor?: AuthDonor | null,
   requester?: AuthRequester | null,
   hospital?: AuthHospital | null,
-  bloodbank?: AuthBloodBank | null
+  bloodbank?: AuthBloodBank | null,
+  options?: { silent?: boolean }
 ): void => {
   if (typeof window === "undefined") return;
   localStorage.setItem(USER_KEY, JSON.stringify(user));
@@ -157,7 +158,9 @@ export const setStoredUser = (
     localStorage.removeItem(BLOOD_BANK_KEY);
   }
 
-  window.dispatchEvent(new Event("swastya-auth-change"));
+  if (!options?.silent) {
+    window.dispatchEvent(new CustomEvent("swastya-auth-change", { detail: { reason: "profile-sync" } }));
+  }
 };
 
 export const getStoredDonor = (): AuthDonor | null => {

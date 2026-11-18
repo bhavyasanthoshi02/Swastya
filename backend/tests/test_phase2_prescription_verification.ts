@@ -167,7 +167,8 @@ async function runPhase2PrescriptionTests() {
                 address: "MG Road, Bengaluru",
                 pincode: "560001",
                 latitude: 12.9756,
-                longitude: 77.6066
+                longitude: 77.6066,
+                approvalstatus: "APPROVED"
             }
         });
         hosp1Token = generateToken(hosp1User.userid, "HOSPITAL");
@@ -192,7 +193,8 @@ async function runPhase2PrescriptionTests() {
                 address: "Whitefield, Bengaluru",
                 pincode: "560066",
                 latitude: 12.9698,
-                longitude: 77.7500
+                longitude: 77.7500,
+                approvalstatus: "APPROVED"
             }
         });
         hosp2Token = generateToken(hosp2User.userid, "HOSPITAL");

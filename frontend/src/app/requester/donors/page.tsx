@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
@@ -22,7 +22,7 @@ import {
 import { api, AvailableDonorItem, BloodRequestItem } from "@/lib/api";
 import { formatTimeAgo, mapBloodGroupToDisplay } from "@/lib/mappers";
 
-export default function RequesterAvailableDonorsPage() {
+function RequesterAvailableDonorsContent() {
   const searchParams = useSearchParams();
   const initialRequestId = searchParams?.get("requestId") || "all";
 
@@ -661,5 +661,19 @@ export default function RequesterAvailableDonorsPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function RequesterAvailableDonorsPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="py-16 text-center text-sm text-slate-500">
+          Loading matched donors...
+        </div>
+      }
+    >
+      <RequesterAvailableDonorsContent />
+    </Suspense>
   );
 }
