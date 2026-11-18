@@ -1,8 +1,47 @@
-import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
+import { Readable } from "stream";
 import crypto from "crypto";
 import bcrypt from "bcrypt";
 import { prisma } from "../config/prisma";
 import { blood_group, blood_component, gender_type, verification_status } from "../generated/prisma/enums";
+
+function extractCellValue(val: any): any {
+    if (val === null || val === undefined) return "";
+    if (val instanceof Date) return val;
+    if (typeof val === "object") {
+        if ("result" in val && val.result !== undefined) return val.result;
+        if ("text" in val && val.text !== undefined) return val.text;
+        if ("richText" in val && Array.isArray(val.richText)) {
+            return val.richText.map((r: any) => r.text || "").join("");
+        }
+    }
+    return val;
+}
+
+function worksheetToObjects(ws: ExcelJS.Worksheet): Record<string, any>[] {
+    const rows: Record<string, any>[] = [];
+    let headers: string[] = [];
+    ws.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+        const values = Array.isArray(row.values) ? row.values.slice(1) : [];
+        if (rowNumber === 1) {
+            headers = values.map((v) => String(extractCellValue(v) ?? "").trim());
+            return;
+        }
+        if (headers.length === 0) return;
+        const obj: Record<string, any> = {};
+        let hasData = false;
+        headers.forEach((h, idx) => {
+            if (!h) return;
+            const cellVal = extractCellValue(values[idx]);
+            if (cellVal !== "" && cellVal !== null && cellVal !== undefined) {
+                hasData = true;
+            }
+            obj[h] = cellVal ?? "";
+        });
+        if (hasData) rows.push(obj);
+    });
+    return rows;
+}
 
 // Helper: Normalize blood group safely
 export function normalizeBloodGroup(bg?: any): blood_group | null {
@@ -68,14 +107,11 @@ export function parseFlexibleDate(val: any): Date | null {
         return isNaN(val.getTime()) ? null : val;
     }
     // If Excel serial number (typically 20000 - 60000)
-    if (typeof val === "number" && !isNaN(val)) {
-        try {
-            const parsed = XLSX.SSF.parse_date_code(val);
-            if (parsed && parsed.y && parsed.m && parsed.d) {
-                return new Date(parsed.y, parsed.m - 1, parsed.d);
-            }
-        } catch {
-            // fallback
+    if (typeof val === "number" && !isNaN(val) && val > 1000 && val < 100000) {
+        const utcMs = Math.round((val - 25569) * 86400 * 1000);
+        const dt = new Date(utcMs);
+        if (!isNaN(dt.getTime())) {
+            return dt;
         }
     }
     const str = String(val).trim();
@@ -87,7 +123,7 @@ export function parseFlexibleDate(val: any): Date | null {
         const day = parseInt(ddmmyyyy[1], 10);
         const month = parseInt(ddmmyyyy[2], 10) - 1;
         const year = parseInt(ddmmyyyy[3], 10);
-        const d = new Date(year, month, day);
+        const d = new Date(Date.UTC(year, month, day));
         if (!isNaN(d.getTime())) return d;
     }
 
@@ -97,7 +133,7 @@ export function parseFlexibleDate(val: any): Date | null {
         const year = parseInt(yyyymmdd[1], 10);
         const month = parseInt(yyyymmdd[2], 10) - 1;
         const day = parseInt(yyyymmdd[3], 10);
-        const d = new Date(year, month, day);
+        const d = new Date(Date.UTC(year, month, day));
         if (!isNaN(d.getTime())) return d;
     }
 
@@ -164,16 +200,31 @@ export interface ParsedFileResult {
 }
 
 export class DonorImportService {
-    // Parse uploaded buffer (.xlsx or .csv)
-    static parseFile(buffer: Buffer, originalname: string = ""): ParsedFileResult {
-        let workbook: XLSX.WorkBook;
+    // Parse uploaded buffer (.xlsx or .csv) using ExcelJS
+    static async parseFile(buffer: Buffer, originalname: string = ""): Promise<ParsedFileResult> {
+        const lowerName = originalname.toLowerCase();
+        if (lowerName.endsWith(".xls") && !lowerName.endsWith(".xlsx")) {
+            throw new Error("Legacy .xls binary format is not supported for security reasons; please upload .xlsx or .csv.");
+        }
+
+        const workbook = new ExcelJS.Workbook();
         try {
-            workbook = XLSX.read(buffer, { type: "buffer", cellDates: true });
+            if (lowerName.endsWith(".csv")) {
+                await workbook.csv.read(Readable.from(buffer), { dateFormats: [] });
+            } else {
+                // Try XLSX first; if ZIP signature is missing and looks like plain text CSV, fallback to CSV
+                const isZip = buffer.length >= 2 && buffer[0] === 0x50 && buffer[1] === 0x4b;
+                if (isZip) {
+                    await workbook.xlsx.load(buffer as any);
+                } else {
+                    await workbook.csv.read(Readable.from(buffer), { dateFormats: [] });
+                }
+            }
         } catch (err: any) {
             throw new Error(`Invalid file format or corrupted file: ${err.message}`);
         }
 
-        if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
+        if (!workbook.worksheets || workbook.worksheets.length === 0) {
             throw new Error("Uploaded spreadsheet contains no readable worksheets.");
         }
 
@@ -181,15 +232,15 @@ export class DonorImportService {
         const donations: RawDonationRow[] = [];
 
         // Identify Donor sheet vs Donation sheet
-        let donorSheetName = workbook.SheetNames[0];
-        let donationSheetName: string | null = null;
+        let donorSheet: ExcelJS.Worksheet = workbook.worksheets[0];
+        let donationSheet: ExcelJS.Worksheet | null = null;
 
-        for (const name of workbook.SheetNames) {
-            const lower = name.toLowerCase().trim();
+        for (const ws of workbook.worksheets) {
+            const lower = (ws.name || "").toLowerCase().trim();
             if (lower.includes("donation") || lower.includes("history")) {
-                donationSheetName = name;
+                donationSheet = ws;
             } else if (lower.includes("donor") || lower.includes("registry")) {
-                donorSheetName = name;
+                donorSheet = ws;
             }
         }
 
@@ -204,9 +255,8 @@ export class DonorImportService {
         };
 
         // Parse donors sheet
-        const donorSheet = workbook.Sheets[donorSheetName];
         if (donorSheet) {
-            const rawRows: any[] = XLSX.utils.sheet_to_json(donorSheet, { defval: "" });
+            const rawRows = worksheetToObjects(donorSheet);
             for (const row of rawRows) {
                 const normRow: Record<string, any> = {};
                 for (const [k, v] of Object.entries(row)) {
@@ -241,8 +291,8 @@ export class DonorImportService {
         }
 
         // Parse historical donations sheet if present
-        if (donationSheetName && workbook.Sheets[donationSheetName]) {
-            const rawDonationRows: any[] = XLSX.utils.sheet_to_json(workbook.Sheets[donationSheetName], { defval: "" });
+        if (donationSheet) {
+            const rawDonationRows = worksheetToObjects(donationSheet);
             for (const row of rawDonationRows) {
                 const normRow: Record<string, any> = {};
                 for (const [k, v] of Object.entries(row)) {
@@ -269,7 +319,8 @@ export class DonorImportService {
     // Two-step workflow Step 1: Preview and Validate
     static async validateAndPreview(
         hospitalId: string,
-        data: ParsedFileResult
+        data: ParsedFileResult,
+        db: any = prisma
     ) {
         const { donors, donations } = data;
         const totalRows = donors.length;
@@ -282,7 +333,7 @@ export class DonorImportService {
         const conflicts: any[] = [];
 
         // Cache hospital info
-        const hospital = await prisma.hospitals.findUnique({
+        const hospital = await db.hospitals.findUnique({
             where: { hospitalid: hospitalId },
             select: { hospitalid: true, hospitalname: true, city: true, state: true, pincode: true },
         });
@@ -292,7 +343,7 @@ export class DonorImportService {
         }
 
         // Cache all donors currently linked to this hospital
-        const existingHospitalDonors = await prisma.hospitaldonors.findMany({
+        const existingHospitalDonors = await db.hospitaldonors.findMany({
             where: { hospitalid: hospitalId },
             include: {
                 donors: {
@@ -307,12 +358,12 @@ export class DonorImportService {
 
         const hospitalDonorEmails = new Set(
             existingHospitalDonors
-                .map((hd) => hd.donors.users.email?.toLowerCase().trim())
+                .map((hd: any) => hd.donors.users.email?.toLowerCase().trim())
                 .filter(Boolean)
         );
         const hospitalDonorPhones = new Set(
             existingHospitalDonors
-                .map((hd) => hd.donors.users.phonenumber?.trim())
+                .map((hd: any) => hd.donors.users.phonenumber?.trim())
                 .filter(Boolean)
         );
 
@@ -405,12 +456,12 @@ export class DonorImportService {
             // Check if user already exists in Swastya global user base
             let existingUser: any = null;
             if (email) {
-                existingUser = await prisma.users.findUnique({
+                existingUser = await db.users.findUnique({
                     where: { email },
                     include: { donors: true },
                 });
             } else if (phone) {
-                existingUser = await prisma.users.findFirst({
+                existingUser = await db.users.findFirst({
                     where: { phonenumber: phone },
                     include: { donors: true },
                 });
@@ -576,7 +627,271 @@ export class DonorImportService {
         };
     }
 
-    // Two-step workflow Step 2: Commit Import
+    // Two-step workflow Step 2: Secure Backend Revalidation & Atomic Commit
+    static async revalidateAndCommit(
+        hospitalId: string,
+        hospitalName: string,
+        input: {
+            parsed?: ParsedFileResult;
+            toCreate?: any[];
+            toLink?: any[];
+            validDonations?: any[];
+        }
+    ) {
+        // Reconstruct raw unvalidated rows from client payload (never trust client-supplied donorId/userId/classifications)
+        let rawInput: ParsedFileResult;
+        if (input.parsed) {
+            rawInput = input.parsed;
+        } else {
+            const rawDonors: RawDonorRow[] = [];
+            for (const item of input.toCreate || []) {
+                rawDonors.push({
+                    fullName: item?.name ?? item?.fullName ?? "",
+                    email: item?.email ?? "",
+                    phoneNumber: item?.phone ?? item?.phoneNumber ?? "",
+                    bloodGroup: item?.bloodGroup ?? item?.bloodgroup ?? "",
+                    dob: item?.dob ?? item?.dateofbirth ?? "",
+                    gender: item?.gender ?? "",
+                    city: item?.city ?? "",
+                    state: item?.state ?? "",
+                    pincode: item?.pincode ?? "",
+                    address: item?.address ?? "",
+                    sourceIdentifier: item?.sourceIdentifier ?? "",
+                });
+            }
+            for (const item of input.toLink || []) {
+                rawDonors.push({
+                    fullName: item?.name ?? item?.fullName ?? "",
+                    email: item?.email ?? "",
+                    phoneNumber: item?.phone ?? item?.phoneNumber ?? "",
+                    bloodGroup: item?.bloodGroup ?? item?.bloodgroup ?? "O+",
+                    dob: item?.dob ?? "1990-01-01",
+                    gender: item?.gender ?? "OTHER",
+                    city: item?.city ?? "",
+                    state: item?.state ?? "",
+                    pincode: item?.pincode ?? "",
+                    address: item?.address ?? "",
+                    sourceIdentifier: item?.sourceIdentifier ?? "",
+                });
+            }
+            const rawDonations: RawDonationRow[] = (input.validDonations || []).map((d: any) => ({
+                donorIdentifier: d?.identifier ?? d?.donorIdentifier ?? "",
+                donationDate: d?.donationDate ?? "",
+                unitsDonated: d?.unitsDonated ?? 1,
+                bloodComponent: d?.bloodComponent ?? "WHOLE_BLOOD",
+                sourceRecordId: d?.sourceRecordId ?? "",
+                remarks: d?.remarks ?? "",
+            }));
+            rawInput = { donors: rawDonors, donations: rawDonations };
+        }
+
+        // Pre-hash random passwords outside transaction lock to keep DB lock duration minimal
+        const preHashedSecrets = await Promise.all(
+            rawInput.donors.map(async () => {
+                const randomSecret = crypto.randomBytes(32).toString("hex");
+                return bcrypt.hash(randomSecret, 10);
+            })
+        );
+
+        return await prisma.$transaction(
+            async (tx) => {
+                // Serialize concurrent commits for the same hospital
+                await tx.$executeRawUnsafe(
+                    `SELECT pg_advisory_xact_lock(hashtext($1))`,
+                    `donor-import:${hospitalId}`
+                );
+
+                // Revalidate every row against live database state inside the locked transaction
+                const revalidated = await DonorImportService.validateAndPreview(hospitalId, rawInput, tx);
+
+                const activationRecords: any[] = [];
+                const errors: any[] = [
+                    ...revalidated.invalidRows.map((r: any) => ({
+                        rowNumber: r.rowNumber,
+                        name: r.raw?.fullName || "Unknown",
+                        error: (r.errors || []).join("; "),
+                    })),
+                    ...revalidated.conflicts.map((c: any) => ({
+                        rowNumber: c.rowNumber,
+                        name: c.name,
+                        error: c.reason,
+                    })),
+                ];
+                let importedCount = 0;
+                let linkedCount = 0;
+                let historicalDonationsImported = 0;
+                const identifierToDonorId = new Map<string, string>();
+
+                // 1. Create validated new donors atomically
+                for (let i = 0; i < revalidated.toCreate.length; i++) {
+                    const item = revalidated.toCreate[i];
+                    const hashedPassword = preHashedSecrets[i % Math.max(1, preHashedSecrets.length)];
+
+                    const user = await tx.users.create({
+                        data: {
+                            name: item.name,
+                            email: item.email,
+                            phonenumber: item.phone || null,
+                            password: hashedPassword,
+                            role: "DONOR",
+                            isactive: false,
+                            emailverified: false,
+                        },
+                    });
+
+                    const donor = await tx.donors.create({
+                        data: {
+                            userid: user.userid,
+                            bloodgroup: item.bloodGroup,
+                            dateofbirth: new Date(item.dob),
+                            gender: item.gender,
+                            city: item.city,
+                            state: item.state,
+                            pincode: item.pincode,
+                            address: item.address || null,
+                            iseligible: true,
+                            availabilitystatus: "AVAILABLE",
+                        },
+                    });
+
+                    await tx.hospitaldonors.create({
+                        data: {
+                            hospitalid: hospitalId,
+                            donorid: donor.donorid,
+                            sourceidentifier: item.sourceIdentifier || null,
+                            status: "ACTIVE",
+                        },
+                    });
+
+                    const rawToken = crypto.randomBytes(32).toString("hex");
+                    const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+                    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+                    await tx.donoractivationtokens.create({
+                        data: {
+                            userid: user.userid,
+                            tokenhash: tokenHash,
+                            expiresat: expiresAt,
+                        },
+                    });
+
+                    importedCount++;
+                    if (item.email) identifierToDonorId.set(item.email.toLowerCase(), donor.donorid);
+                    if (item.phone) identifierToDonorId.set(item.phone, donor.donorid);
+                    if (item.name) identifierToDonorId.set(item.name.toLowerCase(), donor.donorid);
+                    if (item.sourceIdentifier) identifierToDonorId.set(item.sourceIdentifier.toLowerCase(), donor.donorid);
+
+                    activationRecords.push({
+                        name: sanitizeCsvCell(item.name),
+                        email: sanitizeCsvCell(item.email),
+                        phoneNumber: sanitizeCsvCell(item.phone || ""),
+                        activationToken: rawToken,
+                        activationUrl: `/auth/activate?token=${rawToken}`,
+                        expiresAt: expiresAt.toISOString(),
+                    });
+                }
+
+                // 2. Link validated existing donors atomically
+                for (const item of revalidated.toLink) {
+                    await tx.hospitaldonors.upsert({
+                        where: {
+                            hospitalid_donorid: {
+                                hospitalid: hospitalId,
+                                donorid: item.donorId,
+                            },
+                        },
+                        create: {
+                            hospitalid: hospitalId,
+                            donorid: item.donorId,
+                            status: "ACTIVE",
+                        },
+                        update: {
+                            status: "ACTIVE",
+                        },
+                    });
+
+                    linkedCount++;
+                    if (item.email) identifierToDonorId.set(item.email.toLowerCase(), item.donorId);
+                    if (item.phone) identifierToDonorId.set(item.phone, item.donorId);
+                    if (item.name) identifierToDonorId.set(item.name.toLowerCase(), item.donorId);
+                }
+
+                // 3. Insert validated historical donations atomically
+                for (const donation of revalidated.validDonations) {
+                    const identifier = (donation.identifier || "").trim().toLowerCase();
+                    let targetDonorId = identifierToDonorId.get(identifier);
+
+                    if (!targetDonorId) {
+                        const matchedHd = await tx.hospitaldonors.findFirst({
+                            where: {
+                                hospitalid: hospitalId,
+                                OR: [
+                                    { donors: { users: { email: { equals: identifier, mode: "insensitive" } } } },
+                                    { donors: { users: { phonenumber: identifier } } },
+                                    { sourceidentifier: identifier },
+                                ],
+                            },
+                            select: { donorid: true },
+                        });
+                        if (matchedHd) {
+                            targetDonorId = matchedHd.donorid;
+                            identifierToDonorId.set(identifier, targetDonorId);
+                        }
+                    }
+
+                    if (!targetDonorId) continue;
+
+                    const existing = await tx.donationhistory.findFirst({
+                        where: {
+                            donorid: targetDonorId,
+                            hospitalid: hospitalId,
+                            donationdate: new Date(donation.donationDate),
+                            isimported: true,
+                            sourcerecordid: donation.sourceRecordId || null,
+                        },
+                    });
+                    if (existing) continue;
+
+                    const provenance = `Imported historical record by ${hospitalName} on ${new Date().toISOString()}${
+                        donation.remarks ? ` - ${donation.remarks}` : ""
+                    }`;
+
+                    await tx.donationhistory.create({
+                        data: {
+                            donorid: targetDonorId,
+                            hospitalid: hospitalId,
+                            requestid: null,
+                            donationdate: new Date(donation.donationDate),
+                            unitsdonated: donation.unitsDonated || 1,
+                            bloodcomponent: donation.bloodComponent || blood_component.WHOLE_BLOOD,
+                            sourcerecordid: donation.sourceRecordId || null,
+                            remarks: provenance,
+                            isimported: true,
+                            verificationstatus: verification_status.PENDING,
+                        },
+                    });
+
+                    historicalDonationsImported++;
+                }
+
+                return {
+                    importedCount,
+                    linkedCount,
+                    historicalDonationsImported,
+                    skippedDuplicatesCount: revalidated.alreadyLinked.length,
+                    conflictsCount: revalidated.conflicts.length,
+                    deliveryStatus: "NO_GATEWAY_CONFIGURED",
+                    deliveryNote:
+                        "No live SMS/email delivery gateway is configured in this environment. Single-use activation links have been generated securely for hospital staff to distribute directly to eligible donors.",
+                    activationRecords,
+                    errors,
+                };
+            },
+            { timeout: 30000 }
+        );
+    }
+
+    // Two-step workflow Step 2: Commit Import (delegates to backend-revalidated atomic commit)
     static async commitImport(
         hospitalId: string,
         hospitalName: string,
@@ -805,7 +1120,7 @@ export class DonorImportService {
     }
 
     // Generate Standard Excel / CSV Template
-    static generateTemplate(format: "csv" | "xlsx" = "csv"): Buffer | string {
+    static async generateTemplate(format: "csv" | "xlsx" = "csv"): Promise<Buffer | string> {
         const donorHeaders = [
             "Full Name",
             "Email",
@@ -865,12 +1180,12 @@ export class DonorImportService {
         ];
 
         if (format === "xlsx") {
-            const wb = XLSX.utils.book_new();
+            const wb = new ExcelJS.Workbook();
 
             // Sheet 1: Donors
-            const wsDonorsData = [donorHeaders, ...sampleDonorRows];
-            const wsDonors = XLSX.utils.aoa_to_sheet(wsDonorsData);
-            XLSX.utils.book_append_sheet(wb, wsDonors, "Donors");
+            const wsDonors = wb.addWorksheet("Donors");
+            wsDonors.addRow(donorHeaders);
+            sampleDonorRows.forEach((r) => wsDonors.addRow(r));
 
             // Sheet 2: Historical Donations
             const donationHeaders = [
@@ -899,10 +1214,12 @@ export class DonorImportService {
                     "Emergency platelet support",
                 ],
             ];
-            const wsDonations = XLSX.utils.aoa_to_sheet([donationHeaders, ...sampleDonationRows]);
-            XLSX.utils.book_append_sheet(wb, wsDonations, "Historical Donations");
+            const wsDonations = wb.addWorksheet("Historical Donations");
+            wsDonations.addRow(donationHeaders);
+            sampleDonationRows.forEach((r) => wsDonations.addRow(r));
 
-            return XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+            const buf = await wb.xlsx.writeBuffer();
+            return Buffer.from(buf);
         }
 
         // CSV representation (RFC 4180 with CSV injection protection)

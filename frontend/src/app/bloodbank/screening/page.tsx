@@ -58,6 +58,8 @@ export default function BloodBankScreeningPage() {
   const [screeningNotes, setScreeningNotes] = useState("");
   const [isSubmittingScreening, setIsSubmittingScreening] = useState(false);
   const [screeningError, setScreeningError] = useState<string | null>(null);
+  const [verifiers, setVerifiers] = useState<Array<{ userid: string; name: string; email: string; role: string }>>([]);
+  const [selectedVerifierId, setSelectedVerifierId] = useState("");
 
   // Screening History Modal State
   const [historyTarget, setHistoryTarget] = useState<InventoryUnitItem | null>(null);
@@ -80,9 +82,19 @@ export default function BloodBankScreeningPage() {
 
       if (activeBb) {
         setBloodBank(activeBb);
-        const res = await api.bloodbank.getUnits(activeBb.bloodbankid);
+        const [res, verRes] = await Promise.all([
+          api.bloodbank.getUnits(activeBb.bloodbankid),
+          api.bloodbank.getVerifiers(activeBb.bloodbankid).catch(() => ({ success: false, verifiers: [] })),
+        ]);
         if (res.success) {
           setUnits(res.units || []);
+        }
+        if (verRes.success) {
+          const list = verRes.verifiers || [];
+          setVerifiers(list);
+          if (list.length > 0 && !selectedVerifierId) {
+            setSelectedVerifierId(list[0].userid);
+          }
         }
       } else {
         setError("Facility profile not found. Please sign in again.");
@@ -155,6 +167,10 @@ export default function BloodBankScreeningPage() {
       setScreeningError("Medical Officer Sign-off Name is required by national CDSCO standards.");
       return;
     }
+    if (!selectedVerifierId) {
+      setScreeningError("An eligible second authorized clinical verifier is required for dual sign-off. Cannot submit without a separate active BLOOD_BANK or ADMIN verifier.");
+      return;
+    }
 
     try {
       setIsSubmittingScreening(true);
@@ -165,6 +181,7 @@ export default function BloodBankScreeningPage() {
         bloodbank.bloodbankid,
         screeningTarget.unitid,
         {
+          verifiedByUserId: selectedVerifierId,
           testresults: {
             hiv: hivResult,
             hbv: hbvResult,
@@ -724,6 +741,29 @@ export default function BloodBankScreeningPage() {
               </div>
 
               <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-700">
+                  Second Clinical Verifier Account (Dual Sign-off) <span className="text-rose-600">*</span>
+                </label>
+                {verifiers.length === 0 ? (
+                  <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900">
+                    No eligible second active verifier (separate BLOOD_BANK or ADMIN user) is available. Clinical dual sign-off cannot be submitted until a second authorized verifier account exists.
+                  </div>
+                ) : (
+                  <select
+                    value={selectedVerifierId}
+                    onChange={(e) => setSelectedVerifierId(e.target.value)}
+                    className="w-full px-3.5 py-2 text-xs rounded-xl border border-slate-200 focus:outline-none focus:border-[#317786] text-slate-800 bg-white"
+                  >
+                    {verifiers.map((v) => (
+                      <option key={v.userid} value={v.userid}>
+                        {v.name} ({v.role} — {v.email})
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              <div className="space-y-1">
                 <label className="text-xs font-bold text-slate-700">Clinical Notes (Optional)</label>
                 <input
                   type="text"
@@ -747,7 +787,7 @@ export default function BloodBankScreeningPage() {
               <button
                 type="button"
                 onClick={handleRecordScreening}
-                disabled={isSubmittingScreening}
+                disabled={isSubmittingScreening || verifiers.length === 0 || !selectedVerifierId}
                 className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#053845] hover:bg-[#03252e] text-white text-xs font-bold shadow-md cursor-pointer disabled:opacity-50"
               >
                 {isSubmittingScreening ? (

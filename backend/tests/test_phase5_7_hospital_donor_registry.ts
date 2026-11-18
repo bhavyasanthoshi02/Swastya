@@ -2,7 +2,7 @@ import { prisma } from "../src/config/prisma";
 import { generateToken } from "../src/utils/jwt";
 import app from "../src/app";
 import http from "http";
-import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
 import crypto from "crypto";
 import bcrypt from "bcrypt";
 
@@ -186,7 +186,7 @@ Mahesh Babu,mahesh_${timestamp}@example.com,+91 9123456780,O-,1988-12-05,MALE,Hy
         // Test 2: Authorized hospital uploads a valid multi-sheet Excel file (.xlsx)
         // -------------------------------------------------------------------------
         console.log("\nTEST 2: Authorized hospital uploads a valid multi-sheet Excel file");
-        const wb = XLSX.utils.book_new();
+        const wb = new ExcelJS.Workbook();
         const donorsSheetData = [
             ["Full Name", "Email", "Phone Number", "Blood Group", "Date of Birth", "Gender", "City", "Source Donor ID"],
             ["Ravi Varma", `ravi_${timestamp}@example.com`, "+91 9123456781", "B+", "1991-03-22", "MALE", "Hyderabad", "APO-D03"],
@@ -197,9 +197,11 @@ Mahesh Babu,mahesh_${timestamp}@example.com,+91 9123456780,O-,1988-12-05,MALE,Hy
             [`ravi_${timestamp}@example.com`, "2023-01-15", "1", "PLATELETS", "HIST-2023-PLT-01", "Apheresis unit"],
             [`anita_${timestamp}@example.com`, "2022-09-10", "1", "WHOLE_BLOOD", "HIST-2022-WB-02", "Annual drive"],
         ];
-        XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(donorsSheetData), "Donors");
-        XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(donationsSheetData), "Historical Donations");
-        const xlsxBuffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+        const wsD = wb.addWorksheet("Donors");
+        donorsSheetData.forEach((r) => wsD.addRow(r));
+        const wsH = wb.addWorksheet("Historical Donations");
+        donationsSheetData.forEach((r) => wsH.addRow(r));
+        const xlsxBuffer = Buffer.from(await wb.xlsx.writeBuffer());
 
         const xlsxPreviewRes = await fetch(`${API_BASE}/hospitals/me/donors/import/preview`, {
             method: "POST",

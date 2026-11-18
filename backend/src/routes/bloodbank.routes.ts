@@ -1,14 +1,81 @@
 import { Router, Request, Response } from "express";
 import crypto from "crypto";
+import jwt from "jsonwebtoken";
 import { prisma } from "../config/prisma";
 import { authenticate } from "../middleware/auth.middleware";
 import { authorize } from "../middleware/role.middleware";
-import { checkBloodBankOwnership } from "../middleware/ownership.middleware";
+import { checkBloodBankOwnership, requireApprovedBloodBank } from "../middleware/ownership.middleware";
+import { getJwtSecret } from "../utils/jwt";
 import { approval_status, blood_group, blood_component, inventory_operation_type } from "../generated/prisma/enums";
 import { UnitTraceabilityService } from "../services/unitTraceability.service";
 
 const router = Router();
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const PUBLIC_BLOOD_BANK_SELECT = {
+    bloodbankid: true,
+    bloodbankname: true,
+    city: true,
+    state: true,
+    approvalstatus: true,
+    createdat: true,
+};
+
+function extractOptionalUser(req: Request): { userid: string; role: string } | null {
+    try {
+        const authHeader = req.headers.authorization;
+        if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
+        const token = authHeader.split(" ")[1];
+        if (!token) return null;
+        return jwt.verify(token, getJwtSecret(), { algorithms: ["HS256"] }) as { userid: string; role: string };
+    } catch {
+        return null;
+    }
+}
+
+async function validateClinicalSignOffUsers(
+    testedByUserId: string,
+    verifiedByUserId: string,
+    bloodBankId: string
+): Promise<{ ok: true } | { ok: false; status: number; message: string }> {
+    if (!UUID_REGEX.test(testedByUserId) || !UUID_REGEX.test(verifiedByUserId)) {
+        return { ok: false, status: 400, message: "testedByUserId and verifiedByUserId must be valid UUIDs" };
+    }
+    if (testedByUserId === verifiedByUserId) {
+        return { ok: false, status: 403, message: "Clinical dual-signoff violation: tester and verifier cannot be the same user" };
+    }
+
+    const [tester, verifier, bloodBank] = await Promise.all([
+        prisma.users.findUnique({ where: { userid: testedByUserId }, select: { userid: true, role: true, isactive: true } }),
+        prisma.users.findUnique({ where: { userid: verifiedByUserId }, select: { userid: true, role: true, isactive: true } }),
+        prisma.bloodbanks.findUnique({ where: { bloodbankid: bloodBankId }, select: { userid: true } }),
+    ]);
+
+    if (!tester || !tester.isactive) {
+        return { ok: false, status: 400, message: "Clinical tester account does not exist or is inactive" };
+    }
+    if (!verifier || !verifier.isactive) {
+        return { ok: false, status: 400, message: "Clinical verifier account does not exist or is inactive" };
+    }
+
+    const allowedRoles = new Set(["BLOOD_BANK", "ADMIN"]);
+    if (!allowedRoles.has(tester.role) || !allowedRoles.has(verifier.role)) {
+        return { ok: false, status: 403, message: "Both clinical sign-off users must hold BLOOD_BANK or ADMIN role" };
+    }
+
+    // If a non-ADMIN verifier is BLOOD_BANK, ensure they belong to this blood bank or are not an unrelated external facility
+    if (verifier.role === "BLOOD_BANK" && bloodBank && verifier.userid !== bloodBank.userid) {
+        const otherFacility = await prisma.bloodbanks.findUnique({
+            where: { userid: verifier.userid },
+            select: { bloodbankid: true },
+        });
+        if (otherFacility && otherFacility.bloodbankid !== bloodBankId) {
+            return { ok: false, status: 403, message: "Clinical verifier belongs to a different blood bank facility" };
+        }
+    }
+
+    return { ok: true };
+}
 
 const NORMALIZE_BLOOD_GROUP: Record<string, string> = {
     "A+": "A+",
@@ -39,17 +106,15 @@ const SAFE_USER_SELECT = {
 };
 
 /*
- * GET ALL BLOOD BANKS (PUBLIC DIRECTORY)
+ * GET ALL BLOOD BANKS (SAFE PUBLIC DIRECTORY)
  * GET /bloodbanks
+ * Returns minimum non-PII fields only.
  */
 router.get("/", async (_req: Request, res: Response) => {
     try {
         const bloodbanks = await prisma.bloodbanks.findMany({
-            include: {
-                users: {
-                    select: SAFE_USER_SELECT,
-                },
-            },
+            select: PUBLIC_BLOOD_BANK_SELECT,
+            orderBy: { bloodbankname: "asc" },
         });
 
         return res.status(200).json(bloodbanks);
@@ -295,6 +360,7 @@ router.post(
     authenticate,
     authorize("BLOOD_BANK", "ADMIN"),
     checkBloodBankOwnership,
+    requireApprovedBloodBank,
     async (req: Request, res: Response) => {
         try {
             const user = (req as any).user;
@@ -536,6 +602,7 @@ router.patch(
     authenticate,
     authorize("BLOOD_BANK", "ADMIN"),
     checkBloodBankOwnership,
+    requireApprovedBloodBank,
     async (req: Request, res: Response) => {
         try {
             const user = (req as any).user;
@@ -757,7 +824,7 @@ router.patch(
 /*
  * GET BLOOD BANK BY ID
  * GET /bloodbanks/:id
- * Returns public blood bank details with sanitized user projection (no password hashes).
+ * Returns full profile only for owner or ADMIN; safe non-PII directory projection otherwise.
  */
 router.get("/:id", async (req: Request, res: Response) => {
     try {
@@ -770,6 +837,7 @@ router.get("/:id", async (req: Request, res: Response) => {
             });
         }
 
+        const caller = extractOptionalUser(req);
         const bloodbank = await prisma.bloodbanks.findUnique({
             where: {
                 bloodbankid: bloodBankId,
@@ -785,6 +853,21 @@ router.get("/:id", async (req: Request, res: Response) => {
             return res.status(404).json({
                 success: false,
                 message: "Blood bank not found",
+            });
+        }
+
+        const isOwnerOrAdmin =
+            caller !== null &&
+            (caller.role === "ADMIN" || caller.userid === bloodbank.userid);
+
+        if (!isOwnerOrAdmin) {
+            return res.status(200).json({
+                bloodbankid: bloodbank.bloodbankid,
+                bloodbankname: bloodbank.bloodbankname,
+                city: bloodbank.city,
+                state: bloodbank.state,
+                approvalstatus: bloodbank.approvalstatus,
+                createdat: bloodbank.createdat,
             });
         }
 
@@ -1180,6 +1263,7 @@ router.post(
     authenticate,
     authorize("BLOOD_BANK", "ADMIN"),
     checkBloodBankOwnership,
+    requireApprovedBloodBank,
     async (req: Request, res: Response) => {
         try {
             const user = (req as any).user;
@@ -1290,15 +1374,78 @@ router.get(
  * RECORD 5-PANEL TTI SCREENING RESULT AND ATOMIC CLEARANCE
  * POST /bloodbanks/:bloodBankId/units/:unitId/screening
  */
-router.post(
-    "/:bloodBankId/units/:unitId/screening",
+/*
+ * LIST ELIGIBLE CLINICAL SECOND VERIFIERS FOR BLOOD BANK
+ * GET /bloodbanks/:bloodBankId/verifiers
+ */
+router.get(
+    "/:bloodBankId/verifiers",
     authenticate,
     authorize("BLOOD_BANK", "ADMIN"),
     checkBloodBankOwnership,
     async (req: Request, res: Response) => {
         try {
+            const currentUser = (req as any).user;
+            const bloodBank = (req as any).bloodBank;
+
+            const verifiers = await prisma.users.findMany({
+                where: {
+                    isactive: true,
+                    userid: { not: currentUser.userid },
+                    OR: [
+                        { role: "ADMIN" },
+                        ...(bloodBank?.userid ? [{ userid: bloodBank.userid, role: "BLOOD_BANK" as const }] : []),
+                    ],
+                },
+                select: {
+                    userid: true,
+                    name: true,
+                    email: true,
+                    role: true,
+                },
+                orderBy: { name: "asc" },
+            });
+
+            return res.status(200).json({
+                success: true,
+                verifiers,
+            });
+        } catch (error) {
+            console.error("Error fetching eligible verifiers:", error);
+            return res.status(500).json({
+                success: false,
+                message: "Failed to fetch eligible clinical verifiers",
+            });
+        }
+    }
+);
+
+router.post(
+    "/:bloodBankId/units/:unitId/screening",
+    authenticate,
+    authorize("BLOOD_BANK", "ADMIN"),
+    checkBloodBankOwnership,
+    requireApprovedBloodBank,
+    async (req: Request, res: Response) => {
+        try {
             const user = (req as any).user;
+            const bloodBankId = (Array.isArray(req.params.bloodBankId) ? req.params.bloodBankId[0] : req.params.bloodBankId) as string;
             const unitId = (Array.isArray(req.params.unitId) ? req.params.unitId[0] : req.params.unitId) as string;
+
+            if (!UUID_REGEX.test(unitId)) {
+                return res.status(404).json({ success: false, message: "Blood unit not found" });
+            }
+
+            const ownedUnit = await prisma.inventoryunits.findUnique({
+                where: { unitid: unitId },
+                select: { unitid: true, bloodbankid: true },
+            });
+            if (!ownedUnit) {
+                return res.status(404).json({ success: false, message: "Blood unit not found" });
+            }
+            if (ownedUnit.bloodbankid !== bloodBankId) {
+                return res.status(403).json({ success: false, message: "Access denied: blood unit belongs to another blood bank" });
+            }
 
             let {
                 testedByUserId,
@@ -1339,16 +1486,18 @@ router.post(
                 testedByUserId = user.userid;
             }
             if (!verifiedByUserId) {
-                const verifierUser = await prisma.users.findFirst({
-                    where: {
-                        userid: { not: testedByUserId },
-                        isactive: true,
-                    },
-                    orderBy: { createdat: "asc" },
+                return res.status(400).json({
+                    success: false,
+                    message: "Explicit verifiedByUserId is required for clinical dual sign-off",
                 });
-                if (verifierUser) {
-                    verifiedByUserId = verifierUser.userid;
-                }
+            }
+
+            const signOffCheck = await validateClinicalSignOffUsers(testedByUserId, verifiedByUserId, bloodBankId);
+            if (!signOffCheck.ok) {
+                return res.status(signOffCheck.status).json({
+                    success: false,
+                    message: signOffCheck.message,
+                });
             }
 
             if (
@@ -1404,7 +1553,23 @@ router.get(
     checkBloodBankOwnership,
     async (req: Request, res: Response) => {
         try {
+            const bloodBankId = (Array.isArray(req.params.bloodBankId) ? req.params.bloodBankId[0] : req.params.bloodBankId) as string;
             const unitId = (Array.isArray(req.params.unitId) ? req.params.unitId[0] : req.params.unitId) as string;
+
+            if (!UUID_REGEX.test(unitId)) {
+                return res.status(404).json({ success: false, message: "Blood unit not found" });
+            }
+
+            const ownedUnit = await prisma.inventoryunits.findUnique({
+                where: { unitid: unitId },
+                select: { unitid: true, bloodbankid: true },
+            });
+            if (!ownedUnit) {
+                return res.status(404).json({ success: false, message: "Blood unit not found" });
+            }
+            if (ownedUnit.bloodbankid !== bloodBankId) {
+                return res.status(403).json({ success: false, message: "Access denied: blood unit belongs to another blood bank" });
+            }
 
             const history = await prisma.unitscreeningrecords.findMany({
                 where: { unitid: unitId },
@@ -1485,6 +1650,7 @@ router.patch(
     authenticate,
     authorize("BLOOD_BANK", "ADMIN"),
     checkBloodBankOwnership,
+    requireApprovedBloodBank,
     async (req: Request, res: Response) => {
         try {
             const user = (req as any).user;
@@ -1536,6 +1702,7 @@ router.post(
     authenticate,
     authorize("BLOOD_BANK", "ADMIN"),
     checkBloodBankOwnership,
+    requireApprovedBloodBank,
     async (req: Request, res: Response) => {
         try {
             const user = (req as any).user;
@@ -1649,27 +1816,46 @@ router.post(
     authenticate,
     authorize("BLOOD_BANK", "ADMIN"),
     checkBloodBankOwnership,
+    requireApprovedBloodBank,
     async (req: Request, res: Response) => {
         try {
             const user = (req as any).user;
+            const bloodBankId = (Array.isArray(req.params.bloodBankId) ? req.params.bloodBankId[0] : req.params.bloodBankId) as string;
             let { reservationItemId, testedByUserId, verifiedByUserId, methodology, testResult, validUntilHours } = req.body;
 
             if (!reservationItemId) reservationItemId = req.body.reservationitemid;
             if (!methodology) methodology = req.body.method || "INDIRECT_ANTIGLOBULIN";
             if (!testResult) testResult = req.body.crossmatchresult;
 
+            if (!reservationItemId || !UUID_REGEX.test(String(reservationItemId))) {
+                return res.status(404).json({ success: false, message: "Reservation item not found" });
+            }
+
+            const ownedResItem = await prisma.reservationitems.findUnique({
+                where: { itemid: reservationItemId },
+                include: { reservation: { select: { bloodbankid: true } } },
+            });
+            if (!ownedResItem) {
+                return res.status(404).json({ success: false, message: "Reservation item not found" });
+            }
+            if (ownedResItem.reservation.bloodbankid !== bloodBankId) {
+                return res.status(403).json({ success: false, message: "Access denied: reservation item belongs to another blood bank" });
+            }
+
             if (!testedByUserId) testedByUserId = user.userid;
             if (!verifiedByUserId) {
-                const verifierUser = await prisma.users.findFirst({
-                    where: {
-                        userid: { not: testedByUserId },
-                        isactive: true,
-                    },
-                    orderBy: { createdat: "asc" },
+                return res.status(400).json({
+                    success: false,
+                    message: "Explicit verifiedByUserId is required for clinical crossmatch dual sign-off",
                 });
-                if (verifierUser) {
-                    verifiedByUserId = verifierUser.userid;
-                }
+            }
+
+            const signOffCheck = await validateClinicalSignOffUsers(testedByUserId, verifiedByUserId, bloodBankId);
+            if (!signOffCheck.ok) {
+                return res.status(signOffCheck.status).json({
+                    success: false,
+                    message: signOffCheck.message,
+                });
             }
 
             if (!reservationItemId || !testedByUserId || !verifiedByUserId || !methodology || !testResult) {
@@ -1710,10 +1896,27 @@ router.post(
     authenticate,
     authorize("BLOOD_BANK", "ADMIN"),
     checkBloodBankOwnership,
+    requireApprovedBloodBank,
     async (req: Request, res: Response) => {
         try {
             const user = (req as any).user;
+            const bloodBankId = (Array.isArray(req.params.bloodBankId) ? req.params.bloodBankId[0] : req.params.bloodBankId) as string;
             const reservationId = (Array.isArray(req.params.reservationId) ? req.params.reservationId[0] : req.params.reservationId) as string;
+
+            if (!UUID_REGEX.test(reservationId)) {
+                return res.status(404).json({ success: false, message: "Reservation not found" });
+            }
+
+            const ownedReservation = await prisma.bloodreservations.findUnique({
+                where: { reservationid: reservationId },
+                select: { reservationid: true, bloodbankid: true },
+            });
+            if (!ownedReservation) {
+                return res.status(404).json({ success: false, message: "Reservation not found" });
+            }
+            if (ownedReservation.bloodbankid !== bloodBankId) {
+                return res.status(403).json({ success: false, message: "Access denied: reservation belongs to another blood bank" });
+            }
 
             const rawIdempotencyKey = req.headers["idempotency-key"];
             if (!rawIdempotencyKey || typeof rawIdempotencyKey !== "string" || !rawIdempotencyKey.trim()) {
@@ -1773,10 +1976,27 @@ router.post(
     authenticate,
     authorize("BLOOD_BANK", "ADMIN"),
     checkBloodBankOwnership,
+    requireApprovedBloodBank,
     async (req: Request, res: Response) => {
         try {
             const user = (req as any).user;
+            const bloodBankId = (Array.isArray(req.params.bloodBankId) ? req.params.bloodBankId[0] : req.params.bloodBankId) as string;
             const reservationId = (Array.isArray(req.params.reservationId) ? req.params.reservationId[0] : req.params.reservationId) as string;
+
+            if (!UUID_REGEX.test(reservationId)) {
+                return res.status(404).json({ success: false, message: "Reservation not found" });
+            }
+
+            const ownedReservation = await prisma.bloodreservations.findUnique({
+                where: { reservationid: reservationId },
+                select: { reservationid: true, bloodbankid: true },
+            });
+            if (!ownedReservation) {
+                return res.status(404).json({ success: false, message: "Reservation not found" });
+            }
+            if (ownedReservation.bloodbankid !== bloodBankId) {
+                return res.status(403).json({ success: false, message: "Access denied: reservation belongs to another blood bank" });
+            }
 
             const rawIdempotencyKey = req.headers["idempotency-key"];
             if (!rawIdempotencyKey || typeof rawIdempotencyKey !== "string" || !rawIdempotencyKey.trim()) {
@@ -1823,10 +2043,27 @@ router.post(
     authenticate,
     authorize("BLOOD_BANK", "ADMIN"),
     checkBloodBankOwnership,
+    requireApprovedBloodBank,
     async (req: Request, res: Response) => {
         try {
             const user = (req as any).user;
+            const bloodBankId = (Array.isArray(req.params.bloodBankId) ? req.params.bloodBankId[0] : req.params.bloodBankId) as string;
             const unitId = (Array.isArray(req.params.unitId) ? req.params.unitId[0] : req.params.unitId) as string;
+
+            if (!UUID_REGEX.test(unitId)) {
+                return res.status(404).json({ success: false, message: "Blood unit not found" });
+            }
+
+            const ownedUnit = await prisma.inventoryunits.findUnique({
+                where: { unitid: unitId },
+                select: { unitid: true, bloodbankid: true },
+            });
+            if (!ownedUnit) {
+                return res.status(404).json({ success: false, message: "Blood unit not found" });
+            }
+            if (ownedUnit.bloodbankid !== bloodBankId) {
+                return res.status(403).json({ success: false, message: "Access denied: blood unit belongs to another blood bank" });
+            }
 
             const { reason } = req.body;
             if (!reason || !reason.trim()) {

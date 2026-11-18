@@ -435,13 +435,21 @@ async function runTests() {
         const listData = await publicList.json();
         assert(Array.isArray(listData), "GET /bloodbanks returns array of blood banks");
 
-        // Detail endpoint without password hash leak
+        // Public detail endpoint hides PII
         const detailRes = await fetch(`${API_BASE}/bloodbanks/${createdBBA.bloodbankid}`);
         assert(detailRes.status === 200, "GET /bloodbanks/:id returns 200");
         const detailData = await detailRes.json();
-        assert(detailData.users !== undefined, "Blood bank includes associated user profile");
-        assert(detailData.users.password === undefined, "CRITICAL: users.password hash is NOT exposed in response");
-        assert(detailData.users.email !== undefined, "users.email is safely projected");
+        assert(detailData.users === undefined, "Public GET /bloodbanks/:id does NOT expose associated user PII");
+
+        // Owner detail endpoint includes safe user profile without password hash leak
+        const ownerDetailRes = await fetch(`${API_BASE}/bloodbanks/${createdBBA.bloodbankid}`, {
+            headers: { Authorization: `Bearer ${tokenBBA}` },
+        });
+        assert(ownerDetailRes.status === 200, "Authenticated owner GET /bloodbanks/:id returns 200");
+        const ownerDetailData = await ownerDetailRes.json();
+        assert(ownerDetailData.users !== undefined, "Owner GET /bloodbanks/:id includes associated user profile");
+        assert(ownerDetailData.users.password === undefined, "CRITICAL: users.password hash is NOT exposed in response");
+        assert(ownerDetailData.users.email !== undefined, "users.email is safely projected");
 
         // Malformed UUIDs
         const malformedGet = await fetch(`${API_BASE}/bloodbanks/not-a-valid-uuid`);

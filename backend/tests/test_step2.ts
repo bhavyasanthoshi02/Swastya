@@ -1,14 +1,18 @@
 import assert from "node:assert";
 import http from "node:http";
 import jwt from "jsonwebtoken";
+import bcrypt from "bcrypt";
 
 // Set test environment configuration
 const TEST_JWT_SECRET = "test_super_secure_jwt_secret_swastya_step2_test";
 process.env.JWT_SECRET = TEST_JWT_SECRET;
 process.env.FRONTEND_URL = "http://localhost:3000";
+process.env.DISABLE_RATE_LIMIT = "true";
 
 import app from "../src/app";
+import { prisma } from "../src/config/prisma";
 import { getJwtSecret, generateToken } from "../src/utils/jwt";
+import { user_role } from "../src/generated/prisma/enums";
 
 async function makeRequest(
     server: http.Server,
@@ -163,7 +167,7 @@ async function runTests() {
 
         // Expired token
         const expiredToken = jwt.sign(
-            { userid: "test-user-id", role: "DONOR" },
+            { userid: "00000000-0000-4000-8000-000000000001", role: "DONOR" },
             TEST_JWT_SECRET,
             { expiresIn: "-1s" }
         );
@@ -180,9 +184,10 @@ async function runTests() {
 
     // 6. Token generation and structure consistency
     await test("6. Token generation produces valid 7-day token with userid and role", async () => {
-        const token = generateToken("mock-uuid-1234", "DONOR");
+        const sampleUuid = "11111111-1111-4111-8111-111111111111";
+        const token = generateToken(sampleUuid, "DONOR");
         const decoded = jwt.verify(token, TEST_JWT_SECRET) as any;
-        assert.strictEqual(decoded.userid, "mock-uuid-1234");
+        assert.strictEqual(decoded.userid, sampleUuid);
         assert.strictEqual(decoded.role, "DONOR");
         // Verify expiry is approximately 7 days from now
         const nowSec = Math.floor(Date.now() / 1000);
@@ -262,19 +267,86 @@ async function runTests() {
         assert.strictEqual(deleteNoAuth.statusCode, 401);
 
         // Access with unauthorized role (e.g. REQUESTER trying to PUT /donors/:id)
-        const requesterToken = generateToken("requester-user-uuid", "REQUESTER");
-        const putWrongRole = await makeRequest(server, {
-            path: "/donors/some-donor-id",
-            method: "PUT",
-            headers: {
-                Authorization: `Bearer ${requesterToken}`,
-                "Content-Type": "application/json",
+        const ts = Date.now();
+        const pwHash = await bcrypt.hash("ValidPass123!", 10);
+        const reqUser = await prisma.users.create({
+            data: {
+                name: "Step2 Req",
+                email: `step2_req_${ts}@swastya.test`,
+                password: pwHash,
+                role: user_role.REQUESTER,
+                phonenumber: "9876500001",
+                isactive: true,
             },
-        }, {
-            city: "Mumbai",
         });
-        assert.strictEqual(putWrongRole.statusCode, 403);
-        assert.strictEqual(putWrongRole.body.message, "Access denied");
+        const inactiveUser = await prisma.users.create({
+            data: {
+                name: "Step2 Inactive",
+                email: `step2_inact_${ts}@swastya.test`,
+                password: pwHash,
+                role: user_role.DONOR,
+                phonenumber: "9876500002",
+                isactive: false,
+            },
+        });
+
+        try {
+            const requesterToken = generateToken(reqUser.userid, reqUser.role);
+            const putWrongRole = await makeRequest(server, {
+                path: "/donors/some-donor-id",
+                method: "PUT",
+                headers: {
+                    Authorization: `Bearer ${requesterToken}`,
+                    "Content-Type": "application/json",
+                },
+            }, {
+                city: "Mumbai",
+            });
+            assert.strictEqual(putWrongRole.statusCode, 403);
+            assert.strictEqual(putWrongRole.body.message, "Access denied");
+
+            // 11. Valid login & /auth/me + inactive account regression
+            const loginRes = await makeRequest(server, {
+                path: "/auth/login",
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+            }, {
+                email: reqUser.email,
+                password: "ValidPass123!",
+            });
+            assert.strictEqual(loginRes.statusCode, 200);
+            assert.ok(loginRes.body.token);
+
+            const meRes = await makeRequest(server, {
+                path: "/auth/me",
+                method: "GET",
+                headers: { Authorization: `Bearer ${loginRes.body.token}` },
+            });
+            assert.strictEqual(meRes.statusCode, 200);
+            assert.strictEqual(meRes.body.user.userid, reqUser.userid);
+
+            const inactiveLoginRes = await makeRequest(server, {
+                path: "/auth/login",
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+            }, {
+                email: inactiveUser.email,
+                password: "ValidPass123!",
+            });
+            assert.strictEqual(inactiveLoginRes.statusCode, 403);
+
+            const inactiveToken = generateToken(inactiveUser.userid, inactiveUser.role);
+            const inactiveMeRes = await makeRequest(server, {
+                path: "/auth/me",
+                method: "GET",
+                headers: { Authorization: `Bearer ${inactiveToken}` },
+            });
+            assert.strictEqual(inactiveMeRes.statusCode, 403);
+        } finally {
+            await prisma.users.deleteMany({
+                where: { userid: { in: [reqUser.userid, inactiveUser.userid] } },
+            });
+        }
     });
 
     // 10. Password hashes and secrets never appear in safe response serializer
@@ -298,6 +370,7 @@ async function runTests() {
     });
 
     server.close();
+    await prisma.$disconnect();
     console.log(`\n=== TEST RESULTS: ${passed} PASSED, ${failed} FAILED ===`);
 
     if (failed > 0) {

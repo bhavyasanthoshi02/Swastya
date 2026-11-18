@@ -5,6 +5,7 @@ import { authorize } from "../middleware/role.middleware";
 import { checkDonorOwnership } from "../middleware/ownership.middleware";
 import { blood_group, gender_type, availability_status, request_status, notification_type } from "../generated/prisma/enums";
 import { validateCoordinates, evaluateLocationDistance } from "../utils/distance";
+import { isDonorCompatibleWithRecipient } from "../utils/bloodCompatibility";
 
 // Helper: sanitize blood request for donor feeds (protect patient privacy)
 function sanitizeRequestForDonor(req: any, hasResponded: boolean = false) {
@@ -409,15 +410,12 @@ router.get("/me/dashboard", authenticate, authorize("DONOR", "ADMIN"), async (re
 
         // 1. Eligibility computation
         const eligibility = computeEligibility(donor);
+        const canMatch = donor.availabilitystatus === availability_status.AVAILABLE && eligibility.isEligible;
 
-        // 2. Transfusion-compatible blood groups for this donor
-        const compatibleGroups = RECIPIENT_COMPATIBILITY_MAP[donor.bloodgroup] || [donor.bloodgroup];
-
-        // 3. Parallel queries for dashboard components
+        // 2. Parallel queries for dashboard components
         const [
             donationHistory,
-            matchingRequests,
-            activeMatchesCount,
+            candidateRequests,
             unreadNotificationsCount,
             recentNotifications,
         ] = await Promise.all([
@@ -454,46 +452,39 @@ router.get("/me/dashboard", authenticate, authorize("DONOR", "ADMIN"), async (re
                 take: 5,
             }),
 
-            // Top matching active requests
-            prisma.bloodrequests.findMany({
-                where: {
-                    bloodgroup: { in: compatibleGroups },
-                    status: { in: ACTIVE_REQUEST_STATUSES },
-                },
-                include: {
-                    hospitals: {
-                        select: {
-                            hospitalid: true,
-                            hospitalname: true,
-                            city: true,
-                            address: true,
-                            contactpersonname: true,
-                            contactpersonphone: true,
-                        },
-                    },
-                    requesters: {
-                        select: {
-                            requesterid: true,
-                            city: true,
-                            state: true,
-                        },
-                    },
-                },
-                orderBy: [
-                    { isemergency: "desc" },
-                    { urgencylevel: "desc" },
-                    { createdat: "desc" },
-                ],
-                take: 5,
-            }),
-
-            // Total matching requests count
-            prisma.bloodrequests.count({
-                where: {
-                    bloodgroup: { in: compatibleGroups },
-                    status: { in: ACTIVE_REQUEST_STATUSES },
-                },
-            }),
+            // Active requests (filtered by component-aware compatibility & eligibility below)
+            canMatch
+                ? prisma.bloodrequests.findMany({
+                      where: {
+                          status: { in: ACTIVE_REQUEST_STATUSES },
+                      },
+                      include: {
+                          hospitals: {
+                              select: {
+                                  hospitalid: true,
+                                  hospitalname: true,
+                                  city: true,
+                                  address: true,
+                                  contactpersonname: true,
+                                  contactpersonphone: true,
+                              },
+                          },
+                          requesters: {
+                              select: {
+                                  requesterid: true,
+                                  city: true,
+                                  state: true,
+                              },
+                          },
+                      },
+                      orderBy: [
+                          { isemergency: "desc" },
+                          { urgencylevel: "desc" },
+                          { createdat: "desc" },
+                      ],
+                      take: 50,
+                  })
+                : Promise.resolve([]),
 
             // Unread notifications count
             prisma.notification.count({
@@ -510,6 +501,12 @@ router.get("/me/dashboard", authenticate, authorize("DONOR", "ADMIN"), async (re
                 take: 5,
             }),
         ]);
+
+        const compatibleCandidates = candidateRequests.filter((r) =>
+            isDonorCompatibleWithRecipient(donor.bloodgroup, r.bloodgroup, r.bloodcomponent)
+        );
+        const matchingRequests = compatibleCandidates.slice(0, 5);
+        const activeMatchesCount = compatibleCandidates.length;
 
         // Calculate donation stats
         const totalDonations = donationHistory.length;
@@ -643,13 +640,9 @@ router.get("/me/matching-requests", authenticate, authorize("DONOR", "ADMIN"), a
         const limit = Math.min(50, Math.max(1, parseInt(req.query.limit as string) || 10));
         const skip = (page - 1) * limit;
 
-        const targetGroups = exactOnly
-            ? [donor.bloodgroup]
-            : (RECIPIENT_COMPATIBILITY_MAP[donor.bloodgroup] || [donor.bloodgroup]);
-
         const whereClause: any = {
-            bloodgroup: { in: targetGroups },
             status: { in: ACTIVE_REQUEST_STATUSES },
+            ...(exactOnly ? { bloodgroup: donor.bloodgroup } : {}),
         };
 
         if (urgency) {
@@ -696,6 +689,9 @@ router.get("/me/matching-requests", authenticate, authorize("DONOR", "ADMIN"), a
         const matchedList: EvaluatedRequest[] = [];
 
         for (const candidate of rawCandidates) {
+            if (!exactOnly && !isDonorCompatibleWithRecipient(donor.bloodgroup, candidate.bloodgroup, candidate.bloodcomponent)) {
+                continue;
+            }
             // Resolve request coordinate points (explicit request coords -> hospital coords -> requester coords)
             const reqLat = candidate.latitude != null
                 ? Number(candidate.latitude)
@@ -823,7 +819,9 @@ router.get("/me/matching-requests", authenticate, authorize("DONOR", "ADMIN"), a
         return res.status(200).json({
             success: true,
             donorBloodGroup: donor.bloodgroup,
-            compatibleGroups: targetGroups,
+            compatibleGroups: exactOnly
+                ? [donor.bloodgroup]
+                : (RECIPIENT_COMPATIBILITY_MAP[donor.bloodgroup] || [donor.bloodgroup]),
             donorLocation: {
                 hasCoordinates: donorLat !== null && donorLng !== null,
                 city: donor.city,
@@ -1276,10 +1274,10 @@ router.get(
    ========================================================================= */
 
 /*
- * GET ALL DONORS
+ * GET ALL DONORS (Admin Only)
  * GET /donors
  */
-router.get("/", async (_req: Request, res: Response) => {
+router.get("/", authenticate, authorize("ADMIN"), async (_req: Request, res: Response) => {
     try {
         const donors = await prisma.donors.findMany({
             include: {
@@ -1307,10 +1305,15 @@ router.get("/", async (_req: Request, res: Response) => {
 });
 
 /*
- * GET DONOR BY ID
+ * GET DONOR BY ID (Owner or Admin Only)
  * GET /donors/:donorId
  */
-router.get("/:donorId", async (req: Request, res: Response) => {
+router.get(
+    "/:donorId",
+    authenticate,
+    authorize("DONOR", "ADMIN"),
+    checkDonorOwnership,
+    async (req: Request, res: Response) => {
     try {
         const donorId = (Array.isArray(req.params.donorId) ? req.params.donorId[0] : req.params.donorId) as string;
 
@@ -1524,6 +1527,13 @@ router.put(
             }
 
             if (req.body.iseligible !== undefined) {
+                const currentUser = (req as any).user;
+                if (currentUser?.role !== "ADMIN") {
+                    return res.status(403).json({
+                        success: false,
+                        message: "Only administrators or clinical processes can modify donor eligibility",
+                    });
+                }
                 updateData.iseligible = Boolean(req.body.iseligible);
             }
 

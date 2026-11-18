@@ -1158,10 +1158,17 @@ export const api = {
       }>(`/bloodbanks/${bloodBankId}/units/intake`, data, { headers });
     },
 
+    getVerifiers: (bloodBankId: string) =>
+      api.get<{
+        success: boolean;
+        verifiers: Array<{ userid: string; name: string; email: string; role: string }>;
+      }>(`/bloodbanks/${bloodBankId}/verifiers`),
+
     recordScreening: (
       bloodBankId: string,
       unitId: string,
       data: {
+        verifiedByUserId?: string;
         testresults: {
           hiv: string;
           hbv: string;
@@ -1253,6 +1260,7 @@ export const api = {
     recordCrossmatch: (
       bloodBankId: string,
       data: {
+        verifiedByUserId?: string;
         reservationid: string;
         reservationitemid: string;
         unitid: string;

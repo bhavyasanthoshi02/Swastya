@@ -1182,7 +1182,21 @@ export class UnitTraceabilityService {
     ) {
         const requestHash = computeRequestHash({ reservationId, itemsInput, idempotencyKey });
 
+        if (idempotencyKey) {
+            const existingReplay = await prisma.inventoryledger.findFirst({
+                where: { idempotencykey: { startsWith: `${idempotencyKey}:` } },
+            });
+            if (existingReplay) {
+                return { success: true, idempotentReplay: true, message: "Receipt confirmation already processed" };
+            }
+        }
+
         return await prisma.$transaction(async (tx) => {
+            await tx.$queryRawUnsafe(
+                `SELECT reservationid FROM bloodreservations WHERE reservationid = $1 FOR UPDATE`,
+                reservationId
+            );
+
             const reservation = await tx.bloodreservations.findUnique({
                 where: { reservationid: reservationId },
                 include: {
@@ -1196,12 +1210,18 @@ export class UnitTraceabilityService {
                 err.statusCode = 404;
                 throw err;
             }
+            if (reservation.reservationstatus !== "DISPATCHED") {
+                const err: any = new Error(`Cannot confirm receipt for reservation in ${reservation.reservationstatus} status`);
+                err.statusCode = 400;
+                throw err;
+            }
 
             const inputMap = new Map(itemsInput.map((i) => [i.itemId, i]));
             let deliveredCount = 0;
             let excursionCount = 0;
 
             for (const item of reservation.reservationitems) {
+                if (item.itemstatus !== "DISPATCHED") continue;
                 const receipt = inputMap.get(item.itemid);
                 if (!receipt) continue;
 
@@ -1268,7 +1288,11 @@ export class UnitTraceabilityService {
                     });
 
                     // Return to vault quarantine and record TRANSIT_EXCURSION_RETURN in ledger
-                    const lot = await tx.inventory.findUnique({ where: { inventoryid: item.unit.inventoryid } });
+                    const lockedLots: any[] = await tx.$queryRawUnsafe(
+                        `SELECT inventoryid, unitsquarantined FROM inventory WHERE inventoryid = $1 FOR UPDATE`,
+                        item.unit.inventoryid
+                    );
+                    const lot = lockedLots[0];
                     if (lot) {
                         const newQuar = lot.unitsquarantined + 1;
                         await tx.inventory.update({
@@ -1339,7 +1363,20 @@ export class UnitTraceabilityService {
     static async cancelReservation(reservationId: string, actorUserId: string, reason: string, idempotencyKey: string) {
         const requestHash = computeRequestHash({ reservationId, reason, idempotencyKey });
 
+        if (idempotencyKey) {
+            const existingReplay = await prisma.inventoryledger.findFirst({
+                where: { idempotencykey: { startsWith: `${idempotencyKey}:lot:` } },
+            });
+            if (existingReplay) {
+                return { success: true, idempotentReplay: true, message: "Reservation cancellation already processed" };
+            }
+        }
+
         return await prisma.$transaction(async (tx) => {
+            await tx.$queryRawUnsafe(
+                `SELECT reservationid FROM bloodreservations WHERE reservationid = $1 FOR UPDATE`,
+                reservationId
+            );
             const reservation = await tx.bloodreservations.findUnique({
                 where: { reservationid: reservationId },
                 include: {
@@ -1354,7 +1391,7 @@ export class UnitTraceabilityService {
                 throw err;
             }
 
-            if (reservation.reservationstatus === "DISPATCHED" || reservation.reservationstatus === "COMPLETED") {
+            if (reservation.reservationstatus !== "ACTIVE") {
                 const err: any = new Error(`Cannot cancel reservation in ${reservation.reservationstatus} status`);
                 err.statusCode = 400;
                 throw err;
@@ -1502,6 +1539,11 @@ export class UnitTraceabilityService {
 
             if (unit.status === "DISCARDED") {
                 const err: any = new Error("Unit is already discarded");
+                err.statusCode = 400;
+                throw err;
+            }
+            if (unit.status === "RESERVED" || unit.status === "IN_TRANSIT" || unit.status === "DELIVERED") {
+                const err: any = new Error(`Cannot discard unit in ${unit.status} status; cancel reservation or return to quarantine first`);
                 err.statusCode = 400;
                 throw err;
             }

@@ -67,6 +67,13 @@ export const checkDonorOwnership = async (
         }
 
         const donorId = (req.params.donorId || req.params.id) as string;
+        if (!donorId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(donorId)) {
+            return res.status(404).json({
+                success: false,
+                message: "Donor not found",
+            });
+        }
+
         const donor = await prisma.donors.findUnique({
             where: {
                 donorid: donorId,
@@ -200,6 +207,91 @@ export const checkBloodBankOwnership = async (
         return res.status(500).json({
             success: false,
             message: "Ownership check failed",
+        });
+    }
+};
+
+export const requireApprovedHospital = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+) => {
+    try {
+        const user = (req as any).user;
+        if (!user || user.role === "ADMIN" || user.role !== "HOSPITAL") {
+            return next();
+        }
+
+        const hospital = await prisma.hospitals.findUnique({
+            where: { userid: user.userid },
+            select: { hospitalid: true, approvalstatus: true },
+        });
+
+        if (!hospital) {
+            return res.status(403).json({
+                success: false,
+                message: "Registered hospital profile required for clinical operations",
+            });
+        }
+
+        if (hospital.approvalstatus !== "APPROVED") {
+            return res.status(403).json({
+                success: false,
+                message: `Hospital facility is ${hospital.approvalstatus}. Only APPROVED facilities may perform clinical operations.`,
+                approvalstatus: hospital.approvalstatus,
+            });
+        }
+
+        (req as any).hospital = hospital;
+        return next();
+    } catch (error) {
+        console.error("Hospital Approval Check Error:", error);
+        return res.status(500).json({
+            success: false,
+            message: "Hospital approval check failed",
+        });
+    }
+};
+
+export const requireApprovedBloodBank = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+) => {
+    try {
+        const user = (req as any).user;
+        if (!user || user.role === "ADMIN" || user.role !== "BLOOD_BANK") {
+            return next();
+        }
+
+        const bloodBank =
+            (req as any).bloodBank ||
+            (await prisma.bloodbanks.findUnique({
+                where: { userid: user.userid },
+                select: { bloodbankid: true, approvalstatus: true },
+            }));
+
+        if (!bloodBank) {
+            return res.status(403).json({
+                success: false,
+                message: "Registered blood bank profile required for clinical operations",
+            });
+        }
+
+        if (bloodBank.approvalstatus !== "APPROVED") {
+            return res.status(403).json({
+                success: false,
+                message: `Blood bank facility is ${bloodBank.approvalstatus}. Only APPROVED facilities may perform clinical operations.`,
+                approvalstatus: bloodBank.approvalstatus,
+            });
+        }
+
+        return next();
+    } catch (error) {
+        console.error("Blood Bank Approval Check Error:", error);
+        return res.status(500).json({
+            success: false,
+            message: "Blood bank approval check failed",
         });
     }
 };

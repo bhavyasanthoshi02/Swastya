@@ -61,6 +61,8 @@ export default function BloodBankDispatchPage() {
   const [crossmatchNotes, setCrossmatchNotes] = useState("");
   const [isSubmittingCrossmatch, setIsSubmittingCrossmatch] = useState(false);
   const [crossmatchError, setCrossmatchError] = useState<string | null>(null);
+  const [verifiers, setVerifiers] = useState<Array<{ userid: string; name: string; email: string; role: string }>>([]);
+  const [selectedVerifierId, setSelectedVerifierId] = useState("");
 
   // Dispatch Modal State
   const [dispatchTarget, setDispatchTarget] = useState<BloodReservationItem | null>(null);
@@ -85,9 +87,19 @@ export default function BloodBankDispatchPage() {
 
       if (activeBb) {
         setBloodBank(activeBb);
-        const res = await api.bloodbank.getAssignments(activeBb.bloodbankid);
+        const [res, verRes] = await Promise.all([
+          api.bloodbank.getAssignments(activeBb.bloodbankid),
+          api.bloodbank.getVerifiers(activeBb.bloodbankid).catch(() => ({ success: false, verifiers: [] })),
+        ]);
         if (res.success) {
           setAssignments(res.assignments || []);
+        }
+        if (verRes.success) {
+          const list = verRes.verifiers || [];
+          setVerifiers(list);
+          if (list.length > 0 && !selectedVerifierId) {
+            setSelectedVerifierId(list[0].userid);
+          }
         }
       } else {
         setError("Facility profile not found. Please sign in again.");
@@ -139,6 +151,10 @@ export default function BloodBankDispatchPage() {
       setCrossmatchError("Laboratory Technologist Name is required for certification.");
       return;
     }
+    if (!selectedVerifierId) {
+      setCrossmatchError("An eligible second authorized clinical verifier is required for crossmatch dual sign-off.");
+      return;
+    }
 
     try {
       setIsSubmittingCrossmatch(true);
@@ -148,6 +164,7 @@ export default function BloodBankDispatchPage() {
       const res = await api.bloodbank.recordCrossmatch(
         bloodbank.bloodbankid,
         {
+          verifiedByUserId: selectedVerifierId,
           reservationid: crossmatchTarget.reservation.reservationid,
           reservationitemid: crossmatchTarget.item.reservationitemid,
           unitid: crossmatchTarget.item.unitid,
@@ -717,6 +734,29 @@ export default function BloodBankDispatchPage() {
               </div>
 
               <div className="space-y-1.5">
+                <label className="font-bold text-slate-700">
+                  Second Clinical Verifier Account (Dual Sign-off) <span className="text-rose-600">*</span>
+                </label>
+                {verifiers.length === 0 ? (
+                  <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900">
+                    No eligible second active verifier (separate BLOOD_BANK or ADMIN user) is available. Clinical crossmatch dual sign-off cannot be submitted until a second authorized verifier account exists.
+                  </div>
+                ) : (
+                  <select
+                    value={selectedVerifierId}
+                    onChange={(e) => setSelectedVerifierId(e.target.value)}
+                    className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-slate-800 bg-white focus:outline-none focus:border-[#317786]"
+                  >
+                    {verifiers.map((v) => (
+                      <option key={v.userid} value={v.userid}>
+                        {v.name} ({v.role} — {v.email})
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              <div className="space-y-1.5">
                 <label className="font-bold text-slate-700">Clinical Observations (Optional)</label>
                 <input
                   type="text"
@@ -739,7 +779,7 @@ export default function BloodBankDispatchPage() {
               <button
                 type="button"
                 onClick={handleRecordCrossmatch}
-                disabled={isSubmittingCrossmatch}
+                disabled={isSubmittingCrossmatch || verifiers.length === 0 || !selectedVerifierId}
                 className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#053845] hover:bg-[#03252e] text-white text-xs font-bold shadow-md cursor-pointer disabled:opacity-50"
               >
                 {isSubmittingCrossmatch ? (

@@ -44,18 +44,18 @@ const normalizeGender = (g?: string): gender_type | null => {
     return map[clean] || null;
 };
 
-const normalizeRole = (r?: string): user_role | null => {
-    if (!r) return null;
+const PUBLIC_REGISTRATION_ROLES: Record<string, user_role> = {
+    "DONOR": user_role.DONOR,
+    "REQUESTER": user_role.REQUESTER,
+    "HOSPITAL": user_role.HOSPITAL,
+    "BLOOD_BANK": user_role.BLOOD_BANK,
+    "PATIENT": user_role.REQUESTER,
+};
+
+const normalizePublicRole = (r?: string): user_role | null => {
+    if (!r) return user_role.DONOR;
     const clean = r.trim().toUpperCase();
-    const map: Record<string, user_role> = {
-        "ADMIN": user_role.ADMIN,
-        "DONOR": user_role.DONOR,
-        "REQUESTER": user_role.REQUESTER,
-        "HOSPITAL": user_role.HOSPITAL,
-        "BLOOD_BANK": user_role.BLOOD_BANK,
-        "PATIENT": user_role.REQUESTER,
-    };
-    return map[clean] || null;
+    return PUBLIC_REGISTRATION_ROLES[clean] || null;
 };
 
 router.get("/test", (_req, res) => {
@@ -92,6 +92,13 @@ router.get("/me", authenticate, async (req: Request, res: Response) => {
             return res.status(404).json({
                 success: false,
                 message: "User not found",
+            });
+        }
+
+        if (!user.isactive) {
+            return res.status(403).json({
+                success: false,
+                message: "Account is deactivated or pending activation",
             });
         }
 
@@ -167,7 +174,20 @@ router.post("/register", async (req: Request, res: Response) => {
             });
         }
 
-        const targetRole = normalizeRole(role) || user_role.DONOR;
+        if (typeof role === "string" && role.trim().toUpperCase() === "ADMIN") {
+            return res.status(403).json({
+                success: false,
+                message: "Administrative accounts cannot be self-registered. Contact a system administrator.",
+            });
+        }
+
+        const targetRole = normalizePublicRole(typeof role === "string" ? role : undefined);
+        if (!targetRole) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid registration role. Allowed roles: DONOR, REQUESTER, HOSPITAL, BLOOD_BANK.",
+            });
+        }
 
         let validBloodGroup: blood_group | null = null;
         let parsedDob: Date | null = null;
@@ -453,27 +473,92 @@ router.post("/register", async (req: Request, res: Response) => {
             });
         }
 
-        // Non-donor, non-requester, non-hospital registration (e.g. Blood Bank)
-        const user = await prisma.users.create({
-            data: {
-                name: name.trim(),
-                email: email.trim().toLowerCase(),
-                phonenumber: contactNumber,
-                password: hashedPassword,
-                role: targetRole,
-            },
-        });
+        if (targetRole === user_role.BLOOD_BANK) {
+            const rawBbName = (req.body.bloodbankname || req.body.bloodBankName || req.body.orgName || req.body.facilityName || "").trim();
+            const rawLicenseNumber = (req.body.licensenumber || req.body.licenseNumber || req.body.regNumber || req.body.registrationnumber || "").trim();
+            const rawContactPerson = (req.body.contactpersonname || req.body.contactPersonName || name || "").trim();
+            const rawContactPhone = (req.body.contactpersonphone || req.body.contactPersonPhone || contactNumber || "").trim();
+            const rawAddress = (address || req.body.bloodBankAddress || req.body.instAddress || "").trim();
+            const rawCityBb = (city || req.body.bloodBankCity || req.body.instCity || "").trim();
+            const rawStateBb = (state || req.body.bloodBankState || req.body.instState || "").trim();
+            const rawPincodeBb = (pincode || req.body.bloodBankPincode || req.body.instPincode || "").trim();
 
-        const token = generateToken(user.userid, user.role);
-        const { password: _password, ...safeUser } = user;
+            const missingBbFields: string[] = [];
+            if (!rawBbName) missingBbFields.push("bloodbankname");
+            if (!rawLicenseNumber) missingBbFields.push("licensenumber");
+            if (!rawContactPerson) missingBbFields.push("contactpersonname");
+            if (!rawContactPhone) missingBbFields.push("contactpersonphone");
+            if (!rawAddress) missingBbFields.push("address");
+            if (!rawCityBb) missingBbFields.push("city");
+            if (!rawStateBb) missingBbFields.push("state");
+            if (!rawPincodeBb) missingBbFields.push("pincode");
 
-        return res.status(201).json({
-            success: true,
-            token,
-            user: safeUser,
-            donor: null,
-            requester: null,
-            hospital: null,
+            if (missingBbFields.length > 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Blood Bank registration requires: ${missingBbFields.join(", ")}`,
+                    missingFields: missingBbFields,
+                });
+            }
+
+            const existingBloodBank = await prisma.bloodbanks.findUnique({
+                where: { licensenumber: rawLicenseNumber },
+            });
+            if (existingBloodBank) {
+                return res.status(400).json({
+                    success: false,
+                    message: "A blood bank with this license number already exists",
+                });
+            }
+
+            const result = await prisma.$transaction(async (tx) => {
+                const user = await tx.users.create({
+                    data: {
+                        name: rawContactPerson || rawBbName,
+                        email: email.trim().toLowerCase(),
+                        phonenumber: rawContactPhone,
+                        password: hashedPassword,
+                        role: user_role.BLOOD_BANK,
+                    },
+                });
+
+                const bloodbank = await tx.bloodbanks.create({
+                    data: {
+                        userid: user.userid,
+                        bloodbankname: rawBbName,
+                        licensenumber: rawLicenseNumber,
+                        contactpersonname: rawContactPerson,
+                        contactpersonphone: rawContactPhone,
+                        address: rawAddress,
+                        city: rawCityBb,
+                        state: rawStateBb,
+                        pincode: rawPincodeBb,
+                        latitude: validatedCoords.latitude ?? null,
+                        longitude: validatedCoords.longitude ?? null,
+                        approvalstatus: approval_status.PENDING,
+                    },
+                });
+
+                return { user, bloodbank };
+            });
+
+            const token = generateToken(result.user.userid, result.user.role);
+            const { password: _password, ...safeUser } = result.user;
+
+            return res.status(201).json({
+                success: true,
+                token,
+                user: safeUser,
+                donor: null,
+                requester: null,
+                hospital: null,
+                bloodbank: result.bloodbank,
+            });
+        }
+
+        return res.status(400).json({
+            success: false,
+            message: "Unsupported registration role",
         });
     } catch (error) {
         console.error("Register Error:", error);
@@ -651,43 +736,41 @@ router.post("/activate-donor", async (req: Request, res: Response) => {
         }
 
         const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
-        const tokenRecord = await prisma.donoractivationtokens.findFirst({
-            where: {
-                tokenhash: tokenHash,
-                usedat: null,
-            },
-            include: {
-                users: {
-                    include: {
-                        donors: true,
-                    },
-                },
-            },
-        });
 
-        if (!tokenRecord) {
-            return res.status(400).json({
-                success: false,
-                message: "Invalid or already used activation token.",
-            });
-        }
-
-        if (new Date() > new Date(tokenRecord.expiresat)) {
-            return res.status(400).json({
-                success: false,
-                message: "Activation token has expired. Please request a new activation link from your hospital.",
-            });
-        }
-
-        // Hash donor's chosen password
+        // Hash donor's chosen password before transaction
         const hashedPassword = await bcrypt.hash(password, 10);
 
-        // Transaction: mark token used, activate user, and set chosen password
+        // Atomic transaction: verify unused & unexpired token, mark used with usedat: null guard, activate user
         const updatedUser = await prisma.$transaction(async (tx) => {
-            await tx.donoractivationtokens.update({
-                where: { tokenid: tokenRecord.tokenid },
+            const tokenRecord = await tx.donoractivationtokens.findFirst({
+                where: {
+                    tokenhash: tokenHash,
+                    usedat: null,
+                },
+            });
+
+            if (!tokenRecord) {
+                throw Object.assign(new Error("Invalid or already used activation token."), { statusCode: 400 });
+            }
+
+            if (new Date() > new Date(tokenRecord.expiresat)) {
+                throw Object.assign(
+                    new Error("Activation token has expired. Please request a new activation link from your hospital."),
+                    { statusCode: 400 }
+                );
+            }
+
+            const consumed = await tx.donoractivationtokens.updateMany({
+                where: {
+                    tokenid: tokenRecord.tokenid,
+                    usedat: null,
+                },
                 data: { usedat: new Date() },
             });
+
+            if (consumed.count !== 1) {
+                throw Object.assign(new Error("Invalid or already used activation token."), { statusCode: 400 });
+            }
 
             const user = await tx.users.update({
                 where: { userid: tokenRecord.userid },
@@ -714,7 +797,13 @@ router.post("/activate-donor", async (req: Request, res: Response) => {
             user: safeUser,
             donor: updatedUser.donors,
         });
-    } catch (error) {
+    } catch (error: any) {
+        if (error?.statusCode === 400) {
+            return res.status(400).json({
+                success: false,
+                message: error.message,
+            });
+        }
         console.error("Activation error:", error);
         return res.status(500).json({
             success: false,

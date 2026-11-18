@@ -1,13 +1,17 @@
 import assert from "node:assert";
 import http from "node:http";
 import jwt from "jsonwebtoken";
+import bcrypt from "bcrypt";
 
 const TEST_JWT_SECRET = "test_super_secure_jwt_secret_swastya_step2_test";
 process.env.JWT_SECRET = TEST_JWT_SECRET;
 process.env.FRONTEND_URL = "http://localhost:3000";
+process.env.DISABLE_RATE_LIMIT = "true";
 
 import app from "../src/app";
+import { prisma } from "../src/config/prisma";
 import { generateToken } from "../src/utils/jwt";
+import { user_role } from "../src/generated/prisma/enums";
 
 async function makeRequest(
     server: http.Server,
@@ -114,9 +118,43 @@ async function runTests() {
         assert.strictEqual(res.body.message, "Token missing");
     });
 
+    const ts = Date.now();
+    const pwHash = await bcrypt.hash("ValidPass123!", 10);
+    const donorUser = await prisma.users.create({
+        data: {
+            name: "Step25 Donor",
+            email: `step25_donor_${ts}@swastya.test`,
+            password: pwHash,
+            role: user_role.DONOR,
+            phonenumber: "9876500011",
+            isactive: true,
+        },
+    });
+    const hospitalUser = await prisma.users.create({
+        data: {
+            name: "Step25 Hospital",
+            email: `step25_hosp_${ts}@swastya.test`,
+            password: pwHash,
+            role: user_role.HOSPITAL,
+            phonenumber: "9876500012",
+            isactive: true,
+        },
+    });
+    const inactiveReqUser = await prisma.users.create({
+        data: {
+            name: "Step25 Inactive Req",
+            email: `step25_inact_${ts}@swastya.test`,
+            password: pwHash,
+            role: user_role.REQUESTER,
+            phonenumber: "9876500013",
+            isactive: false,
+        },
+    });
+
+    try {
     // 5. Non-requester (e.g. DONOR) accessing requester routes is rejected with 403
     await test("5. Security: DONOR token accessing /requesters/me/dashboard is rejected with 403", async () => {
-        const donorToken = generateToken("donor-user-1234", "DONOR");
+        const donorToken = generateToken(donorUser.userid, donorUser.role);
         const res = await makeRequest(server, {
             path: "/requesters/me/dashboard",
             method: "GET",
@@ -130,7 +168,7 @@ async function runTests() {
 
     // 6. Non-requester (e.g. HOSPITAL) accessing requester routes is rejected with 403
     await test("6. Security: HOSPITAL token accessing /requesters/me is rejected with 403", async () => {
-        const hospitalToken = generateToken("hospital-user-1234", "HOSPITAL");
+        const hospitalToken = generateToken(hospitalUser.userid, hospitalUser.role);
         const res = await makeRequest(server, {
             path: "/requesters/me",
             method: "GET",
@@ -181,9 +219,10 @@ async function runTests() {
 
     // 10. Token generation for REQUESTER produces valid token
     await test("10. Token utility generates valid 7-day token for REQUESTER role", async () => {
-        const token = generateToken("requester-uuid-5678", "REQUESTER");
+        const sampleUuid = "22222222-2222-4222-8222-222222222222";
+        const token = generateToken(sampleUuid, "REQUESTER");
         const decoded = jwt.verify(token, TEST_JWT_SECRET) as any;
-        assert.strictEqual(decoded.userid, "requester-uuid-5678");
+        assert.strictEqual(decoded.userid, sampleUuid);
         assert.strictEqual(decoded.role, "REQUESTER");
     });
 
@@ -207,7 +246,23 @@ async function runTests() {
         assert.strictEqual(res.body.success, false);
     });
 
-    server.close();
+    // 12. Inactive requester token rejected with 403
+    await test("12. Security: Inactive REQUESTER account token is rejected with 403", async () => {
+        const inactiveToken = generateToken(inactiveReqUser.userid, inactiveReqUser.role);
+        const res = await makeRequest(server, {
+            path: "/requesters/me",
+            method: "GET",
+            headers: { Authorization: `Bearer ${inactiveToken}` },
+        });
+        assert.strictEqual(res.statusCode, 403);
+    });
+    } finally {
+        await prisma.users.deleteMany({
+            where: { userid: { in: [donorUser.userid, hospitalUser.userid, inactiveReqUser.userid] } },
+        });
+        server.close();
+        await prisma.$disconnect();
+    }
 
     console.log("\n=================================================================");
     console.log(`TOTAL TESTS: ${passed + failed} | PASSED: ${passed} | FAILED: ${failed}`);

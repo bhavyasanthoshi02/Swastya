@@ -4,7 +4,7 @@ import multer from "multer";
 import { prisma } from "../config/prisma";
 import { authenticate } from "../middleware/auth.middleware";
 import { authorize } from "../middleware/role.middleware";
-import { checkHospitalOwnership } from "../middleware/ownership.middleware";
+import { checkHospitalOwnership, requireApprovedHospital } from "../middleware/ownership.middleware";
 import { getJwtSecret } from "../utils/jwt";
 import { approval_status, blood_group, blood_component, notification_type, verification_status } from "../generated/prisma/enums";
 import { DonorImportService, normalizeBloodGroup } from "../services/donorImport.service";
@@ -640,7 +640,7 @@ async function createHospitalBloodRequestCore(hospital: any, user: any, body: an
  * CREATE AUTHENTICATED HOSPITAL BLOOD REQUEST
  * POST /hospitals/me/bloodrequests
  */
-router.post("/me/bloodrequests", authenticate, authorize("HOSPITAL", "ADMIN"), async (req: Request, res: Response) => {
+router.post("/me/bloodrequests", authenticate, authorize("HOSPITAL", "ADMIN"), requireApprovedHospital, async (req: Request, res: Response) => {
     try {
         const user = (req as any).user;
 
@@ -732,6 +732,7 @@ router.post(
     authenticate,
     authorize("HOSPITAL", "ADMIN"),
     checkHospitalOwnership,
+    requireApprovedHospital,
     async (req: Request, res: Response) => {
         try {
             const user = (req as any).user;
@@ -994,7 +995,7 @@ router.get(
     async (req: Request, res: Response) => {
         try {
             const format = (req.query.format as string)?.toLowerCase() === "xlsx" ? "xlsx" : "csv";
-            const template = DonorImportService.generateTemplate(format);
+            const template = await DonorImportService.generateTemplate(format);
 
             if (format === "xlsx") {
                 res.setHeader(
@@ -1026,6 +1027,7 @@ router.post(
     "/me/donors/import/preview",
     authenticate,
     authorize("HOSPITAL", "ADMIN"),
+    requireApprovedHospital,
     upload.single("file"),
     async (req: Request, res: Response) => {
         try {
@@ -1083,7 +1085,7 @@ router.post(
             }
 
             // Parse file
-            const parsed = DonorImportService.parseFile(fileBuffer, originalName);
+            const parsed = await DonorImportService.parseFile(fileBuffer, originalName);
             if (parsed.donors.length === 0) {
                 return res.status(400).json({
                     success: false,
@@ -1117,6 +1119,7 @@ router.post(
     "/me/donors/import/commit",
     authenticate,
     authorize("HOSPITAL", "ADMIN"),
+    requireApprovedHospital,
     upload.single("file"),
     async (req: Request, res: Response) => {
         try {
@@ -1132,12 +1135,9 @@ router.post(
                 });
             }
 
-            let toCreate = req.body.toCreate;
-            let toLink = req.body.toLink;
-            let validDonations = req.body.validDonations || [];
+            let parsedFromFile: any = undefined;
 
-            // If client re-sent the raw file with direct confirmation
-            if ((!toCreate || !Array.isArray(toCreate)) && (req.file || req.body.fileData || req.body.csvContent)) {
+            if (req.file || req.body.fileData || req.body.csvContent) {
                 let fileBuffer: Buffer | null = null;
                 let originalName = "";
 
@@ -1153,29 +1153,36 @@ router.post(
                 }
 
                 if (fileBuffer) {
-                    const parsed = DonorImportService.parseFile(fileBuffer, originalName);
-                    const preview = await DonorImportService.validateAndPreview(hospital.hospitalid, parsed);
-                    toCreate = preview.toCreate;
-                    toLink = preview.toLink;
-                    validDonations = preview.validDonations;
+                    if (fileBuffer.length > 5 * 1024 * 1024) {
+                        return res.status(400).json({
+                            success: false,
+                            message: "Uploaded file exceeds 5 MB limit.",
+                        });
+                    }
+                    parsedFromFile = await DonorImportService.parseFile(fileBuffer, originalName);
                 }
             }
 
-            if (!Array.isArray(toCreate)) toCreate = [];
-            if (!Array.isArray(toLink)) toLink = [];
-            if (!Array.isArray(validDonations)) validDonations = [];
+            const toCreate = Array.isArray(req.body.toCreate) ? req.body.toCreate : [];
+            const toLink = Array.isArray(req.body.toLink) ? req.body.toLink : [];
+            const validDonations = Array.isArray(req.body.validDonations) ? req.body.validDonations : [];
 
-            if (toCreate.length === 0 && toLink.length === 0 && validDonations.length === 0) {
+            if (!parsedFromFile && toCreate.length === 0 && toLink.length === 0 && validDonations.length === 0) {
                 return res.status(400).json({
                     success: false,
                     message: "No valid donor or donation records were approved for commit.",
                 });
             }
 
-            const result = await DonorImportService.commitImport(
+            const result = await DonorImportService.revalidateAndCommit(
                 hospital.hospitalid,
                 hospital.hospitalname,
-                { toCreate, toLink, validDonations }
+                {
+                    parsed: parsedFromFile,
+                    toCreate,
+                    toLink,
+                    validDonations,
+                }
             );
 
             return res.status(200).json({
@@ -1489,6 +1496,7 @@ router.patch(
     "/me/donors/:donorId/history/:historyId",
     authenticate,
     authorize("HOSPITAL", "ADMIN"),
+    requireApprovedHospital,
     async (req: Request, res: Response) => {
         try {
             const user = (req as any).user;

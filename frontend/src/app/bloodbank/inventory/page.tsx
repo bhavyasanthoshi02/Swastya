@@ -50,7 +50,7 @@ export default function BloodBankInventoryPage() {
 
       // Fetch facility profile first
       const profRes = await api.bloodbank.getProfile();
-      let activeBb = profRes.success ? profRes.bloodbank : getStoredBloodBank();
+      const activeBb = profRes.success ? profRes.bloodbank : getStoredBloodBank();
 
       if (activeBb) {
         setBloodBank(activeBb);

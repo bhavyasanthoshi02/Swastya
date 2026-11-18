@@ -1,8 +1,11 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import { getJwtSecret } from "../utils/jwt";
+import { prisma } from "../config/prisma";
 
-export const authenticate = (
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export const authenticate = async (
     req: Request,
     res: Response,
     next: NextFunction
@@ -37,9 +40,41 @@ export const authenticate = (
             });
         }
 
-        const decoded = jwt.verify(token, secret);
+        const decoded = jwt.verify(token, secret, { algorithms: ["HS256"] }) as {
+            userid?: string;
+            role?: string;
+        };
 
-        (req as any).user = decoded;
+        if (!decoded?.userid || !UUID_REGEX.test(decoded.userid)) {
+            return res.status(401).json({
+                success: false,
+                message: "Invalid token",
+            });
+        }
+
+        const dbUser = await prisma.users.findUnique({
+            where: { userid: decoded.userid },
+            select: { userid: true, role: true, isactive: true },
+        });
+
+        if (!dbUser) {
+            return res.status(401).json({
+                success: false,
+                message: "Invalid token: account no longer exists",
+            });
+        }
+
+        if (!dbUser.isactive) {
+            return res.status(403).json({
+                success: false,
+                message: "Account is deactivated or pending activation",
+            });
+        }
+
+        (req as any).user = {
+            userid: dbUser.userid,
+            role: dbUser.role,
+        };
 
         next();
     } catch (error) {

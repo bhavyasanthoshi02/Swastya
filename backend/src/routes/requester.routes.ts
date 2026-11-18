@@ -449,7 +449,7 @@ router.put("/me", authenticate, authorize("REQUESTER", "PATIENT", "ADMIN"), asyn
    2. PARAMETRIC & GENERAL REQUESTER ENDPOINTS
    ========================================================================= */
 
-router.get("/", async (_req, res) => {
+router.get("/", authenticate, authorize("ADMIN"), async (_req, res) => {
     try {
         const requesters = await prisma.requesters.findMany({
             include: {
@@ -656,7 +656,7 @@ router.post("/", authenticate, authorize("ADMIN"), async (req, res) => {
 router.put(
     "/:id",
     authenticate,
-    authorize("REQUESTER", "ADMIN"),
+    authorize("REQUESTER", "PATIENT", "ADMIN"),
     checkRequesterOwnership,
     async (req, res) => {
         try {

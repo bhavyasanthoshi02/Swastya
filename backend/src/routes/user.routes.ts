@@ -398,13 +398,41 @@ router.delete("/:id", authenticate, authorize("ADMIN"), async (req: Request, res
             });
         }
 
-        // Check for clinical relationships that must be preserved
-        const [requestCount, historyCount] = await Promise.all([
+        // Check for clinical & ledger relationships that must be preserved
+        const [
+            requestCount,
+            historyCount,
+            ledgerCount,
+            screeningCount,
+            crossmatchCount,
+            reservationCount,
+            assignmentCount,
+            dispositionCount,
+        ] = await Promise.all([
             prisma.bloodrequests.count({ where: { createdbyuserid: targetId } }),
             prisma.requeststatushistory.count({ where: { changedbyuserid: targetId } }),
+            prisma.inventoryledger.count({ where: { actoruserid: targetId } }),
+            prisma.unitscreeningrecords.count({
+                where: { OR: [{ testedbyuserid: targetId }, { verifiedbyuserid: targetId }] },
+            }),
+            prisma.clinicalcrossmatches.count({
+                where: { OR: [{ testedbyuserid: targetId }, { verifiedbyuserid: targetId }] },
+            }),
+            prisma.bloodreservations.count({ where: { reservedbyuserid: targetId } }),
+            prisma.requisitionassignments.count({ where: { assignedbyuserid: targetId } }),
+            prisma.unitdispositionhistory.count({ where: { actoruserid: targetId } }),
         ]);
 
-        if (requestCount > 0 || historyCount > 0) {
+        if (
+            requestCount > 0 ||
+            historyCount > 0 ||
+            ledgerCount > 0 ||
+            screeningCount > 0 ||
+            crossmatchCount > 0 ||
+            reservationCount > 0 ||
+            assignmentCount > 0 ||
+            dispositionCount > 0
+        ) {
             // Relational and clinical data retention: deactivate account rather than destructive hard-delete
             await prisma.users.update({
                 where: { userid: targetId },

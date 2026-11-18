@@ -6,6 +6,7 @@ import multer from "multer";
 import { prisma } from "../config/prisma";
 import { authenticate } from "../middleware/auth.middleware";
 import { authorize } from "../middleware/role.middleware";
+import { requireApprovedHospital } from "../middleware/ownership.middleware";
 import { blood_group, availability_status, notification_type } from "../generated/prisma/enums";
 import { validateCoordinates } from "../utils/distance";
 import { validatePrescriptionFile, getPrescriptionStorageDir } from "../utils/fileValidation";
@@ -506,7 +507,7 @@ router.get("/:id", authenticate, async (req: Request, res: Response) => {
         });
     }
 });
-router.post("/", authenticate, handlePrescriptionUpload, async (req: Request, res: Response) => {
+router.post("/", authenticate, authorize("REQUESTER", "PATIENT", "HOSPITAL", "ADMIN"), requireApprovedHospital, handlePrescriptionUpload, async (req: Request, res: Response) => {
     let savedFileName: string | null = null;
     let savedFilePath: string | null = null;
     let fileMeta: {
@@ -836,7 +837,7 @@ router.post("/", authenticate, handlePrescriptionUpload, async (req: Request, re
         });
     }
 });
-router.put("/:id", authenticate, async (req: Request, res: Response) => {
+router.put("/:id", authenticate, requireApprovedHospital, async (req: Request, res: Response) => {
     try {
         const user = (req as any).user;
         const targetId = (Array.isArray(req.params.id) ? req.params.id[0] : req.params.id) as string;
@@ -1265,12 +1266,11 @@ router.get("/:id/prescription/file", authenticate, async (req: Request, res: Res
 
         const mime = bloodRequest.prescription.mimetype || "application/octet-stream";
         const downloadName = bloodRequest.prescription.originalfilename || safeFileName;
-        const isDownload = req.query.download === "true";
 
         res.setHeader("Content-Type", mime);
         res.setHeader(
             "Content-Disposition",
-            `${isDownload ? "attachment" : "inline"}; filename="${encodeURIComponent(downloadName)}"`
+            `attachment; filename="${encodeURIComponent(downloadName)}"`
         );
         res.setHeader("Cache-Control", "private, no-cache, no-store, must-revalidate");
         res.setHeader("X-Content-Type-Options", "nosniff");
@@ -1291,7 +1291,7 @@ router.get("/:id/prescription/file", authenticate, async (req: Request, res: Res
  * - Cross-hospital review is strictly blocked.
  * - Direct requester verification is strictly blocked.
  */
-router.post("/:id/prescription/verify", authenticate, async (req: Request, res: Response) => {
+router.post("/:id/prescription/verify", authenticate, requireApprovedHospital, async (req: Request, res: Response) => {
     try {
         const user = (req as any).user;
         const targetId = (Array.isArray(req.params.id) ? req.params.id[0] : req.params.id) as string;
@@ -2022,8 +2022,25 @@ router.post("/:id/respond", authenticate, async (req: Request, res: Response) =>
 
         const metaString = `<!--META:${JSON.stringify(metaData)}-->`;
 
-        // Atomic transaction: Notify Requester, Record Donor Confirmation, Progress Status
+        // Atomic transaction: Lock donor row, deduplicate, Notify Requester, Record Donor Confirmation, Progress Status
         await prisma.$transaction(async (tx) => {
+            await tx.$queryRawUnsafe(
+                `SELECT donorid FROM donors WHERE donorid = $1 FOR UPDATE`,
+                donor.donorid
+            );
+
+            const concurrentResponse = await tx.notification.findFirst({
+                where: {
+                    userid: user.userid,
+                    requestid: request.requestid,
+                    type: notification_type.MATCH,
+                    title: "Volunteer Response Confirmed",
+                },
+            });
+            if (concurrentResponse) {
+                throw Object.assign(new Error("You have already volunteered for this blood request."), { statusCode: 400 });
+            }
+
             // 1. In-app confirmation notification for the donor (serves as donor response persistence)
             await tx.notification.create({
                 data: {
@@ -2156,7 +2173,13 @@ router.post("/:id/respond", authenticate, async (req: Request, res: Response) =>
             transitStatus: "DONOR_FOUND",
             status: request.status === "CREATED" || request.status === "VERIFIED" ? "DONOR_MATCHING" : request.status,
         });
-    } catch (error) {
+    } catch (error: any) {
+        if (error?.statusCode === 400) {
+            return res.status(400).json({
+                success: false,
+                message: error.message,
+            });
+        }
         console.error("Error responding to blood request:", error);
         return res.status(500).json({
             success: false,
@@ -2169,7 +2192,7 @@ router.post("/:id/respond", authenticate, async (req: Request, res: Response) =>
  * PATCH /bloodrequests/:id/transit-status
  * Update volunteer donor transit status: DONOR_FOUND -> STARTED -> REACHED_LOCATION -> COMPLETED
  */
-router.patch("/:id/transit-status", authenticate, async (req: Request, res: Response) => {
+router.patch("/:id/transit-status", authenticate, requireApprovedHospital, async (req: Request, res: Response) => {
     try {
         const user = (req as any).user;
         const requestId = (Array.isArray(req.params.id) ? req.params.id[0] : req.params.id) as string;
@@ -2183,11 +2206,19 @@ router.patch("/:id/transit-status", authenticate, async (req: Request, res: Resp
             });
         }
 
+        if (!UUID_REGEX.test(requestId)) {
+            return res.status(404).json({
+                success: false,
+                message: "Blood request not found",
+            });
+        }
+
         // Check if blood request exists
         const request = await prisma.bloodrequests.findUnique({
             where: { requestid: requestId },
             include: {
                 hospitals: true,
+                requesters: true,
             },
         });
 
@@ -2207,10 +2238,12 @@ router.patch("/:id/transit-status", authenticate, async (req: Request, res: Resp
         }
 
         const isDonor = user.role === "DONOR";
-        const isRequester = user.role === "REQUESTER" || user.role === "PATIENT" || request.createdbyuserid === user.userid;
+        const isRequesterOwner =
+            request.createdbyuserid === user.userid ||
+            (request.requesters != null && request.requesters.userid === user.userid);
         const isAdmin = user.role === "ADMIN";
 
-        if (!isDonor && !isRequester && !isAdmin && !isAssignedHospital) {
+        if (!isDonor && !isRequesterOwner && !isAdmin && !isAssignedHospital) {
             return res.status(403).json({
                 success: false,
                 message: "Access denied: not authorized to update donor transit status",
@@ -2478,36 +2511,90 @@ router.get("/:id/scheduler-jobs", authenticate, async (req: Request, res: Respon
  * ASSIGN BLOOD REQUEST TO BLOOD BANK
  * POST /bloodrequests/:requestId/assign
  */
-router.post("/:requestId/assign", authenticate, async (req: Request, res: Response) => {
-    try {
-        const user = (req as any).user;
-        const requestId = (Array.isArray(req.params.requestId) ? req.params.requestId[0] : req.params.requestId) as string;
-        const { bloodBankId } = req.body;
+router.post(
+    "/:requestId/assign",
+    authenticate,
+    authorize("HOSPITAL", "ADMIN"),
+    requireApprovedHospital,
+    async (req: Request, res: Response) => {
+        try {
+            const user = (req as any).user;
+            const requestId = (Array.isArray(req.params.requestId) ? req.params.requestId[0] : req.params.requestId) as string;
+            const bloodBankId = (req.body.bloodBankId || req.body.bloodbankid) as string;
 
-        if (!bloodBankId) {
-            return res.status(400).json({
+            if (!UUID_REGEX.test(requestId)) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Blood request not found",
+                });
+            }
+
+            if (!bloodBankId || !UUID_REGEX.test(bloodBankId)) {
+                return res.status(400).json({
+                    success: false,
+                    message: "A valid bloodBankId UUID is required to assign requisition",
+                });
+            }
+
+            const bloodRequest = await prisma.bloodrequests.findUnique({
+                where: { requestid: requestId },
+                include: { prescription: true },
+            });
+
+            if (!bloodRequest) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Blood request not found",
+                });
+            }
+
+            if (user.role === "HOSPITAL") {
+                const hospital = await prisma.hospitals.findUnique({ where: { userid: user.userid } });
+                if (!hospital || bloodRequest.hospitalid !== hospital.hospitalid) {
+                    return res.status(403).json({
+                        success: false,
+                        message: "Access denied: you can only assign blood requests belonging to your hospital",
+                    });
+                }
+            }
+
+            // Clinical safety gate: requester-initiated requests require verified prescription before assignment
+            if (bloodRequest.requesterid && bloodRequest.prescription?.status !== "VERIFIED") {
+                return res.status(400).json({
+                    success: false,
+                    message: "Clinical prescription verification (VERIFIED) is required before assigning to a blood bank",
+                });
+            }
+
+            const targetBloodBank = await prisma.bloodbanks.findUnique({
+                where: { bloodbankid: bloodBankId },
+                select: { bloodbankid: true },
+            });
+            if (!targetBloodBank) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Target blood bank not found",
+                });
+            }
+
+            const result = await UnitTraceabilityService.assignRequisition(requestId, bloodBankId, user.userid);
+            return res.status(201).json(result);
+        } catch (error: any) {
+            console.error("Error assigning requisition:", error);
+            const status = error.statusCode || 500;
+            return res.status(status).json({
                 success: false,
-                message: "bloodBankId is required to assign requisition",
+                message: error.message || "Failed to assign requisition",
             });
         }
-
-        const result = await UnitTraceabilityService.assignRequisition(requestId, bloodBankId, user.userid);
-        return res.status(201).json(result);
-    } catch (error: any) {
-        console.error("Error assigning requisition:", error);
-        const status = error.statusCode || 500;
-        return res.status(status).json({
-            success: false,
-            message: error.message || "Failed to assign requisition",
-        });
     }
-});
+);
 
 /*
  * CONFIRM HOSPITAL RECEIPT AND EXCURSION QUARANTINE
  * POST /bloodrequests/reservations/:reservationId/receipt
  */
-router.post("/reservations/:reservationId/receipt", authenticate, authorize("HOSPITAL", "ADMIN"), async (req: Request, res: Response) => {
+router.post("/reservations/:reservationId/receipt", authenticate, authorize("HOSPITAL", "ADMIN"), requireApprovedHospital, async (req: Request, res: Response) => {
     try {
         const user = (req as any).user;
         const reservationId = (Array.isArray(req.params.reservationId) ? req.params.reservationId[0] : req.params.reservationId) as string;
