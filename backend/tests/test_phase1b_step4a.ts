@@ -104,6 +104,11 @@ function setupSpies() {
     }) as any;
 
     prisma.emergencyschedulerjobs.findFirst = (async () => null) as any;
+    prisma.emergencyschedulerjobs.findUnique = (async () => null) as any;
+    prisma.emergencyschedulerjobs.updateMany = (async (args: any) => {
+        state.jobUpdates.push(args);
+        return { count: 1 };
+    }) as any;
 
     prisma.emergencybroadcasts.findFirst = (async () => null) as any;
     prisma.emergencybroadcasts.create = (async (args: any) => ({

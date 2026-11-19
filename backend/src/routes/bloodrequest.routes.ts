@@ -7,7 +7,7 @@ import { prisma } from "../config/prisma";
 import { authenticate } from "../middleware/auth.middleware";
 import { authorize } from "../middleware/role.middleware";
 import { requireApprovedHospital } from "../middleware/ownership.middleware";
-import { blood_group, availability_status, notification_type } from "../generated/prisma/enums";
+import { blood_group, blood_component, availability_status, notification_type, verification_status } from "../generated/prisma/enums";
 import { validateCoordinates } from "../utils/distance";
 import { validatePrescriptionFile, getPrescriptionStorageDir } from "../utils/fileValidation";
 import { triggerEmergencyBroadcast, getRequestBroadcastStatus } from "../services/broadcast.service";
@@ -1065,7 +1065,7 @@ router.put("/:id", authenticate, requireApprovedHospital, async (req: Request, r
         const bloodRequest = await prisma.$transaction(async (tx) => {
             // Lock blood request row using parameterized SQL
             const lockedRows: any[] = await tx.$queryRawUnsafe(
-                `SELECT requestid, status, requesterid, hospitalid, createdbyuserid, patientname, bloodgroup FROM bloodrequests WHERE requestid = $1::uuid FOR UPDATE`,
+                `SELECT requestid, status, requesterid, hospitalid, createdbyuserid, patientname, bloodgroup, bloodcomponent, unitsrequired FROM bloodrequests WHERE requestid = $1::uuid FOR UPDATE`,
                 targetId
             );
 
@@ -1138,6 +1138,91 @@ router.put("/:id", authenticate, requireApprovedHospital, async (req: Request, r
             };
 
             if (!isAssignedHospital || isAdmin) {
+                const DB_BLOOD_GROUP_MAP: Record<string, string> = {
+                    "A+": "A_POSITIVE",
+                    "A-": "A_NEGATIVE",
+                    "B+": "B_POSITIVE",
+                    "B-": "B_NEGATIVE",
+                    "AB+": "AB_POSITIVE",
+                    "AB-": "AB_NEGATIVE",
+                    "O+": "O_POSITIVE",
+                    "O-": "O_NEGATIVE",
+                };
+                const VALID_BLOOD_GROUPS = Object.values(DB_BLOOD_GROUP_MAP);
+                const VALID_COMPONENTS = ["WHOLE_BLOOD", "PLATELETS", "PLASMA", "RBC"];
+
+                if (req.body.bloodgroup !== undefined) {
+                    if (typeof req.body.bloodgroup !== "string" || !VALID_BLOOD_GROUPS.includes(req.body.bloodgroup)) {
+                        throw Object.assign(new Error("Invalid bloodgroup value"), { statusCode: 400 });
+                    }
+                }
+                if (req.body.bloodcomponent !== undefined) {
+                    if (typeof req.body.bloodcomponent !== "string" || !VALID_COMPONENTS.includes(req.body.bloodcomponent)) {
+                        throw Object.assign(new Error("Invalid bloodcomponent value"), { statusCode: 400 });
+                    }
+                }
+                if (req.body.unitsrequired !== undefined) {
+                    const parsedUnits =
+                        req.body.unitsrequired === null || req.body.unitsrequired === ""
+                            ? NaN
+                            : Number(req.body.unitsrequired);
+                    if (!Number.isInteger(parsedUnits) || parsedUnits < 1) {
+                        throw Object.assign(new Error("unitsrequired must be a positive integer"), { statusCode: 400 });
+                    }
+                }
+
+                const currentBloodGroup = DB_BLOOD_GROUP_MAP[lockedRequest.bloodgroup] || lockedRequest.bloodgroup;
+                const currentBloodComponent = lockedRequest.bloodcomponent || existing.bloodcomponent;
+                const currentUnitsRequired =
+                    lockedRequest.unitsrequired !== undefined && lockedRequest.unitsrequired !== null
+                        ? Number(lockedRequest.unitsrequired)
+                        : existing.unitsrequired;
+
+                const isBloodGroupChanging =
+                    req.body.bloodgroup !== undefined && req.body.bloodgroup !== currentBloodGroup;
+                const isBloodComponentChanging =
+                    req.body.bloodcomponent !== undefined && req.body.bloodcomponent !== currentBloodComponent;
+                const isUnitsChanging =
+                    req.body.unitsrequired !== undefined && Number(req.body.unitsrequired) !== currentUnitsRequired;
+
+                if (isBloodGroupChanging || isBloodComponentChanging || isUnitsChanging) {
+                    const rx =
+                        typeof (tx as any).prescription?.findUnique === "function"
+                            ? await tx.prescription.findUnique({
+                                  where: { requestid: targetId },
+                                  select: { status: true },
+                              })
+                            : null;
+                    if (rx && rx.status === "VERIFIED") {
+                        throw Object.assign(
+                            new Error(
+                                "Cannot modify clinical fields (bloodgroup, bloodcomponent, unitsrequired) after prescription has been clinically verified"
+                            ),
+                            { statusCode: 400 }
+                        );
+                    }
+
+                    const acceptedCommitment =
+                        typeof (tx as any).broadcastdeliveries?.findFirst === "function"
+                            ? await tx.broadcastdeliveries.findFirst({
+                                  where: { requestid: targetId, response: "ACCEPTED" },
+                                  select: { deliveryid: true },
+                              })
+                            : null;
+
+                    if (
+                        ["DONOR_MATCHING", "BLOOD_ARRANGED"].includes(currentStatus) ||
+                        Boolean(acceptedCommitment)
+                    ) {
+                        throw Object.assign(
+                            new Error(
+                                "Cannot modify clinical fields (bloodgroup, bloodcomponent, unitsrequired) after donor matching or volunteer commitments have begun"
+                            ),
+                            { statusCode: 400 }
+                        );
+                    }
+                }
+
                 if (req.body.patientname !== undefined) updateData.patientname = req.body.patientname;
                 if (req.body.patientage !== undefined) updateData.patientage = parseInt(req.body.patientage, 10);
                 if (req.body.patientgender !== undefined) updateData.patientgender = req.body.patientgender;
@@ -1226,13 +1311,37 @@ router.put("/:id", authenticate, requireApprovedHospital, async (req: Request, r
                 }
             }
 
+            if (terminalStatuses.includes(updated.status || "")) {
+                if (typeof (tx as any).emergencybroadcasts?.updateMany === "function") {
+                    await (tx as any).emergencybroadcasts.updateMany({
+                        where: { requestid: targetId, status: { in: ["ACTIVE", "DONOR_RESPONDED"] } },
+                        data: { status: updated.status || "CANCELLED" },
+                    });
+                }
+                if (typeof (tx as any).emergencyschedulerjobs?.updateMany === "function") {
+                    await (tx as any).emergencyschedulerjobs.updateMany({
+                        where: {
+                            requestid: targetId,
+                            status: { in: ["PENDING", "PROCESSING"] },
+                        },
+                        data: {
+                            status: "CANCELLED",
+                            lasterror: `Request transitioned to ${updated.status}`,
+                            lockeduntil: null,
+                            lockedby: null,
+                            updatedat: new Date(),
+                        },
+                    });
+                }
+            }
+
             return updated;
         });
 
         // If request was marked as emergency or critical upon update, trigger broadcast
         const becameEmergency = (Boolean(bloodRequest.isemergency) || bloodRequest.urgencylevel === "CRITICAL") &&
             (!existing.isemergency && existing.urgencylevel !== "CRITICAL");
-        if (becameEmergency) {
+        if (becameEmergency && !terminalStatuses.includes(bloodRequest.status || "")) {
             await triggerEmergencyBroadcast({
                 requestId: targetId,
                 triggeredByUserId: user.userid,
@@ -1248,16 +1357,6 @@ router.put("/:id", authenticate, requireApprovedHospital, async (req: Request, r
             }).catch((err) => {
                 console.error("Emergency scheduler follow-up on escalation error:", err);
             });
-        }
-
-        // If requisition transitioned to a terminal status, complete/cancel any active broadcasts & pending scheduler jobs
-        if (terminalStatuses.includes(bloodRequest.status || "")) {
-            await prisma.emergencybroadcasts.updateMany({
-                where: { requestid: targetId, status: "ACTIVE" },
-                data: { status: bloodRequest.status || "CANCELLED" },
-            }).catch(() => {});
-
-            await cancelPendingJobs(targetId, `Request transitioned to ${bloodRequest.status}`).catch(() => {});
         }
 
         res.status(200).json(bloodRequest);
@@ -1494,10 +1593,60 @@ router.post("/:id/prescription/verify", authenticate, requireApprovedHospital, a
 
         const decisionRemarks = remarks ? String(remarks).trim() : null;
 
-        const updatedPrescription = await prisma.$transaction(async (tx) => {
-            // Update prescription record
+        const txResult = await prisma.$transaction(async (tx) => {
+            // 1. Lock bloodrequests row first (canonical lock order: bloodrequests -> prescription)
+            const lockedRequestRows: any[] = await tx.$queryRawUnsafe(
+                `SELECT requestid, status, patientname, bloodgroup, createdbyuserid FROM bloodrequests WHERE requestid = $1::uuid FOR UPDATE`,
+                targetId
+            );
+            if (!lockedRequestRows || lockedRequestRows.length === 0) {
+                throw Object.assign(new Error("Blood request not found"), { statusCode: 404 });
+            }
+
+            const lockedRequest = lockedRequestRows[0];
+            const currentRequestStatus = lockedRequest.status || "";
+
+            // 2. Reject verification on terminal or already-arranged requests
+            const blockedRequestStatuses = ["CANCELLED", "EXPIRED", "FULFILLED", "BLOOD_ARRANGED"];
+            if (blockedRequestStatuses.includes(currentRequestStatus)) {
+                throw Object.assign(
+                    new Error(
+                        `Cannot verify prescription for a blood requisition that is already ${String(currentRequestStatus).toLowerCase()}`
+                    ),
+                    { statusCode: 400 }
+                );
+            }
+
+            // 3. Lock and re-read authoritative prescription row
+            const lockedRxRows: any[] = await tx.$queryRawUnsafe(
+                `SELECT prescriptionid, status FROM prescription WHERE requestid = $1::uuid FOR UPDATE`,
+                targetId
+            );
+            if (!lockedRxRows || lockedRxRows.length === 0) {
+                throw Object.assign(
+                    new Error("This blood request does not have a prescription to verify"),
+                    { statusCode: 400 }
+                );
+            }
+
+            const lockedRx = lockedRxRows[0];
+
+            // 4. Idempotent handling if already VERIFIED and submitted as VERIFIED again
+            if (lockedRx.status === "VERIFIED" && status === "VERIFIED") {
+                const existingRx = await tx.prescription.findUnique({
+                    where: { prescriptionid: lockedRx.prescriptionid },
+                    include: {
+                        hospitals: {
+                            select: { hospitalid: true, hospitalname: true },
+                        },
+                    },
+                });
+                return { prescription: existingRx, idempotent: true };
+            }
+
+            // 5. Update prescription record
             const updated = await tx.prescription.update({
-                where: { prescriptionid: bloodRequest.prescription!.prescriptionid },
+                where: { prescriptionid: lockedRx.prescriptionid },
                 data: {
                     status,
                     verifiedbyhospitalid: hospitalId,
@@ -1512,7 +1661,7 @@ router.post("/:id/prescription/verify", authenticate, requireApprovedHospital, a
                 },
             });
 
-            // Record verification decision in prescription history
+            // 6. Record verification decision in prescription history
             await tx.prescriptionhistory.create({
                 data: {
                     prescriptionid: updated.prescriptionid,
@@ -1527,26 +1676,26 @@ router.post("/:id/prescription/verify", authenticate, requireApprovedHospital, a
                 },
             });
 
-            // Record in request status history for comprehensive audit
+            // 7. Record in request status history using authoritative locked request status
             await tx.requeststatushistory.create({
                 data: {
                     requestid: targetId,
-                    oldstatus: bloodRequest.status,
-                    newstatus: bloodRequest.status || "CREATED",
+                    oldstatus: currentRequestStatus || null,
+                    newstatus: currentRequestStatus || "CREATED",
                     changedbyuserid: user.userid,
                     remarks: `Prescription ${status.toLowerCase()} by hospital staff (${hospitalName})${decisionRemarks ? `: ${decisionRemarks}` : ""}`,
                 },
             });
 
-            // Send notification to requester
+            // 8. Send notification to requester
             const title = status === "VERIFIED" ? "Prescription Verified" : "Prescription Rejected";
             const message = status === "VERIFIED"
-                ? `Your prescription for patient ${bloodRequest.patientname} (${bloodRequest.bloodgroup}) has been clinically verified by ${hospitalName}.`
-                : `Your prescription for patient ${bloodRequest.patientname} was rejected by ${hospitalName}. Reason: ${decisionRemarks}. Please upload a clear replacement prescription.`;
+                ? `Your prescription for patient ${lockedRequest.patientname || bloodRequest.patientname} (${bloodRequest.bloodgroup}) has been clinically verified by ${hospitalName}.`
+                : `Your prescription for patient ${lockedRequest.patientname || bloodRequest.patientname} was rejected by ${hospitalName}. Reason: ${decisionRemarks}. Please upload a clear replacement prescription.`;
 
             await tx.notification.create({
                 data: {
-                    userid: bloodRequest.createdbyuserid,
+                    userid: lockedRequest.createdbyuserid || bloodRequest.createdbyuserid,
                     requestid: targetId,
                     type: notification_type.VERIFICATION,
                     title,
@@ -1555,15 +1704,21 @@ router.post("/:id/prescription/verify", authenticate, requireApprovedHospital, a
                 },
             });
 
-            return updated;
+            return { prescription: updated, idempotent: false };
         });
 
         res.status(200).json({
             success: true,
             message: `Prescription successfully marked as ${status}`,
-            prescription: updatedPrescription,
+            prescription: txResult.prescription,
         });
-    } catch (error) {
+    } catch (error: any) {
+        if (error?.statusCode) {
+            return res.status(error.statusCode).json({
+                success: false,
+                message: error.message,
+            });
+        }
         console.error("Error verifying prescription:", error);
         res.status(500).json({ success: false, message: "Failed to verify prescription" });
     }
@@ -2178,7 +2333,7 @@ router.post("/:id/respond", authenticate, async (req: Request, res: Response) =>
         await prisma.$transaction(async (tx) => {
             // 1. Lock bloodrequests row using parameterized SQL
             const lockedRequestRows: any[] = await tx.$queryRawUnsafe(
-                `SELECT requestid, status, patientname, bloodgroup, unitsrequired, searchradius, createdbyuserid, hospitalid FROM bloodrequests WHERE requestid = $1::uuid FOR UPDATE`,
+                `SELECT requestid, status, patientname, bloodgroup, bloodcomponent, unitsrequired, searchradius, createdbyuserid, hospitalid FROM bloodrequests WHERE requestid = $1::uuid FOR UPDATE`,
                 request.requestid
             );
 
@@ -2194,6 +2349,47 @@ router.post("/:id/respond", authenticate, async (req: Request, res: Response) =>
             if (terminalStatuses.includes(currentStatus)) {
                 throw Object.assign(
                     new Error(`Cannot volunteer for a blood requisition that is already ${String(currentStatus).toLowerCase()}`),
+                    { statusCode: 400 }
+                );
+            }
+
+            // 2a. Re-verify clinical blood group & component compatibility under the locked request row
+            const DB_BG_MAP: Record<string, string> = {
+                "A+": "A_POSITIVE",
+                "A-": "A_NEGATIVE",
+                "B+": "B_POSITIVE",
+                "B-": "B_NEGATIVE",
+                "AB+": "AB_POSITIVE",
+                "AB-": "AB_NEGATIVE",
+                "O+": "O_POSITIVE",
+                "O-": "O_NEGATIVE",
+            };
+            const lockedBloodGroup = DB_BG_MAP[lockedRequest.bloodgroup] || lockedRequest.bloodgroup || request.bloodgroup;
+            const lockedBloodComponent = lockedRequest.bloodcomponent || request.bloodcomponent;
+            if (!isDonorCompatibleWithRecipient(donor.bloodgroup, lockedBloodGroup, lockedBloodComponent)) {
+                throw Object.assign(
+                    new Error(
+                        `Your blood group (${donor.bloodgroup}) is not compatible for ${lockedBloodComponent || "requested"} donation to recipient (${lockedBloodGroup}).`
+                    ),
+                    { statusCode: 400 }
+                );
+            }
+
+            // 2b. Reject if associated prescription has been clinically REJECTED
+            const rxRows: any[] = await tx.$queryRawUnsafe(
+                `SELECT status FROM prescription WHERE requestid = $1::uuid FOR UPDATE`,
+                request.requestid
+            );
+            const rxRecord =
+                rxRows && rxRows.length > 0
+                    ? rxRows[0]
+                    : await tx.prescription.findUnique({
+                          where: { requestid: request.requestid },
+                          select: { status: true },
+                      });
+            if (rxRecord && rxRecord.status === "REJECTED") {
+                throw Object.assign(
+                    new Error("Cannot volunteer for a blood requisition whose prescription has been rejected."),
                     { statusCode: 400 }
                 );
             }
@@ -2232,7 +2428,7 @@ router.post("/:id/respond", authenticate, async (req: Request, res: Response) =>
                         status: "DONOR_RESPONDED",
                         totalmatched: 1,
                         totalnotified: 0,
-                        totalresponded: 1,
+                        totalresponded: 0,
                     },
                 });
             }
@@ -2291,7 +2487,7 @@ router.post("/:id/respond", authenticate, async (req: Request, res: Response) =>
             }
 
             await tx.emergencybroadcasts.update({
-                where: { broadcastid: broadcast.broadcastid },
+                where: { broadcastid: deliveryRecord.broadcastid },
                 data: {
                     totalresponded: { increment: 1 },
                     status: "DONOR_RESPONDED",
@@ -2436,16 +2632,36 @@ router.patch("/:id/transit-status", authenticate, requireApprovedHospital, async
         }
 
         const isDonor = user.role === "DONOR";
-        const isRequesterOwner =
-            request.createdbyuserid === user.userid ||
-            (request.requesters != null && request.requesters.userid === user.userid);
         const isAdmin = user.role === "ADMIN";
 
-        if (!isDonor && !isRequesterOwner && !isAdmin && !isAssignedHospital) {
+        if (!isDonor && !isAdmin && !isAssignedHospital) {
             return res.status(403).json({
                 success: false,
                 message: "Access denied: not authorized to update donor transit status",
             });
+        }
+
+        if (isDonor) {
+            if (
+                donorUserId !== undefined &&
+                donorUserId !== null &&
+                String(donorUserId).trim() !== "" &&
+                String(donorUserId).trim() !== user.userid
+            ) {
+                return res.status(403).json({
+                    success: false,
+                    message: "Access denied: donors can only update their own transit status",
+                });
+            }
+            if (!["STARTED", "REACHED_LOCATION"].includes(status)) {
+                return res.status(403).json({
+                    success: false,
+                    message:
+                        status === "COMPLETED"
+                            ? "Access denied: only the assigned hospital or an administrator can confirm a completed blood donation"
+                            : "Access denied: donors can only update transit status to STARTED or REACHED_LOCATION",
+                });
+            }
         }
 
         // Pre-transaction check: Terminal status protection (CANCELLED, EXPIRED, FULFILLED)
@@ -2457,102 +2673,34 @@ router.patch("/:id/transit-status", authenticate, requireApprovedHospital, async
             });
         }
 
-        // Find the volunteer commitment record from durable broadcastdeliveries
-        const targetUserId = isDonor ? user.userid : (donorUserId || undefined);
-        const commitmentWhere: any = {
-            requestid: request.requestid,
-            response: "ACCEPTED",
-        };
-        if (targetUserId) {
-            commitmentWhere.donoruserid = targetUserId;
-        }
+        // Validate explicit donorUserId when provided by non-donor callers
+        const hasExplicitDonorUserId =
+            !isDonor &&
+            donorUserId !== undefined &&
+            donorUserId !== null &&
+            String(donorUserId).trim() !== "";
 
-        let commitment = await prisma.broadcastdeliveries.findFirst({
-            where: commitmentWhere,
-            orderBy: { respondedat: "desc" },
-            include: {
-                donors: {
-                    include: {
-                        users: true,
-                    },
-                },
-            },
-        });
-
-        // Fallback for legacy volunteer notification if durable commitment not yet present
-        let volunteerNotification: any = null;
-        let meta: any = {};
-        if (!commitment) {
-            const whereClause: any = {
-                requestid: request.requestid,
-                type: notification_type.MATCH,
-                title: "Volunteer Response Confirmed",
-            };
-            if (targetUserId) {
-                whereClause.userid = targetUserId;
-            }
-
-            volunteerNotification = await prisma.notification.findFirst({
-                where: whereClause,
-                orderBy: { sentat: "desc" },
-                include: { users: true },
-            });
-
-            if (!volunteerNotification) {
-                return res.status(404).json({
+        if (hasExplicitDonorUserId) {
+            if (typeof donorUserId !== "string" || !UUID_REGEX.test(donorUserId.trim())) {
+                return res.status(400).json({
                     success: false,
-                    message: "No volunteer record found for this request",
+                    message: "Invalid donorUserId format. Must be a valid UUID.",
                 });
             }
-
-            const metaMatch = volunteerNotification.message.match(/<!--META:([\s\S]*?)-->/);
-            if (metaMatch && metaMatch[1]) {
-                try {
-                    meta = JSON.parse(metaMatch[1]);
-                } catch {}
-            }
-        } else {
-            if (commitment.transitnotes) {
-                try {
-                    meta = JSON.parse(commitment.transitnotes);
-                } catch {}
-            }
-            volunteerNotification = await prisma.notification.findFirst({
-                where: {
-                    requestid: request.requestid,
-                    userid: commitment.donoruserid,
-                    type: notification_type.MATCH,
-                    title: "Volunteer Response Confirmed",
-                },
-                orderBy: { sentat: "desc" },
-            });
         }
+
+        const targetUserId = isDonor
+            ? (user.userid as string)
+            : (hasExplicitDonorUserId ? (donorUserId as string).trim() : undefined);
 
         const now = new Date();
         const nowIso = now.toISOString();
-        meta.transitStatus = status;
-        if (status === "STARTED" && !meta.startedAt) {
-            meta.startedAt = nowIso;
-        } else if (status === "REACHED_LOCATION" && !meta.reachedAt) {
-            meta.reachedAt = nowIso;
-        } else if (status === "COMPLETED" && !meta.completedAt) {
-            meta.completedAt = nowIso;
-        }
 
-        const donorUserTarget = isDonor ? user.userid : (targetUserId || commitment?.donoruserid || volunteerNotification?.userid);
-        const donorDisplayName = meta.donorName || commitment?.donors?.users?.name || volunteerNotification?.users?.name || "Volunteer";
-
-        const statusDescriptions: Record<string, string> = {
-            STARTED: `Donor ${donorDisplayName} has started their journey to ${request.hospitals?.hospitalname || "the hospital"}.`,
-            REACHED_LOCATION: `Donor ${donorDisplayName} has reached ${request.hospitals?.hospitalname || "the hospital"} transfusion desk!`,
-            COMPLETED: `Blood donation for patient ${request.patientname} by donor ${donorDisplayName} has been completed.`,
-        };
-
-        // Atomic transaction: lock row, verify terminal status & prescription verification, update milestones, record history
-        await prisma.$transaction(async (tx) => {
-            // 1. Lock blood request row to serialize against concurrent cancellations or status updates
+        // Atomic transaction: lock blood request row, disambiguate & lock persistent commitment, verify gates, update milestones
+        const txResult = await prisma.$transaction(async (tx) => {
+            // 1. Lock blood request row to serialize against concurrent cancellations, responses, or transit updates
             const lockedRows: any[] = await tx.$queryRawUnsafe(
-                `SELECT requestid, status, requesterid, hospitalid FROM bloodrequests WHERE requestid = $1::uuid FOR UPDATE`,
+                `SELECT requestid, status, requesterid, hospitalid, unitsrequired FROM bloodrequests WHERE requestid = $1::uuid FOR UPDATE`,
                 request.requestid
             );
 
@@ -2587,41 +2735,147 @@ router.patch("/:id/transit-status", authenticate, requireApprovedHospital, async
                 }
             }
 
-            // 4. Update durable commitment in broadcastdeliveries
-            if (commitment) {
-                await tx.broadcastdeliveries.update({
-                    where: { deliveryid: commitment.deliveryid },
-                    data: {
-                        transitstatus: status,
-                        ...(status === "STARTED" && !commitment.startedat ? { startedat: now } : {}),
-                        ...(status === "REACHED_LOCATION" && !commitment.reachedat ? { reachedat: now } : {}),
-                        ...(status === "COMPLETED" && !commitment.completedat ? { completedat: now } : {}),
-                        transitnotes: JSON.stringify(meta),
+            // 4. Identify and disambiguate persistent donor commitment inside transaction (no notification metadata fallback)
+            const eligibleDeliveries = await tx.broadcastdeliveries.findMany({
+                where: {
+                    requestid: request.requestid,
+                    response: "ACCEPTED",
+                },
+                orderBy: { respondedat: "desc" },
+                include: {
+                    donors: {
+                        include: {
+                            users: true,
+                        },
                     },
-                });
-            } else if (donorUserTarget) {
-                const donorProfile = await tx.donors.findUnique({
-                    where: { userid: donorUserTarget },
-                });
-                if (donorProfile) {
-                    await tx.broadcastdeliveries.updateMany({
-                        where: {
-                            donorid: donorProfile.donorid,
-                            emergencybroadcasts: {
-                                requestid: request.requestid,
-                            },
-                        },
-                        data: {
-                            transitstatus: status,
-                            ...(status === "STARTED" ? { startedat: now } : {}),
-                            ...(status === "REACHED_LOCATION" ? { reachedat: now } : {}),
-                            ...(status === "COMPLETED" ? { completedat: now } : {}),
-                        },
-                    });
+                },
+            });
+
+            if (eligibleDeliveries.length === 0) {
+                throw Object.assign(
+                    new Error("No eligible volunteer commitment found for this blood request"),
+                    { statusCode: 404 }
+                );
+            }
+
+            let commitment: (typeof eligibleDeliveries)[number] | undefined;
+
+            if (targetUserId) {
+                commitment = eligibleDeliveries.find((d) => d.donoruserid === targetUserId);
+                if (!commitment) {
+                    throw Object.assign(
+                        new Error("Specified donor does not have an eligible commitment for this blood request"),
+                        { statusCode: 404 }
+                    );
+                }
+            } else {
+                if (eligibleDeliveries.length > 1) {
+                    throw Object.assign(
+                        new Error(
+                            "Multiple eligible volunteer donors exist for this blood request. An explicit donorUserId is required to disambiguate."
+                        ),
+                        { statusCode: 400 }
+                    );
+                }
+                commitment = eligibleDeliveries[0];
+            }
+
+            // Lock the specific delivery row and re-read authoritative transit state
+            const lockedDeliveryRows: any[] = await tx.$queryRawUnsafe(
+                `SELECT deliveryid, transitstatus, startedat, reachedat, completedat, transitnotes FROM broadcastdeliveries WHERE deliveryid = $1::uuid FOR UPDATE`,
+                commitment.deliveryid
+            );
+            const lockedDelivery = lockedDeliveryRows?.[0] || commitment;
+            const currentTransitStatus = (lockedDelivery.transitstatus || "DONOR_FOUND") as string;
+
+            const TRANSIT_TRANSITIONS: Record<string, string[]> = {
+                DONOR_FOUND: ["STARTED"],
+                STARTED: ["REACHED_LOCATION"],
+                REACHED_LOCATION: ["COMPLETED"],
+                COMPLETED: [],
+            };
+
+            const isSameStateRetry = currentTransitStatus === status;
+            if (!isSameStateRetry) {
+                const allowedNext = TRANSIT_TRANSITIONS[currentTransitStatus] || [];
+                if (!allowedNext.includes(status)) {
+                    throw Object.assign(
+                        new Error(
+                            `Invalid transit status transition from ${currentTransitStatus} to ${status}. Allowed next status: ${allowedNext.length > 0 ? allowedNext.join(", ") : "none (already completed)"}`
+                        ),
+                        { statusCode: 400 }
+                    );
                 }
             }
 
-            // 5. Best-effort notification sync (safe if user deleted notifications)
+            let meta: any = {};
+            const rawTransitNotes = lockedDelivery.transitnotes ?? commitment.transitnotes;
+            if (rawTransitNotes) {
+                try {
+                    meta = JSON.parse(rawTransitNotes);
+                } catch {}
+            }
+
+            if (isSameStateRetry) {
+                let existingHistoryId: string | null = null;
+                if (status === "COMPLETED") {
+                    const existingHistory = await tx.donationhistory.findFirst({
+                        where: {
+                            donorid: commitment.donorid,
+                            requestid: currentRequest.requestid,
+                        },
+                        select: { donationhistoryid: true },
+                    });
+                    existingHistoryId = existingHistory?.donationhistoryid || null;
+                }
+                return {
+                    deliveryId: commitment.deliveryid,
+                    donorUserId: commitment.donoruserid,
+                    donationHistoryId: existingHistoryId,
+                    donationRecorded: false,
+                    meta,
+                };
+            }
+
+            meta.transitStatus = status;
+            if (status === "STARTED" && !meta.startedAt) {
+                meta.startedAt = nowIso;
+            } else if (status === "REACHED_LOCATION" && !meta.reachedAt) {
+                meta.reachedAt = nowIso;
+            } else if (status === "COMPLETED" && !meta.completedAt) {
+                meta.completedAt = nowIso;
+            }
+
+            const donorDisplayName = meta.donorName || commitment.donors?.users?.name || "Volunteer";
+            const statusDescriptions: Record<string, string> = {
+                STARTED: `Donor ${donorDisplayName} has started their journey to ${request.hospitals?.hospitalname || "the hospital"}.`,
+                REACHED_LOCATION: `Donor ${donorDisplayName} has reached ${request.hospitals?.hospitalname || "the hospital"} transfusion desk!`,
+                COMPLETED: `Blood donation for patient ${request.patientname} by donor ${donorDisplayName} has been completed.`,
+            };
+
+            // 5. Update durable commitment in broadcastdeliveries
+            await tx.broadcastdeliveries.update({
+                where: { deliveryid: commitment.deliveryid },
+                data: {
+                    transitstatus: status,
+                    ...(status === "STARTED" && !lockedDelivery.startedat ? { startedat: now } : {}),
+                    ...(status === "REACHED_LOCATION" && !lockedDelivery.reachedat ? { reachedat: now } : {}),
+                    ...(status === "COMPLETED" && !lockedDelivery.completedat ? { completedat: now } : {}),
+                    transitnotes: JSON.stringify(meta),
+                },
+            });
+
+            // 6. Best-effort notification sync for the matched donor only (safe if notifications were deleted)
+            const volunteerNotification = await tx.notification.findFirst({
+                where: {
+                    requestid: request.requestid,
+                    userid: commitment.donoruserid,
+                    type: notification_type.MATCH,
+                    title: "Volunteer Response Confirmed",
+                },
+                orderBy: { sentat: "desc" },
+            });
+
             if (volunteerNotification) {
                 try {
                     const cleanMessage = volunteerNotification.message.replace(/<!--META:[\s\S]*?-->/g, "").trim();
@@ -2634,7 +2888,7 @@ router.patch("/:id/transit-status", authenticate, requireApprovedHospital, async
                 }
             }
 
-            // 6. Best-effort requester notification update
+            // 7. Best-effort requester notification update
             try {
                 const requesterNotif = await tx.notification.findFirst({
                     where: {
@@ -2657,7 +2911,7 @@ router.patch("/:id/transit-status", authenticate, requireApprovedHospital, async
                 // Non-fatal
             }
 
-            // 7. Notify requester and assigned hospital
+            // 8. Notify requester and assigned hospital
             if (statusDescriptions[status]) {
                 if (request.createdbyuserid !== user.userid) {
                     await tx.notification.create({
@@ -2686,9 +2940,107 @@ router.patch("/:id/transit-status", authenticate, requireApprovedHospital, async
                 }
             }
 
-            // 8. If completed, update blood request status to BLOOD_ARRANGED atomically with history
+            // 9. If completed, record verified donation history & update donor cooldown atomically and idempotently
+            let donationRecorded = false;
+            let donationHistoryId: string | null = null;
             if (status === "COMPLETED") {
-                if (currentRequest.status !== "BLOOD_ARRANGED" && currentRequest.status !== "FULFILLED") {
+                const existingHistory = await tx.donationhistory.findFirst({
+                    where: {
+                        donorid: commitment.donorid,
+                        requestid: currentRequest.requestid,
+                    },
+                    select: { donationhistoryid: true },
+                });
+
+                if (existingHistory) {
+                    donationHistoryId = existingHistory.donationhistoryid;
+                } else {
+                    // Lock donor row BEFORE creating donation history to serialize concurrent completions across requests
+                    const donorRows: any[] = await tx.$queryRawUnsafe(
+                        `SELECT donorid, lastdonationdate FROM donors WHERE donorid = $1::uuid FOR UPDATE`,
+                        commitment.donorid
+                    );
+
+                    const latestVerifiedDonation = await tx.donationhistory.findFirst({
+                        where: {
+                            donorid: commitment.donorid,
+                            verificationstatus: verification_status.VERIFIED,
+                        },
+                        orderBy: { donationdate: "desc" },
+                        select: { donationdate: true },
+                    });
+
+                    const donorLastDate = donorRows?.[0]?.lastdonationdate
+                        ? new Date(donorRows[0].lastdonationdate)
+                        : null;
+                    const historyLastDate = latestVerifiedDonation?.donationdate
+                        ? new Date(latestVerifiedDonation.donationdate)
+                        : null;
+
+                    let effectiveLastDonation: Date | null = null;
+                    if (donorLastDate && historyLastDate) {
+                        effectiveLastDonation =
+                            donorLastDate.getTime() >= historyLastDate.getTime() ? donorLastDate : historyLastDate;
+                    } else {
+                        effectiveLastDonation = donorLastDate || historyLastDate;
+                    }
+
+                    if (effectiveLastDonation) {
+                        const daysSince = Math.max(
+                            0,
+                            Math.floor((now.getTime() - effectiveLastDonation.getTime()) / (1000 * 60 * 60 * 24))
+                        );
+                        if (daysSince < 90) {
+                            throw Object.assign(
+                                new Error(
+                                    `Mandatory 90-day cooldown active. Only ${daysSince} of 90 days have elapsed since the donor's last verified donation.`
+                                ),
+                                { statusCode: 400 }
+                            );
+                        }
+                    }
+
+                    const createdHistory = await tx.donationhistory.create({
+                        data: {
+                            donorid: commitment.donorid,
+                            requestid: currentRequest.requestid,
+                            hospitalid: currentRequest.hospitalid || request.hospitalid || null,
+                            unitsdonated: 1,
+                            donationdate: now,
+                            bloodcomponent: request.bloodcomponent || blood_component.WHOLE_BLOOD,
+                            verificationstatus: verification_status.VERIFIED,
+                            isimported: false,
+                            remarks: `Confirmed voluntary donation for blood request ${currentRequest.requestid} (${request.bloodgroup})`,
+                        },
+                    });
+                    donationHistoryId = createdHistory.donationhistoryid;
+                    donationRecorded = true;
+
+                    await tx.donors.update({
+                        where: { donorid: commitment.donorid },
+                        data: { lastdonationdate: now },
+                    });
+                }
+
+                const requiredUnits = Math.max(1, Number(currentRequest.unitsrequired ?? request.unitsrequired ?? 1));
+                let completedUnits = 1;
+                if (typeof (tx as any).donationhistory?.findMany === "function") {
+                    const verifiedDonations = await tx.donationhistory.findMany({
+                        where: {
+                            requestid: currentRequest.requestid,
+                            verificationstatus: verification_status.VERIFIED,
+                        },
+                        select: { unitsdonated: true },
+                    });
+                    completedUnits = verifiedDonations.reduce((sum, d) => sum + (d.unitsdonated || 1), 0);
+                }
+
+                let bloodArranged = currentRequest.status === "BLOOD_ARRANGED" || currentRequest.status === "FULFILLED";
+                if (
+                    completedUnits >= requiredUnits &&
+                    currentRequest.status !== "BLOOD_ARRANGED" &&
+                    currentRequest.status !== "FULFILLED"
+                ) {
                     await tx.bloodrequests.update({
                         where: { requestid: currentRequest.requestid },
                         data: { status: "BLOOD_ARRANGED" },
@@ -2700,18 +3052,48 @@ router.patch("/:id/transit-status", authenticate, requireApprovedHospital, async
                             oldstatus: currentRequest.status,
                             newstatus: "BLOOD_ARRANGED",
                             changedbyuserid: user.userid,
-                            remarks: `Donation completed by donor ${meta.donorName || "Volunteer"}. Blood unit arranged for transfusion.`,
+                            remarks: `All ${requiredUnits} required unit(s) completed (latest by donor ${meta.donorName || "Volunteer"}). Blood arranged for transfusion.`,
                         },
                     });
+                    bloodArranged = true;
                 }
+
+                return {
+                    deliveryId: commitment.deliveryid,
+                    donorUserId: commitment.donoruserid,
+                    donationHistoryId,
+                    donationRecorded,
+                    completedUnits,
+                    unitsRequired: requiredUnits,
+                    bloodArranged,
+                    meta,
+                };
             }
+
+            return {
+                deliveryId: commitment.deliveryid,
+                donorUserId: commitment.donoruserid,
+                donationHistoryId,
+                donationRecorded,
+                completedUnits: undefined as number | undefined,
+                unitsRequired: undefined as number | undefined,
+                bloodArranged: currentRequest.status === "BLOOD_ARRANGED" || currentRequest.status === "FULFILLED",
+                meta,
+            };
         });
 
         return res.status(200).json({
             success: true,
             message: `Transit status updated to ${status}`,
             transitStatus: status,
-            meta,
+            donorUserId: txResult.donorUserId,
+            deliveryId: txResult.deliveryId,
+            donationHistoryId: txResult.donationHistoryId,
+            donationRecorded: txResult.donationRecorded,
+            completedUnits: txResult.completedUnits,
+            unitsRequired: txResult.unitsRequired,
+            bloodArranged: txResult.bloodArranged,
+            meta: txResult.meta,
         });
     } catch (error: any) {
         console.error("Error updating transit status:", error);

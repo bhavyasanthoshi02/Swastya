@@ -29,6 +29,8 @@ export interface BroadcastResult {
     totalNotified: number;
     alreadyActive?: boolean;
     isExisting?: boolean;
+    terminal?: boolean;
+    currentStatus?: string;
 }
 
 /**
@@ -58,6 +60,8 @@ export async function triggerEmergencyBroadcast(options: TriggerBroadcastOptions
                 message: `Cannot broadcast a blood requisition that is already ${String(request.status).toLowerCase()}`,
                 totalMatched: 0,
                 totalNotified: 0,
+                terminal: true,
+                currentStatus: request.status,
             };
         }
 
@@ -82,7 +86,7 @@ export async function triggerEmergencyBroadcast(options: TriggerBroadcastOptions
         const recentActiveBroadcast = await tx.emergencybroadcasts.findFirst({
             where: {
                 requestid: requestId,
-                status: "ACTIVE",
+                status: { in: ["ACTIVE", "DONOR_RESPONDED"] },
                 triggertype: { not: "DIRECT_VOLUNTEER" },
                 ...(expandRadius ? { radiuskm: { gte: effectiveRadius } } : {}),
                 createdat: {
@@ -125,7 +129,18 @@ export async function triggerEmergencyBroadcast(options: TriggerBroadcastOptions
         const reqRequester = fullRequest?.requesters;
 
         // 3. Find compatible and eligible donors using Component-Aware Compatibility rules
-        const compatibleDonorGroups = resolveCompatibleDonorGroups(request.bloodgroup, request.bloodcomponent);
+        const DB_BLOOD_GROUP_MAP: Record<string, string> = {
+            "A+": "A_POSITIVE",
+            "A-": "A_NEGATIVE",
+            "B+": "B_POSITIVE",
+            "B-": "B_NEGATIVE",
+            "AB+": "AB_POSITIVE",
+            "AB-": "AB_NEGATIVE",
+            "O+": "O_POSITIVE",
+            "O-": "O_NEGATIVE",
+        };
+        const normalizedBloodGroup = DB_BLOOD_GROUP_MAP[request.bloodgroup] || request.bloodgroup;
+        const compatibleDonorGroups = resolveCompatibleDonorGroups(normalizedBloodGroup, request.bloodcomponent);
 
         if (compatibleDonorGroups.length === 0) {
             return {
@@ -241,10 +256,18 @@ export async function triggerEmergencyBroadcast(options: TriggerBroadcastOptions
         });
 
         let notifiedCount = 0;
+        const supportsSavepoints = typeof (tx as any).$executeRawUnsafe === "function";
 
-        // 5. Deliver Notifications with Transaction Isolation & Durable Failure Logging
-        for (const item of newDonorsToNotify) {
+        // 5. Deliver Notifications with PostgreSQL SAVEPOINT Isolation & Durable Failure Logging
+        for (let idx = 0; idx < newDonorsToNotify.length; idx++) {
+            const item = newDonorsToNotify[idx];
             const donor = item.donor;
+            const savepointName = `sp_donor_delivery_${idx}`;
+
+            if (supportsSavepoints) {
+                await (tx as any).$executeRawUnsafe(`SAVEPOINT ${savepointName}`);
+            }
+
             try {
                 // Formulate secure in-app notification without sensitive patient or raw coordinate data
                 const distanceText =
@@ -286,10 +309,24 @@ export async function triggerEmergencyBroadcast(options: TriggerBroadcastOptions
                     },
                 });
 
+                if (supportsSavepoints) {
+                    await (tx as any).$executeRawUnsafe(`RELEASE SAVEPOINT ${savepointName}`);
+                }
+
                 notifiedCount++;
             } catch (deliverError: any) {
                 console.error(`Failed to deliver notification to donor ${donor.donorid}:`, deliverError);
 
+                if (supportsSavepoints) {
+                    // Roll back only this donor's failed sub-operation so PostgreSQL exits 25P02 aborted state
+                    await (tx as any).$executeRawUnsafe(`ROLLBACK TO SAVEPOINT ${savepointName}`);
+                    await (tx as any).$executeRawUnsafe(`RELEASE SAVEPOINT ${savepointName}`);
+                }
+
+                const failSavepoint = `${savepointName}_fail`;
+                if (supportsSavepoints) {
+                    await (tx as any).$executeRawUnsafe(`SAVEPOINT ${failSavepoint}`);
+                }
                 try {
                     await tx.broadcastdeliveries.create({
                         data: {
@@ -300,11 +337,18 @@ export async function triggerEmergencyBroadcast(options: TriggerBroadcastOptions
                             matchtype: item.matchType,
                             distancekm: item.distanceKm !== null ? item.distanceKm : undefined,
                             deliverystatus: "FAILED",
-                            failuremessage: deliverError?.message || "In-app notification delivery error",
+                            failuremessage: String(deliverError?.message || "In-app notification delivery error").slice(0, 500),
                             attemptcount: 1,
                         },
                     });
+                    if (supportsSavepoints) {
+                        await (tx as any).$executeRawUnsafe(`RELEASE SAVEPOINT ${failSavepoint}`);
+                    }
                 } catch (recordError: any) {
+                    if (supportsSavepoints) {
+                        await (tx as any).$executeRawUnsafe(`ROLLBACK TO SAVEPOINT ${failSavepoint}`);
+                        await (tx as any).$executeRawUnsafe(`RELEASE SAVEPOINT ${failSavepoint}`);
+                    }
                     console.error(`Failed to record delivery failure for donor ${donor.donorid}:`, recordError);
                 }
             }

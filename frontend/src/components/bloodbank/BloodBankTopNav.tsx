@@ -160,36 +160,42 @@ export function BloodBankTopNav({
     {
       href: "/bloodbank/dashboard",
       label: "Dashboard",
+      shortLabel: "Dashboard",
       icon: LayoutDashboard,
       active: pathname === "/bloodbank/dashboard" || pathname === "/bloodbank",
     },
     {
       href: "/bloodbank/inventory",
       label: "Inventory Overview",
+      shortLabel: "Inventory",
       icon: Droplets,
       active: pathname.startsWith("/bloodbank/inventory"),
     },
     {
       href: "/bloodbank/requisitions",
       label: "Requisitions Queue",
+      shortLabel: "Requisitions",
       icon: ClipboardList,
       active: pathname.startsWith("/bloodbank/requisitions"),
     },
     {
       href: "/bloodbank/screening",
       label: "TTI Screening",
+      shortLabel: "Screening",
       icon: FlaskConical,
       active: pathname.startsWith("/bloodbank/screening"),
     },
     {
       href: "/bloodbank/dispatch",
       label: "Dispatch & Crossmatch",
+      shortLabel: "Dispatch",
       icon: Truck,
       active: pathname.startsWith("/bloodbank/dispatch"),
     },
     {
       href: "/bloodbank/profile",
       label: "Facility Profile",
+      shortLabel: "Profile",
       icon: Building,
       active: pathname.startsWith("/bloodbank/profile"),
     },
@@ -232,9 +238,9 @@ export function BloodBankTopNav({
 
   return (
     <header className="sticky top-0 z-40 w-full bg-white/95 backdrop-blur-md border-b border-[#F3E9D1] transition-all">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-3 lg:gap-5">
         {/* Left: Brand Logo & Navigation */}
-        <div className="flex items-center gap-6 lg:gap-8 min-w-0">
+        <div className="flex items-center gap-4 lg:gap-6 min-w-0">
           <Link
             href="/bloodbank/dashboard"
             className="flex items-center gap-2 group focus:outline-none shrink-0"
@@ -245,15 +251,15 @@ export function BloodBankTopNav({
               <span className="font-serif text-xl font-bold tracking-tight text-[#053845]">
                 Swastya
               </span>
-              <span className="text-[10px] tracking-wider uppercase font-semibold text-[#317786] bg-[#FAF6EE] border border-[#F3E9D1] px-2 py-0.5 rounded-full hidden sm:inline-block whitespace-nowrap">
-                Blood Bank Portal
+              <span className="text-[10px] tracking-wider uppercase font-semibold text-[#317786] bg-[#FAF6EE] border border-[#F3E9D1] px-2 py-0.5 rounded-full hidden 2xl:inline-block whitespace-nowrap">
+                Blood Bank
               </span>
             </div>
           </Link>
 
           {/* Desktop Nav Links */}
           <nav
-            className="hidden md:flex items-center gap-1.5"
+            className="hidden md:flex items-center gap-1 lg:gap-1.5"
             aria-label="Blood Bank Primary Navigation"
           >
             {navLinks.map((link) => {
@@ -262,18 +268,20 @@ export function BloodBankTopNav({
                 <Link
                   key={link.href}
                   href={link.href}
-                  className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
+                  title={link.label}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 lg:px-3 lg:py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
                     link.active
                       ? "text-[#053845] bg-[#FAF6EE] border border-[#F3E9D1] shadow-2xs font-bold"
-                      : "text-slate-600 hover:text-[#053845] hover:bg-slate-50"
+                      : "text-slate-600 hover:text-[#053845] hover:bg-[#FAF6EE]/70"
                   }`}
                 >
                   <Icon
-                    className={`w-4 h-4 ${
+                    className={`w-3.5 h-3.5 shrink-0 ${
                       link.active ? "text-[#317786]" : "text-slate-400"
                     }`}
                   />
-                  <span>{link.label}</span>
+                  <span className="hidden 2xl:inline">{link.label}</span>
+                  <span className="inline 2xl:hidden">{link.shortLabel}</span>
                 </Link>
               );
             })}
@@ -281,10 +289,10 @@ export function BloodBankTopNav({
         </div>
 
         {/* Right Section: Status Badge, Notifications & Profile Dropdown */}
-        <div className="flex items-center gap-2.5 sm:gap-3 shrink-0">
+        <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
           {/* Facility Status Badge */}
           <div
-            className={`hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold border ${statusBadge.className}`}
+            className={`hidden xl:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold border ${statusBadge.className}`}
           >
             <StatusIcon className="w-3.5 h-3.5 shrink-0" />
             <span>{statusBadge.label}</span>
@@ -368,12 +376,12 @@ export function BloodBankTopNav({
                 setIsProfileOpen(!isProfileOpen);
                 setIsNotificationsOpen(false);
               }}
-              className="flex items-center gap-2 p-1 pl-2 sm:pr-2.5 rounded-xl border border-slate-200/80 hover:border-[#317786]/50 bg-white hover:bg-slate-50 transition-all text-left"
+              className="flex items-center gap-2 p-1 sm:pl-1.5 sm:pr-2 rounded-xl border border-slate-200/80 hover:border-[#317786]/50 bg-white hover:bg-slate-50 transition-all text-left"
             >
               <div className="w-8 h-8 rounded-lg bg-[#FAF6EE] text-[#053845] border border-[#F3E9D1] flex items-center justify-center font-bold text-xs shrink-0">
                 {getInitials(bloodBankName)}
               </div>
-              <div className="hidden sm:block text-left max-w-[130px] lg:max-w-[160px] truncate">
+              <div className="hidden xl:block text-left max-w-[120px] 2xl:max-w-[160px] truncate">
                 <p className="text-xs font-bold text-[#053845] truncate">
                   {bloodBankName}
                 </p>
@@ -381,7 +389,7 @@ export function BloodBankTopNav({
                   {city}
                 </p>
               </div>
-              <ChevronDown className="w-4 h-4 text-slate-400 hidden sm:block shrink-0" />
+              <ChevronDown className="w-4 h-4 text-slate-400 hidden xl:block shrink-0" />
             </button>
 
             {isProfileOpen && (

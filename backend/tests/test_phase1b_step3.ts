@@ -384,7 +384,18 @@ function setupPrismaMock() {
             emergencybroadcasts: prisma.emergencybroadcasts,
             broadcastdeliveries: prisma.broadcastdeliveries,
             notification: prisma.notification,
-            donors: prisma.donors,
+            donors: {
+                ...prisma.donors,
+                update: async (args: any) => {
+                    const existing = store.donors.get(args.where.donorid);
+                    if (existing) Object.assign(existing, args.data);
+                    return existing || args.data;
+                },
+            },
+            donationhistory: {
+                findFirst: async () => null,
+                create: async (args: any) => ({ donationhistoryid: "history-uuid-1", ...args.data }),
+            },
             prescription: prisma.prescription,
             requeststatushistory: {
                 create: async (args: any) => {
@@ -468,7 +479,7 @@ async function runTests() {
         patientname: "Emergency Patient A",
         bloodgroup: "O_POSITIVE",
         bloodcomponent: "WHOLE_BLOOD",
-        unitsrequired: 2,
+        unitsrequired: 1,
         urgencylevel: "CRITICAL",
         isemergency: true,
         status: "CREATED",

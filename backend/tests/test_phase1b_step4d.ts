@@ -133,7 +133,9 @@ function setupMockPrisma() {
             const { where, orderBy } = args;
             let matches = state.broadcasts.filter((b) => b.requestid === where.requestid);
             if (where.status) {
-                matches = matches.filter((b) => b.status === where.status);
+                matches = matches.filter((b) =>
+                    where.status?.in ? where.status.in.includes(b.status) : b.status === where.status
+                );
             }
             if (where.triggertype?.not) {
                 matches = matches.filter((b) => b.triggertype !== where.triggertype.not);
@@ -221,7 +223,9 @@ function setupMockPrisma() {
                     const { where, orderBy } = args;
                     let matches = state.broadcasts.filter((b) => b.requestid === where.requestid);
                     if (where.status) {
-                        matches = matches.filter((b) => b.status === where.status);
+                        matches = matches.filter((b) =>
+                            where.status?.in ? where.status.in.includes(b.status) : b.status === where.status
+                        );
                     }
                     if (where.triggertype?.not) {
                         matches = matches.filter((b) => b.triggertype !== where.triggertype.not);

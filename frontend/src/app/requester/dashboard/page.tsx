@@ -1,169 +1,171 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
 import {
   Droplet,
-  ShieldCheck,
-  Heart,
-  Compass,
-  ArrowRight,
-  Sparkles,
-  Info,
   Loader2,
   AlertCircle,
   RefreshCw,
-  PlusCircle,
   CheckCircle2,
   Building2,
-  Activity,
+  Calendar,
+  ArrowRight,
   FileText,
+  Activity,
+  MapPin,
 } from "lucide-react";
-import { ActiveRequisitionsPreview } from "@/components/requester/ActiveRequisitionsPreview";
-import { LatestRequisitionCard } from "@/components/requester/LatestRequisitionCard";
-import {
-  RequesterRecentActivityPreview,
-  RequesterActivityItem,
-} from "@/components/requester/RequesterRecentActivityPreview";
 import { api, BloodRequestItem } from "@/lib/api";
-import { getStoredUser, AuthUser, AuthRequester } from "@/lib/auth";
-import { formatTimeAgo, formatDate, cleanNotificationMessage } from "@/lib/mappers";
+import { getStoredUser, AuthUser } from "@/lib/auth";
+import {
+  formatDate,
+  mapBloodGroupToDisplay,
+} from "@/lib/mappers";
 
-interface DashboardData {
-  totalRequests: number;
-  activeRequests: number;
-  completedRequests: number;
-  recentRequests: BloodRequestItem[];
+type FilterTab = "ALL" | "ACTIVE" | "COMPLETED";
+
+const ACTIVE_STATUSES = new Set([
+  "CREATED",
+  "HOSPITAL_REVIEW",
+  "BLOOD_BANK_CHECK",
+  "DONOR_MATCHING",
+  "BLOOD_ARRANGED",
+]);
+
+const COMPLETED_STATUSES = new Set(["FULFILLED", "CANCELLED", "EXPIRED"]);
+
+function formatComponentLabel(component?: string | null): string {
+  if (!component) return "Whole Blood";
+  if (component === "RBC") return "Red Blood Cells";
+  return component
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
+}
+
+function formatStatusLabel(status?: string | null): string {
+  if (!status) return "Pending";
+  return status
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
+}
+
+function getStatusBadgeClass(status?: string | null): string {
+  switch (status) {
+    case "FULFILLED":
+    case "BLOOD_ARRANGED":
+      return "bg-emerald-50 text-emerald-700 border-emerald-200";
+    case "CANCELLED":
+    case "EXPIRED":
+      return "bg-slate-100 text-slate-600 border-slate-200";
+    case "DONOR_MATCHING":
+      return "bg-[#317786]/10 text-[#317786] border-[#317786]/25";
+    default:
+      return "bg-[#FAF6EE] text-[#053845] border-[#F3E9D1]";
+  }
+}
+
+function extractFacilityDetails(req: BloodRequestItem): {
+  hospitalName: string | null;
+  wardOrRoom: string | null;
+} {
+  let noteFacility: string | null = null;
+  let wardOrRoom: string | null = null;
+
+  if (req.notes) {
+    const segments = req.notes.split("|").map((s) => s.trim());
+    for (const seg of segments) {
+      if (seg.startsWith("Facility / Hospital:")) {
+        const val = seg.slice("Facility / Hospital:".length).trim();
+        if (val) noteFacility = val;
+      } else if (seg.startsWith("Selected Facility:")) {
+        const val = seg.slice("Selected Facility:".length).trim();
+        if (val) noteFacility = val;
+      } else if (seg.startsWith("Ward / Room:")) {
+        const val = seg.slice("Ward / Room:".length).trim();
+        if (val) wardOrRoom = val;
+      }
+    }
+  }
+
+  const hospitalName =
+    req.hospitals?.hospitalname?.trim() ||
+    req.prescription?.hospitalname?.trim() ||
+    noteFacility ||
+    null;
+
+  return { hospitalName, wardOrRoom };
 }
 
 export default function RequesterDashboardOverviewPage() {
   const [user, setUser] = useState<AuthUser | null>(null);
-  const [requester, setRequester] = useState<AuthRequester | null>(null);
-  const [data, setData] = useState<DashboardData | null>(null);
-  const [recentActivities, setRecentActivities] = useState<RequesterActivityItem[]>([]);
+  const [requests, setRequests] = useState<BloodRequestItem[]>([]);
+  const [kpis, setKpis] = useState({ total: 0, active: 0, fulfilled: 0 });
+  const [activeFilter, setActiveFilter] = useState<FilterTab>("ALL");
   const [isLoading, setIsLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successBanner, setSuccessBanner] = useState<string | null>(null);
 
-  const fetchDashboardData = useCallback(async (background = false) => {
+  const fetchDashboardData = useCallback(async () => {
     try {
-      if (background) {
-        setIsRefreshing(true);
-      } else {
-        setIsLoading(true);
-      }
+      setIsLoading(true);
       setError(null);
 
-      // Fetch dashboard metrics & profile
-      const [dashRes, notifRes] = await Promise.allSettled([
+      const [dashRes, listRes] = await Promise.allSettled([
         api.requester.getDashboard(),
-        api.notifications.getAll(),
+        api.requester.getBloodRequests(),
       ]);
 
-      if (dashRes.status === "fulfilled" && dashRes.value && dashRes.value.success) {
-        const res = dashRes.value;
-        const recentList = res.recentRequests || [];
-        setData({
-          totalRequests: res.totalRequests ?? 0,
-          activeRequests: res.activeRequests ?? 0,
-          completedRequests: res.completedRequests ?? 0,
-          recentRequests: recentList,
-        });
-
-        // Map activities from real notifications if available
-        if (
-          notifRes.status === "fulfilled" &&
-          notifRes.value &&
-          notifRes.value.success &&
-          notifRes.value.notifications &&
-          notifRes.value.notifications.length > 0
-        ) {
-          const acts: RequesterActivityItem[] = notifRes.value.notifications.slice(0, 4).map((n) => {
-            let actType: RequesterActivityItem["type"] = "verification";
-            const lowerType = (n.type || "").toLowerCase();
-            const lowerTitle = (n.title || "").toLowerCase();
-            if (lowerType.includes("urgent") || lowerTitle.includes("emergency")) {
-              actType = "alert";
-            } else if (lowerType.includes("donor") || lowerTitle.includes("donor") || lowerTitle.includes("match")) {
-              actType = "match";
-            } else if (lowerType.includes("request") || lowerTitle.includes("request")) {
-              actType = "request";
-            }
-
-            return {
-              id: n.notificationid,
-              title: n.title,
-              description: cleanNotificationMessage(n.message),
-              timeAgo: formatTimeAgo(n.sentat || n.createdat),
-              type: actType,
-            };
-          });
-          setRecentActivities(acts);
-        } else if (recentList.length > 0) {
-          // Construct from recent requests
-          const acts: RequesterActivityItem[] = recentList.slice(0, 3).map((r) => ({
-            id: `act-${r.requestid}`,
-            title: `Requisition REQ-${r.requestid.slice(0, 8).toUpperCase()}`,
-            description: `Patient ${r.patientname}: ${r.unitsrequired} units ${r.bloodgroup} (${r.status.replace(/_/g, " ")})`,
-            timeAgo: formatTimeAgo(r.createdat),
-            type: r.isemergency ? "alert" : "request",
-          }));
-          setRecentActivities(acts);
-        } else {
-          // Initial clinical defaults
-          setRecentActivities([
-            {
-              id: "act-init-1",
-              title: "Care Desk Connected",
-              description: "Requester account verified for regional hospital blood dispatch.",
-              timeAgo: "Recently",
-              type: "verification",
-            },
-            {
-              id: "act-init-2",
-              title: "Blood Bank Registry Online",
-              description: "Live donor matching perimeter active across accredited facilities.",
-              timeAgo: "Active",
-              type: "request",
-            },
-          ]);
-        }
-      } else {
-        setError("Failed to retrieve requester dashboard statistics.");
+      let loadedRequests: BloodRequestItem[] = [];
+      if (listRes.status === "fulfilled" && listRes.value?.success) {
+        loadedRequests = listRes.value.bloodRequests || [];
       }
-    } catch (err: any) {
-      setError(err?.message || "Failed to connect to Swastya backend server.");
+
+      if (dashRes.status === "fulfilled" && dashRes.value?.success) {
+        const dash = dashRes.value;
+        if (loadedRequests.length === 0) {
+          loadedRequests = dash.recentRequests || [];
+        }
+        const computedActive = loadedRequests.filter((r) =>
+          ACTIVE_STATUSES.has(r.status || "CREATED")
+        ).length;
+        const computedFulfilled = loadedRequests.filter(
+          (r) => r.status === "FULFILLED"
+        ).length;
+
+        setKpis({
+          total: dash.totalRequests ?? loadedRequests.length,
+          active: dash.activeRequests ?? computedActive,
+          fulfilled: dash.completedRequests ?? computedFulfilled,
+        });
+      } else if (listRes.status === "fulfilled" && listRes.value?.success) {
+        setKpis({
+          total: loadedRequests.length,
+          active: loadedRequests.filter((r) =>
+            ACTIVE_STATUSES.has(r.status || "CREATED")
+          ).length,
+          fulfilled: loadedRequests.filter((r) => r.status === "FULFILLED").length,
+        });
+      } else {
+        setError("Failed to retrieve your requester dashboard.");
+        return;
+      }
+
+      setRequests(loadedRequests);
+    } catch (err: unknown) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to connect to Swastya backend server."
+      );
     } finally {
       setIsLoading(false);
-      setIsRefreshing(false);
     }
   }, []);
 
   useEffect(() => {
-    const stored = getStoredUser();
-    setUser(stored);
-
-    // Also get requester profile
-    api.requester
-      .getProfile()
-      .then((res) => {
-        if (res.success && res.requester) {
-          setRequester({
-            requesterid: res.requester.requesterid,
-            userid: res.requester.userid,
-            address: res.requester.address || "",
-            city: res.requester.city || "",
-            state: res.requester.state || "",
-            pincode: res.requester.pincode || "",
-            latitude: res.requester.latitude ? Number(res.requester.latitude) : null,
-            longitude: res.requester.longitude ? Number(res.requester.longitude) : null,
-            createdat: res.requester.createdat,
-            updatedat: res.requester.updatedat,
-          });
-        }
-      })
-      .catch(() => {});
+    setUser(getStoredUser());
 
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
@@ -171,227 +173,314 @@ export default function RequesterDashboardOverviewPage() {
         const id = params.get("requestId");
         setSuccessBanner(
           id
-            ? `Blood Requisition (ID: ${id.slice(0, 8).toUpperCase()}) submitted successfully! Live donor matching and hospital coordination are now active.`
-            : "Blood Requisition submitted successfully! Live donor matching and hospital coordination are now active."
+            ? `Blood request REQ-${id.slice(0, 8).toUpperCase()} submitted successfully.`
+            : "Blood request submitted successfully."
         );
-        const newUrl = window.location.pathname;
-        window.history.replaceState({}, document.title, newUrl);
+        window.history.replaceState({}, document.title, window.location.pathname);
       }
     }
 
     fetchDashboardData();
   }, [fetchDashboardData]);
 
-  if (isLoading && !data) {
+  const filteredRequests = useMemo(() => {
+    if (activeFilter === "ACTIVE") {
+      return requests.filter((r) => ACTIVE_STATUSES.has(r.status || "CREATED"));
+    }
+    if (activeFilter === "COMPLETED") {
+      return requests.filter((r) => COMPLETED_STATUSES.has(r.status || ""));
+    }
+    return requests;
+  }, [requests, activeFilter]);
+
+  const activeCount = useMemo(
+    () => requests.filter((r) => ACTIVE_STATUSES.has(r.status || "CREATED")).length,
+    [requests]
+  );
+
+  const completedCount = useMemo(
+    () => requests.filter((r) => COMPLETED_STATUSES.has(r.status || "")).length,
+    [requests]
+  );
+
+  if (isLoading) {
     return (
       <div className="py-24 flex flex-col items-center justify-center gap-3">
-        <Loader2 className="w-8 h-8 text-[#317786] animate-spin" />
-        <p className="text-xs text-slate-500 font-medium">Loading requester coordination desk...</p>
+        <Loader2 className="w-7 h-7 text-[#317786] animate-spin" />
+        <p className="text-xs text-slate-500 font-medium">Loading your dashboard...</p>
       </div>
     );
   }
 
-  if (error || !data) {
+  if (error) {
     return (
-      <div className="p-8 max-w-lg mx-auto bg-white rounded-3xl border border-[#F3E9D1] text-center space-y-4 shadow-sm my-12">
-        <div className="w-12 h-12 rounded-2xl bg-[#fdf2f2] text-[#A2363A] flex items-center justify-center mx-auto">
-          <AlertCircle className="w-6 h-6" />
+      <div className="p-8 max-w-lg mx-auto bg-white rounded-2xl border border-[#F3E9D1] text-center space-y-4 shadow-2xs my-12">
+        <div className="w-11 h-11 rounded-xl bg-[#fdf2f2] text-[#A2363A] flex items-center justify-center mx-auto">
+          <AlertCircle className="w-5 h-5" />
         </div>
         <div className="space-y-1">
-          <h2 className="font-serif text-lg font-bold text-[#053845]">Dashboard Unavailable</h2>
-          <p className="text-xs text-slate-600">{error || "Could not retrieve requester information."}</p>
+          <h2 className="font-serif text-lg font-bold text-[#053845]">
+            Dashboard Unavailable
+          </h2>
+          <p className="text-xs text-slate-600">{error}</p>
         </div>
         <button
           type="button"
           onClick={() => fetchDashboardData()}
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold text-white bg-[#317786] hover:bg-[#245964] transition-all cursor-pointer shadow-xs"
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold text-white bg-[#317786] hover:bg-[#245964] transition-colors cursor-pointer"
         >
           <RefreshCw className="w-3.5 h-3.5" />
-          <span>Retry Loading</span>
+          <span>Retry</span>
         </button>
       </div>
     );
   }
 
-  const latestRequest = data.recentRequests.length > 0 ? data.recentRequests[0] : null;
-  const userCity = requester?.city && requester.city !== "Not Provided" ? requester.city : "Regional Network";
-
   return (
-    <div className="space-y-6 sm:space-y-8">
-      {/* Success Notification Banner */}
+    <div className="space-y-6">
+      {/* Success Banner */}
       {successBanner && (
-        <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-start justify-between gap-3 text-xs sm:text-sm text-emerald-800 shadow-2xs animate-in fade-in duration-200">
-          <div className="flex items-start gap-2.5">
-            <CheckCircle2 className="w-5 h-5 flex-shrink-0 text-emerald-600 mt-0.5" />
-            <div>
-              <span className="font-bold block">Requisition Dispatched Successfully</span>
-              <span className="text-emerald-700">{successBanner}</span>
-            </div>
+        <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center justify-between gap-3 text-xs sm:text-sm text-emerald-800">
+          <div className="flex items-center gap-2.5">
+            <CheckCircle2 className="w-4 h-4 flex-shrink-0 text-emerald-600" />
+            <span className="font-medium">{successBanner}</span>
           </div>
           <button
             type="button"
             onClick={() => setSuccessBanner(null)}
-            className="text-emerald-600 hover:text-emerald-800 font-semibold cursor-pointer text-xs"
+            className="text-emerald-700 hover:text-emerald-900 font-semibold cursor-pointer text-xs shrink-0"
           >
             Dismiss
           </button>
         </div>
       )}
 
-      {/* Hero Welcome & Readiness Bar (mirrors DonorDashboardOverviewPage) */}
-      <section className="bg-gradient-to-br from-[#053845] via-[#0b4d5e] to-[#053845] rounded-3xl p-6 sm:p-8 text-white shadow-xl relative overflow-hidden">
-        {/* Decorative background blurs */}
-        <div className="absolute -right-10 -bottom-10 w-64 h-64 bg-[#EFA27E]/10 rounded-full blur-2xl pointer-events-none" />
-        <div className="absolute right-1/3 -top-10 w-48 h-48 bg-[#317786]/20 rounded-full blur-2xl pointer-events-none" />
+      {/* 1. Compact Welcome Section */}
+      <section className="flex items-center gap-3.5 pb-4 border-b border-[#317786]/15">
+        <div className="w-11 h-11 rounded-2xl bg-[#317786]/10 border border-[#317786]/20 text-[#317786] flex items-center justify-center shrink-0">
+          <Droplet className="w-5 h-5" />
+        </div>
+        <div className="space-y-0.5 min-w-0">
+          <h1 className="font-serif text-2xl sm:text-3xl font-bold text-[#053845] tracking-tight">
+            Welcome back{user?.name ? `, ${user.name}` : ""}
+          </h1>
+          <p className="text-sm text-slate-600">
+            Manage your blood requests and track their progress.
+          </p>
+        </div>
+      </section>
 
-        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
-          <div className="space-y-2 max-w-xl">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 backdrop-blur-md border border-white/15 text-xs font-semibold text-[#EFA27E]">
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>Verified Clinical Care Requester</span>
-            </div>
-
-            <h1 className="font-serif text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight text-white leading-tight">
-              Welcome back{user?.name ? `, ${user.name}` : ""}
-            </h1>
-
-            <p className="text-xs sm:text-sm text-slate-200 leading-relaxed">
-              You currently have{" "}
-              <strong className="text-white font-bold">
-                {data.activeRequests} active {data.activeRequests === 1 ? "requisition" : "requisitions"}
-              </strong>{" "}
-              undergoing live donor matching and blood bank reservations across the regional clinical network.
-            </p>
+      {/* 2. Three Compact KPI Cards */}
+      <section className="grid grid-cols-1 sm:grid-cols-3 gap-4" aria-label="Request summary">
+        <div className="bg-white rounded-2xl border border-[#F3E9D1] p-4 shadow-2xs flex items-center gap-3.5">
+          <div className="w-10 h-10 rounded-xl bg-[#317786]/10 border border-[#317786]/20 text-[#317786] flex items-center justify-center shrink-0">
+            <FileText className="w-4 h-4" />
           </div>
-
-          <div className="flex flex-wrap md:flex-col items-start md:items-end gap-3 shrink-0">
-            <Link
-              href="/requester/requests/new"
-              className="inline-flex items-center gap-2 px-5 py-3 rounded-2xl bg-[#EFA27E] hover:bg-[#EFA27E]/90 text-[#053845] font-bold text-xs sm:text-sm shadow-md transition-all hover:scale-[1.02] cursor-pointer"
-            >
-              <PlusCircle className="w-4 h-4" />
-              <span>Raise Blood Request</span>
-            </Link>
-
-            <span className="text-[11px] text-slate-300 flex items-center gap-1.5 self-center md:self-auto">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              <span>Desk Status: Online ({userCity})</span>
-            </span>
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-slate-500">Total Requests</p>
+            <p className="font-serif text-2xl font-bold text-[#053845] leading-tight">
+              {kpis.total}
+            </p>
           </div>
         </div>
 
-        {/* 4 Quick Vital Stats (mirrors Donor Vital Stats grid inside hero banner) */}
-        <div className="relative z-10 mt-6 pt-6 border-t border-white/15 grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="space-y-0.5">
-            <span className="text-[10px] uppercase font-bold text-slate-300 tracking-wider flex items-center gap-1">
-              <ShieldCheck className="w-3 h-3 text-emerald-400" />
-              Clinical Link
-            </span>
-            <div className="font-serif text-lg sm:text-xl font-bold text-emerald-300">
-              Verified
-            </div>
-            <p className="text-[11px] text-slate-300">Hospital dispatch authorized</p>
+        <div className="bg-white rounded-2xl border border-[#F3E9D1] p-4 shadow-2xs flex items-center gap-3.5">
+          <div className="w-10 h-10 rounded-xl bg-[#EFA27E]/20 border border-[#EFA27E]/40 text-[#B94F30] flex items-center justify-center shrink-0">
+            <Activity className="w-4 h-4" />
           </div>
-
-          <div className="space-y-0.5">
-            <span className="text-[10px] uppercase font-bold text-slate-300 tracking-wider flex items-center gap-1">
-              <Droplet className="w-3 h-3 text-[#EFA27E]" />
-              Active Needs
-            </span>
-            <div className="font-serif text-lg sm:text-xl font-bold text-white">
-              {data.activeRequests} {data.activeRequests === 1 ? "Requisition" : "Requisitions"}
-            </div>
-            <p className="text-[11px] text-slate-300">Live matching &amp; review</p>
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-slate-500">Active Requests</p>
+            <p className="font-serif text-2xl font-bold text-[#053845] leading-tight">
+              {kpis.active}
+            </p>
           </div>
+        </div>
 
-          <div className="space-y-0.5">
-            <span className="text-[10px] uppercase font-bold text-slate-300 tracking-wider flex items-center gap-1">
-              <Heart className="w-3 h-3 text-rose-300" />
-              Fulfilled
-            </span>
-            <div className="font-serif text-lg sm:text-xl font-bold text-white">
-              {data.completedRequests} {data.completedRequests === 1 ? "Transfusion" : "Transfusions"}
-            </div>
-            <p className="text-[11px] text-slate-300">Successfully completed</p>
+        <div className="bg-white rounded-2xl border border-[#F3E9D1] p-4 shadow-2xs flex items-center gap-3.5">
+          <div className="w-10 h-10 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 flex items-center justify-center shrink-0">
+            <CheckCircle2 className="w-4 h-4" />
           </div>
-
-          <div className="space-y-0.5">
-            <span className="text-[10px] uppercase font-bold text-slate-300 tracking-wider flex items-center gap-1">
-              <Compass className="w-3 h-3 text-[#317786]" />
-              Coverage Area
-            </span>
-            <div className="font-serif text-lg sm:text-xl font-bold text-white truncate">
-              {userCity}
-            </div>
-            <p className="text-[11px] text-slate-300 truncate">Regional Transfusion Network</p>
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-slate-500">Fulfilled Requests</p>
+            <p className="font-serif text-2xl font-bold text-[#053845] leading-tight">
+              {kpis.fulfilled}
+            </p>
           </div>
         </div>
       </section>
 
-      {/* Main Dashboard Layout Grid (mirrors 12-column grid in Donor dashboard) */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-start">
-        {/* Left Column: Priority Requisitions & Verification Record (7 cols) */}
-        <div className="lg:col-span-7 space-y-6 lg:space-y-8">
-          {/* Active Blood Requests */}
-          <ActiveRequisitionsPreview requests={data.recentRequests} />
-
-          {/* Latest Requisition Tracking Card */}
-          <LatestRequisitionCard request={latestRequest} />
-        </div>
-
-        {/* Right Column: Profile Coordination & Guidance (5 cols) */}
-        <div className="lg:col-span-5 space-y-6 lg:space-y-8">
-
-          {/* Clinical Guidance & Transfusion Protocol Advisory */}
-          <div className="bg-white rounded-3xl border border-[#F3E9D1] p-5 sm:p-6 shadow-xs space-y-3.5">
-            <div className="flex items-center gap-2 pb-3 border-b border-[#F3E9D1]/70">
-              <div className="w-8 h-8 rounded-xl bg-[#FAF6EE] text-[#053845] flex items-center justify-center border border-[#F3E9D1]">
-                <Info className="w-4 h-4 text-[#317786]" />
-              </div>
-              <div>
-                <h3 className="font-serif text-base font-bold text-[#053845]">
-                  Requisition &amp; Transfusion Guide
-                </h3>
-                <p className="text-[11px] text-slate-500">
-                  Best practices for expedited clinical matching and hospital coordination
-                </p>
-              </div>
-            </div>
-
-            <div className="space-y-2.5 text-xs text-slate-600">
-              <div className="flex items-start gap-2.5 p-2.5 rounded-xl bg-[#FAF6EE]/40 border border-[#F3E9D1]/50">
-                <span className="w-5 h-5 rounded-full bg-[#317786]/10 text-[#317786] font-bold text-[10px] flex items-center justify-center shrink-0 mt-0.5">
-                  1
-                </span>
-                <p>
-                  <strong>Specify exact blood group &amp; component:</strong> Clearly identify whether whole blood, packed red cells (PRBC), or single-donor platelets (SDP) are required.
-                </p>
-              </div>
-
-              <div className="flex items-start gap-2.5 p-2.5 rounded-xl bg-[#FAF6EE]/40 border border-[#F3E9D1]/50">
-                <span className="w-5 h-5 rounded-full bg-[#317786]/10 text-[#317786] font-bold text-[10px] flex items-center justify-center shrink-0 mt-0.5">
-                  2
-                </span>
-                <p>
-                  <strong>Include hospital &amp; ward coordinates:</strong> Accurate hospital selection enables automatic distance calculation and alerts nearby voluntary donors within radius.
-                </p>
-              </div>
-
-              <div className="flex items-start gap-2.5 p-2.5 rounded-xl bg-[#FAF6EE]/40 border border-[#F3E9D1]/50">
-                <span className="w-5 h-5 rounded-full bg-[#317786]/10 text-[#317786] font-bold text-[10px] flex items-center justify-center shrink-0 mt-0.5">
-                  3
-                </span>
-                <p>
-                  <strong>Keep contact channels responsive:</strong> Once a donor confirms availability or a blood bank reserves units, coordinate promptly with the attending hematologist.
-                </p>
-              </div>
-            </div>
+      {/* 3. My Blood Requests (Full-Width Main Section) */}
+      <section className="space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <h2 className="font-serif text-xl font-bold text-[#053845]">
+              My Blood Requests
+            </h2>
+            <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-[#317786]/10 border border-[#317786]/20 text-[#317786]">
+              {requests.length}
+            </span>
           </div>
 
-          {/* Recent Activity Timeline */}
-          <RequesterRecentActivityPreview activities={recentActivities} />
+          {requests.length > 0 && (
+            <div className="flex flex-wrap items-center gap-3 self-start sm:self-auto">
+              <div
+                className="inline-flex items-center gap-1 p-1 rounded-xl bg-white border border-[#F3E9D1]"
+                role="tablist"
+                aria-label="Filter blood requests"
+              >
+                {(
+                  [
+                    { key: "ALL", label: "All", count: requests.length },
+                    { key: "ACTIVE", label: "Active", count: activeCount },
+                    { key: "COMPLETED", label: "Completed", count: completedCount },
+                  ] as const
+                ).map((tab) => {
+                  const isActive = activeFilter === tab.key;
+                  return (
+                    <button
+                      key={tab.key}
+                      type="button"
+                      role="tab"
+                      aria-selected={isActive}
+                      onClick={() => setActiveFilter(tab.key)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                        isActive
+                          ? "bg-[#317786] text-white shadow-2xs"
+                          : "text-slate-600 hover:text-[#053845] hover:bg-[#317786]/10"
+                      }`}
+                    >
+                      {tab.label} ({tab.count})
+                    </button>
+                  );
+                })}
+              </div>
+
+              <Link
+                href="/requester/requests"
+                className="inline-flex items-center gap-1 text-xs font-semibold text-[#317786] hover:text-[#053845] transition-colors"
+              >
+                <span>View All</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </Link>
+            </div>
+          )}
         </div>
-      </div>
+
+          {requests.length === 0 ? (
+            /* 5. Simple Empty State inside My Blood Requests */
+            <div className="bg-white rounded-2xl border border-[#F3E9D1] p-8 text-center shadow-2xs">
+              <div className="w-11 h-11 rounded-2xl bg-[#317786]/10 border border-[#317786]/20 text-[#317786] flex items-center justify-center mx-auto mb-3">
+                <Droplet className="w-5 h-5" />
+              </div>
+              <h3 className="font-serif text-lg font-bold text-[#053845]">
+                No blood requests yet.
+              </h3>
+              <p className="text-sm text-slate-600 mt-1">
+                Your submitted requests will appear here.
+              </p>
+            </div>
+          ) : filteredRequests.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-[#F3E9D1] p-6 text-center text-sm text-slate-500">
+              No {activeFilter.toLowerCase()} blood requests found.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {filteredRequests.map((req) => {
+                const reqCode = `REQ-${req.requestid.slice(0, 8).toUpperCase()}`;
+                const bloodDisplay = mapBloodGroupToDisplay(req.bloodgroup);
+                const componentDisplay = formatComponentLabel(req.bloodcomponent);
+                const { hospitalName, wardOrRoom } = extractFacilityDetails(req);
+                const isUrgent = req.isemergency || req.urgencylevel === "CRITICAL";
+
+                return (
+                  <article
+                    key={req.requestid}
+                    className="bg-white rounded-2xl border border-[#F3E9D1] px-4 py-3 sm:px-5 sm:py-3.5 shadow-2xs hover:border-[#317786]/45 transition-colors space-y-2"
+                  >
+                    {/* Top row: Patient name, Request ID, Emergency badge & Status */}
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
+                        <h3 className="font-serif text-base font-bold text-[#053845] truncate">
+                          {req.patientname}
+                        </h3>
+                        <span className="text-xs font-medium text-slate-400 shrink-0">
+                          {reqCode}
+                        </span>
+                        {isUrgent && (
+                          <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-[#EFA27E]/25 text-[#B94F30] border border-[#EFA27E]/50 shrink-0">
+                            Emergency
+                          </span>
+                        )}
+                      </div>
+
+                      <span
+                        className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold border shrink-0 ${getStatusBadgeClass(
+                          req.status
+                        )}`}
+                      >
+                        {formatStatusLabel(req.status)}
+                      </span>
+                    </div>
+
+                    {/* Compact information row */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-2 border-t border-[#F3E9D1]/60">
+                      <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1.5 min-w-0">
+                        <div className="inline-flex flex-col items-center justify-center px-2.5 py-1 rounded-lg bg-[#317786]/10 border border-[#317786]/20 shrink-0">
+                          <span className="font-serif text-sm font-bold text-[#053845] leading-none">
+                            {bloodDisplay}
+                          </span>
+                          <span className="text-[10px] font-medium text-[#317786] mt-0.5 leading-tight whitespace-nowrap">
+                            {componentDisplay}
+                          </span>
+                        </div>
+
+                        <span className="text-xs sm:text-sm text-slate-700 shrink-0">
+                          <span className="font-serif text-base font-bold text-[#053845]">
+                            {req.unitsrequired}
+                          </span>{" "}
+                          {req.unitsrequired === 1 ? "unit" : "units"}
+                        </span>
+
+                        {hospitalName && (
+                          <span className="inline-flex items-center gap-1.5 text-xs text-slate-600 min-w-0">
+                            <Building2 className="w-3.5 h-3.5 text-[#317786] shrink-0" />
+                            <span className="truncate max-w-[220px]">{hospitalName}</span>
+                          </span>
+                        )}
+
+                        {wardOrRoom && (
+                          <span className="inline-flex items-center gap-1.5 text-xs text-slate-600 min-w-0">
+                            <MapPin className="w-3.5 h-3.5 text-[#317786] shrink-0" />
+                            <span className="truncate max-w-[180px]">{wardOrRoom}</span>
+                          </span>
+                        )}
+
+                        {(req.requiredby || req.createdat) && (
+                          <span className="inline-flex items-center gap-1.5 text-xs text-slate-500 shrink-0">
+                            <Calendar className="w-3.5 h-3.5 text-[#317786] shrink-0" />
+                            <span>
+                              {req.requiredby
+                                ? formatDate(req.requiredby)
+                                : formatDate(req.createdat)}
+                            </span>
+                          </span>
+                        )}
+                      </div>
+
+                      <Link
+                        href={`/requester/requests/${req.requestid}`}
+                        className="inline-flex items-center gap-1 text-xs sm:text-sm font-semibold text-[#B94F30] hover:text-[#053845] transition-colors shrink-0 self-end sm:self-center"
+                      >
+                        <span>View Details</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </Link>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+      </section>
     </div>
   );
 }

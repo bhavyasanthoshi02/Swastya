@@ -75,9 +75,38 @@ async function createNotificationSafely(data: {
     }
 }
 
+async function updateJobIfProcessing(jobId: string, data: Record<string, any>): Promise<boolean> {
+    if (typeof (prisma.emergencyschedulerjobs as any).updateMany === "function") {
+        const res = await prisma.emergencyschedulerjobs.updateMany({
+            where: { jobid: jobId, status: "PROCESSING" },
+            data,
+        });
+        return (res?.count ?? 0) > 0;
+    }
+    await prisma.emergencyschedulerjobs.update({
+        where: { jobid: jobId },
+        data,
+    });
+    return true;
+}
+
+async function isJobStillProcessing(jobId: string): Promise<boolean> {
+    if (typeof (prisma.emergencyschedulerjobs as any).findUnique === "function") {
+        const current = await prisma.emergencyschedulerjobs.findUnique({
+            where: { jobid: jobId },
+            select: { status: true },
+        });
+        if (current && current.status !== "PROCESSING") {
+            return false;
+        }
+    }
+    return true;
+}
+
 /**
  * Schedules a persistent follow-up job in PostgreSQL.
  * Idempotent: If a job with the same idempotency key already exists and is PENDING or PROCESSING, it is returned.
+ * Never schedules jobs for terminal or arranged requests.
  */
 export async function scheduleEmergencyFollowUp(options: ScheduleJobOptions) {
     const {
@@ -88,6 +117,16 @@ export async function scheduleEmergencyFollowUp(options: ScheduleJobOptions) {
         jobType = "FOLLOW_UP_ESCALATION",
         maxAttempts = MAX_JOB_ATTEMPTS,
     } = options;
+
+    if (typeof prisma.bloodrequests?.findUnique === "function") {
+        const req = await prisma.bloodrequests.findUnique({
+            where: { requestid: requestId },
+            select: { status: true },
+        });
+        if (!req || ["FULFILLED", "CANCELLED", "EXPIRED", "BLOOD_ARRANGED"].includes(req.status || "")) {
+            return null;
+        }
+    }
 
     const dueTime = scheduledFor ?? new Date(Date.now() + delayMinutes * 60 * 1000);
     const key = idempotencyKey || `followup_${requestId}_${dueTime.getTime()}`;
@@ -135,6 +174,18 @@ export async function scheduleEmergencyFollowUp(options: ScheduleJobOptions) {
  */
 export async function recoverAbandonedJobs(): Promise<number> {
     const now = new Date();
+    await prisma.$executeRawUnsafe(`
+        UPDATE emergencyschedulerjobs
+        SET status = 'FAILED',
+            lockeduntil = NULL,
+            lockedby = NULL,
+            lasterror = COALESCE(lasterror, 'Abandoned processing job exceeded max attempts'),
+            updatedat = $1
+        WHERE status = 'PROCESSING'
+          AND lockeduntil < $1
+          AND attemptcount >= maxattempts;
+    `, now);
+
     const result = await prisma.$executeRawUnsafe(`
         UPDATE emergencyschedulerjobs
         SET status = 'PENDING',
@@ -142,7 +193,8 @@ export async function recoverAbandonedJobs(): Promise<number> {
             lockedby = NULL,
             updatedat = $1
         WHERE status = 'PROCESSING'
-          AND lockeduntil < $1;
+          AND lockeduntil < $1
+          AND attemptcount < maxattempts;
     `, now);
     if (result > 0) {
         console.log(`[EmergencyScheduler] Recovered ${result} abandoned processing job(s).`);
@@ -164,6 +216,7 @@ export async function claimNextDueJob(workerId: string): Promise<ClaimedSchedule
             FROM emergencyschedulerjobs
             WHERE status = 'PENDING'
               AND scheduledfor <= $1
+              AND attemptcount < maxattempts
               AND (lockeduntil IS NULL OR lockeduntil < $1)
             ORDER BY scheduledfor ASC
             LIMIT 1
@@ -228,6 +281,10 @@ export async function executeFollowUpJob(job: ClaimedSchedulerJob): Promise<{
     status: "COMPLETED" | "CANCELLED" | "EXPANDED" | "MAX_RADIUS_REACHED" | "EXPIRED";
     details: string;
 }> {
+    if (!(await isJobStillProcessing(job.jobid))) {
+        return { status: "CANCELLED", details: "Job was cancelled before execution" };
+    }
+
     const request = await prisma.bloodrequests.findUnique({
         where: { requestid: job.requestid },
         include: {
@@ -242,15 +299,12 @@ export async function executeFollowUpJob(job: ClaimedSchedulerJob): Promise<{
 
     // 1. Check if request exists
     if (!request) {
-        await prisma.emergencyschedulerjobs.update({
-            where: { jobid: job.jobid },
-            data: {
-                status: "FAILED",
-                lasterror: "Blood request record not found",
-                lockeduntil: null,
-                lockedby: null,
-                updatedat: new Date(),
-            },
+        await updateJobIfProcessing(job.jobid, {
+            status: "FAILED",
+            lasterror: "Blood request record not found",
+            lockeduntil: null,
+            lockedby: null,
+            updatedat: new Date(),
         });
         return { status: "CANCELLED", details: "Blood request record not found" };
     }
@@ -258,15 +312,12 @@ export async function executeFollowUpJob(job: ClaimedSchedulerJob): Promise<{
     // 2. Terminal state check
     const terminalStatuses = ["FULFILLED", "CANCELLED", "EXPIRED"];
     if (terminalStatuses.includes(request.status || "")) {
-        await prisma.emergencyschedulerjobs.update({
-            where: { jobid: job.jobid },
-            data: {
-                status: "CANCELLED",
-                lasterror: `Request is in terminal state: ${request.status}`,
-                lockeduntil: null,
-                lockedby: null,
-                updatedat: new Date(),
-            },
+        await updateJobIfProcessing(job.jobid, {
+            status: "CANCELLED",
+            lasterror: `Request is in terminal state: ${request.status}`,
+            lockeduntil: null,
+            lockedby: null,
+            updatedat: new Date(),
         });
         return { status: "CANCELLED", details: `Request is in terminal state: ${request.status}` };
     }
@@ -274,15 +325,12 @@ export async function executeFollowUpJob(job: ClaimedSchedulerJob): Promise<{
     // 3. Emergency eligibility check
     const isEmergency = Boolean(request.isemergency) || request.urgencylevel === "CRITICAL";
     if (!isEmergency) {
-        await prisma.emergencyschedulerjobs.update({
-            where: { jobid: job.jobid },
-            data: {
-                status: "CANCELLED",
-                lasterror: "Request is no longer marked emergency or critical",
-                lockeduntil: null,
-                lockedby: null,
-                updatedat: new Date(),
-            },
+        await updateJobIfProcessing(job.jobid, {
+            status: "CANCELLED",
+            lasterror: "Request is no longer marked emergency or critical",
+            lockeduntil: null,
+            lockedby: null,
+            updatedat: new Date(),
         });
         return { status: "CANCELLED", details: "Request is no longer marked emergency or critical" };
     }
@@ -356,15 +404,12 @@ export async function executeFollowUpJob(job: ClaimedSchedulerJob): Promise<{
                 message: `Blood requisition for patient ${patientName} has expired based on requiredBy deadline.`,
             });
 
-            await prisma.emergencyschedulerjobs.update({
-                where: { jobid: job.jobid },
-                data: {
-                    status: "CANCELLED",
-                    lasterror: "Request expired based on requiredBy timestamp",
-                    lockeduntil: null,
-                    lockedby: null,
-                    updatedat: new Date(),
-                },
+            await updateJobIfProcessing(job.jobid, {
+                status: "CANCELLED",
+                lasterror: "Request expired based on requiredBy timestamp",
+                lockeduntil: null,
+                lockedby: null,
+                updatedat: new Date(),
             });
 
             return { status: "EXPIRED", details: "Request expired based on requiredBy timestamp" };
@@ -372,34 +417,30 @@ export async function executeFollowUpJob(job: ClaimedSchedulerJob): Promise<{
             // Locked row was not eligible for expiry - handle safely without sending expiry notification
             const curStatus = expiryOutcome.currentStatus || "";
             if (["FULFILLED", "CANCELLED", "EXPIRED"].includes(curStatus)) {
-                await prisma.emergencyschedulerjobs.update({
-                    where: { jobid: job.jobid },
-                    data: {
-                        status: "CANCELLED",
-                        lasterror: `Request is in terminal state: ${curStatus}`,
-                        lockeduntil: null,
-                        lockedby: null,
-                        updatedat: new Date(),
-                    },
+                await updateJobIfProcessing(job.jobid, {
+                    status: "CANCELLED",
+                    lasterror: `Request is in terminal state: ${curStatus}`,
+                    lockeduntil: null,
+                    lockedby: null,
+                    updatedat: new Date(),
                 });
                 return { status: "CANCELLED", details: `Request is in terminal state: ${curStatus}` };
             }
 
             if (curStatus === "BLOOD_ARRANGED") {
-                await prisma.emergencyschedulerjobs.update({
-                    where: { jobid: job.jobid },
-                    data: {
-                        status: "COMPLETED",
-                        completedat: new Date(),
-                        lasterror: null,
-                        lockeduntil: null,
-                        lockedby: null,
-                        updatedat: new Date(),
-                    },
+                const marked = await updateJobIfProcessing(job.jobid, {
+                    status: "COMPLETED",
+                    completedat: new Date(),
+                    lasterror: null,
+                    lockeduntil: null,
+                    lockedby: null,
+                    updatedat: new Date(),
                 });
                 return {
-                    status: "COMPLETED",
-                    details: "Blood has already been arranged for this requisition. No radius expansion needed.",
+                    status: marked ? "COMPLETED" : "CANCELLED",
+                    details: marked
+                        ? "Blood has already been arranged for this requisition. No radius expansion needed."
+                        : "Job was cancelled concurrently.",
                 };
             }
 
@@ -418,21 +459,20 @@ export async function executeFollowUpJob(job: ClaimedSchedulerJob): Promise<{
 
     // If confirmed pledges meet or exceed units required, or status is already BLOOD_ARRANGED / FULFILLED
     if (confirmedDeliveries.length >= requiredUnits || ["BLOOD_ARRANGED", "FULFILLED"].includes(request.status || "")) {
-        await prisma.emergencyschedulerjobs.update({
-            where: { jobid: job.jobid },
-            data: {
-                status: "COMPLETED",
-                completedat: new Date(),
-                lasterror: null,
-                lockeduntil: null,
-                lockedby: null,
-                updatedat: new Date(),
-            },
+        const marked = await updateJobIfProcessing(job.jobid, {
+            status: "COMPLETED",
+            completedat: new Date(),
+            lasterror: null,
+            lockeduntil: null,
+            lockedby: null,
+            updatedat: new Date(),
         });
 
         return {
-            status: "COMPLETED",
-            details: `Adequate donor response received (${confirmedDeliveries.length} confirmed pledges for ${requiredUnits} unit(s)). No radius expansion needed.`,
+            status: marked ? "COMPLETED" : "CANCELLED",
+            details: marked
+                ? `Adequate donor response received (${confirmedDeliveries.length} confirmed pledges for ${requiredUnits} unit(s)). No radius expansion needed.`
+                : "Job was cancelled concurrently.",
         };
     }
 
@@ -445,7 +485,41 @@ export async function executeFollowUpJob(job: ClaimedSchedulerJob): Promise<{
     const currentRadius = currentRequestState?.searchradius || request.searchradius || 15;
 
     if (currentRadius >= MAX_RADIUS_KM) {
-        // Already at maximum radius (100 km)
+        // Re-verify request status and conditionally mark job COMPLETED before dispatching notifications
+        const latestReq = await prisma.bloodrequests.findUnique({
+            where: { requestid: request.requestid },
+            select: { status: true },
+        });
+        if (!latestReq || ["FULFILLED", "CANCELLED", "EXPIRED", "BLOOD_ARRANGED"].includes(latestReq.status || "")) {
+            await updateJobIfProcessing(job.jobid, {
+                status: "CANCELLED",
+                lasterror: `Request transitioned to ${latestReq?.status || "MISSING"}`,
+                lockeduntil: null,
+                lockedby: null,
+                updatedat: new Date(),
+            });
+            return {
+                status: "CANCELLED",
+                details: `Request is no longer eligible (${latestReq?.status || "MISSING"}).`,
+            };
+        }
+
+        const markedCompleted = await updateJobIfProcessing(job.jobid, {
+            status: "COMPLETED",
+            completedat: new Date(),
+            lasterror: "Maximum search radius (100 km) reached without sufficient responses",
+            lockeduntil: null,
+            lockedby: null,
+            updatedat: new Date(),
+        });
+
+        if (!markedCompleted) {
+            return {
+                status: "CANCELLED",
+                details: "Job was cancelled before max-radius notification dispatch.",
+            };
+        }
+
         await createNotificationSafely({
             userId: request.createdbyuserid,
             requestId: request.requestid,
@@ -464,18 +538,6 @@ export async function executeFollowUpJob(job: ClaimedSchedulerJob): Promise<{
             });
         }
 
-        await prisma.emergencyschedulerjobs.update({
-            where: { jobid: job.jobid },
-            data: {
-                status: "COMPLETED",
-                completedat: new Date(),
-                lasterror: "Maximum search radius (100 km) reached without sufficient responses",
-                lockeduntil: null,
-                lockedby: null,
-                updatedat: new Date(),
-            },
-        });
-
         return {
             status: "MAX_RADIUS_REACHED",
             details: `Maximum search radius of ${MAX_RADIUS_KM} km reached. Insufficient responses received.`,
@@ -485,13 +547,7 @@ export async function executeFollowUpJob(job: ClaimedSchedulerJob): Promise<{
     // Calculate next radius, respecting MAX_RADIUS_KM
     const nextRadius = Math.min(MAX_RADIUS_KM, currentRadius + DEFAULT_RADIUS_INCREMENT_KM);
 
-    // Note: Do NOT permanently advance bloodrequests.searchradius before the broadcast succeeds!
-    // searchradius is persisted atomically inside triggerEmergencyBroadcast's database transaction
-    // only after donor matching, delivery recording, and notification dispatch succeed.
-    // If the broadcast fails or rolls back, searchradius remains unchanged in DB, allowing
-    // the scheduler retry mechanism to safely retry the exact same radius band.
-
-    // Execute controlled radius expansion reusing existing broadcast service
+    // Execute controlled radius expansion reusing existing broadcast service (locks bloodrequests FOR UPDATE)
     const broadcastResult = await triggerEmergencyBroadcast({
         requestId: request.requestid,
         triggeredByUserId: request.createdbyuserid,
@@ -502,32 +558,81 @@ export async function executeFollowUpJob(job: ClaimedSchedulerJob): Promise<{
     });
 
     if (!broadcastResult.success) {
-        // Broadcast failed: do NOT advance radius, do NOT notify user of expansion, do NOT mark job COMPLETED.
-        throw new Error(broadcastResult.message || `Radius expansion broadcast failed for request ${request.requestid}`);
-    }
-
-    // If this radius band was already active (e.g. concurrent execution or previous retry completed),
-    // complete the job idempotently without sending duplicate in-app alerts.
-    if (broadcastResult.alreadyActive) {
-        await prisma.emergencyschedulerjobs.update({
-            where: { jobid: job.jobid },
-            data: {
-                status: "COMPLETED",
-                completedat: new Date(),
-                lasterror: null,
+        if (
+            broadcastResult.terminal ||
+            /already (cancelled|fulfilled|expired)/i.test(broadcastResult.message || "")
+        ) {
+            await updateJobIfProcessing(job.jobid, {
+                status: "CANCELLED",
+                lasterror: broadcastResult.message,
                 lockeduntil: null,
                 lockedby: null,
                 updatedat: new Date(),
-            },
+            });
+            return {
+                status: "CANCELLED",
+                details: broadcastResult.message || "Request entered terminal state.",
+            };
+        }
+        // Transient broadcast failure: do NOT advance radius, do NOT notify user, do NOT mark job COMPLETED.
+        throw new Error(broadcastResult.message || `Radius expansion broadcast failed for request ${request.requestid}`);
+    }
+
+    // If this radius band was already active, complete idempotently without duplicate alerts
+    if (broadcastResult.alreadyActive) {
+        const marked = await updateJobIfProcessing(job.jobid, {
+            status: "COMPLETED",
+            completedat: new Date(),
+            lasterror: null,
+            lockeduntil: null,
+            lockedby: null,
+            updatedat: new Date(),
         });
 
         return {
-            status: "COMPLETED",
-            details: `Active emergency broadcast already ongoing for ${broadcastResult.radiusKm} km radius. No redundant expansion created.`,
+            status: marked ? "COMPLETED" : "CANCELLED",
+            details: marked
+                ? `Active emergency broadcast already ongoing for ${broadcastResult.radiusKm} km radius. No redundant expansion created.`
+                : "Job was cancelled concurrently.",
         };
     }
 
-    // Send in-app notification to requester
+    // Re-check request status and conditionally mark current job COMPLETED BEFORE sending notifications or scheduling next job
+    const postBroadcastReq = await prisma.bloodrequests.findUnique({
+        where: { requestid: request.requestid },
+        select: { status: true },
+    });
+    if (!postBroadcastReq || ["FULFILLED", "CANCELLED", "EXPIRED", "BLOOD_ARRANGED"].includes(postBroadcastReq.status || "")) {
+        await updateJobIfProcessing(job.jobid, {
+            status: "CANCELLED",
+            lasterror: `Request transitioned to ${postBroadcastReq?.status || "MISSING"} during broadcast`,
+            lockeduntil: null,
+            lockedby: null,
+            updatedat: new Date(),
+        });
+        return {
+            status: "CANCELLED",
+            details: `Request transitioned to ${postBroadcastReq?.status || "MISSING"}; notifications skipped.`,
+        };
+    }
+
+    const markedCompleted = await updateJobIfProcessing(job.jobid, {
+        status: "COMPLETED",
+        completedat: new Date(),
+        lasterror: null,
+        lockeduntil: null,
+        lockedby: null,
+        updatedat: new Date(),
+    });
+
+    if (!markedCompleted) {
+        return {
+            status: "CANCELLED",
+            details: "Job was cancelled concurrently; notifications and follow-up scheduling skipped.",
+        };
+    }
+
+    // Send in-app notifications only after job completion is committed and request is confirmed active
     await createNotificationSafely({
         userId: request.createdbyuserid,
         requestId: request.requestid,
@@ -545,19 +650,6 @@ export async function executeFollowUpJob(job: ClaimedSchedulerJob): Promise<{
             message: `Search radius for patient ${request.patientname} was automatically expanded to ${nextRadius} km.`,
         });
     }
-
-    // Mark current job COMPLETED
-    await prisma.emergencyschedulerjobs.update({
-        where: { jobid: job.jobid },
-        data: {
-            status: "COMPLETED",
-            completedat: new Date(),
-            lasterror: null,
-            lockeduntil: null,
-            lockedby: null,
-            updatedat: new Date(),
-        },
-    });
 
     // Schedule NEXT follow-up if still below max radius or for one final check at 100km
     const nextDueTime = new Date(Date.now() + DEFAULT_FOLLOWUP_DELAY_MINUTES * 60 * 1000);
@@ -595,33 +687,42 @@ export async function processJob(job: ClaimedSchedulerJob) {
         const currentAttempts = job.attemptcount || 1;
         const maxAttempts = job.maxattempts || MAX_JOB_ATTEMPTS;
 
-        if (currentAttempts < maxAttempts) {
+        const latestReq = typeof prisma.bloodrequests?.findUnique === "function"
+            ? await prisma.bloodrequests.findUnique({
+                  where: { requestid: job.requestid },
+                  select: { status: true },
+              })
+            : null;
+
+        if (latestReq && ["FULFILLED", "CANCELLED", "EXPIRED", "BLOOD_ARRANGED"].includes(latestReq.status || "")) {
+            await updateJobIfProcessing(job.jobid, {
+                status: "CANCELLED",
+                lockeduntil: null,
+                lockedby: null,
+                lasterror: `Request transitioned to ${latestReq.status}; retry skipped`,
+                updatedat: new Date(),
+            });
+        } else if (currentAttempts < maxAttempts) {
             // Exponential backoff: min(300s, 2^attempt * 15s)
             const delaySeconds = Math.min(300, Math.pow(2, currentAttempts) * 15);
             const nextRetry = new Date(Date.now() + delaySeconds * 1000);
 
-            await prisma.emergencyschedulerjobs.update({
-                where: { jobid: job.jobid },
-                data: {
-                    status: "PENDING",
-                    scheduledfor: nextRetry,
-                    lockeduntil: null,
-                    lockedby: null,
-                    lasterror: `Attempt ${currentAttempts} failed: ${errorMsg}. Retrying in ${delaySeconds}s`,
-                    updatedat: new Date(),
-                },
+            await updateJobIfProcessing(job.jobid, {
+                status: "PENDING",
+                scheduledfor: nextRetry,
+                lockeduntil: null,
+                lockedby: null,
+                lasterror: `Attempt ${currentAttempts} failed: ${errorMsg}. Retrying in ${delaySeconds}s`,
+                updatedat: new Date(),
             });
         } else {
             // Retries exhausted
-            await prisma.emergencyschedulerjobs.update({
-                where: { jobid: job.jobid },
-                data: {
-                    status: "FAILED",
-                    lockeduntil: null,
-                    lockedby: null,
-                    lasterror: `Exhausted ${maxAttempts} attempts. Final error: ${errorMsg}`,
-                    updatedat: new Date(),
-                },
+            await updateJobIfProcessing(job.jobid, {
+                status: "FAILED",
+                lockeduntil: null,
+                lockedby: null,
+                lasterror: `Exhausted ${maxAttempts} attempts. Final error: ${errorMsg}`,
+                updatedat: new Date(),
             });
         }
         throw err;
@@ -660,6 +761,7 @@ export async function processDueJobs(workerId = `worker_${process.pid}_${Math.ra
 // Background Worker state
 let workerIntervalHandle: NodeJS.Timeout | null = null;
 let isWorkerRunning = false;
+let isSweepRunning = false;
 
 /**
  * Starts the background emergency scheduler worker.
@@ -674,16 +776,22 @@ export function startEmergencySchedulerWorker(pollIntervalMs = DEFAULT_POLL_INTE
     isWorkerRunning = true;
     console.log(`[EmergencyScheduler] Starting background worker [${workerId}], polling every ${pollIntervalMs}ms...`);
 
-    // Run an initial sweep immediately
-    processDueJobs(workerId).catch((err) => {
-        console.error("[EmergencyScheduler] Error during initial job sweep:", sanitizeErrorMessage(err?.message));
-    });
+    const runSweep = () => {
+        if (isSweepRunning) return;
+        isSweepRunning = true;
+        processDueJobs(workerId)
+            .catch((err) => {
+                console.error("[EmergencyScheduler] Error during scheduled job processing:", sanitizeErrorMessage(err?.message));
+            })
+            .finally(() => {
+                isSweepRunning = false;
+            });
+    };
 
-    workerIntervalHandle = setInterval(() => {
-        processDueJobs(workerId).catch((err) => {
-            console.error("[EmergencyScheduler] Error during scheduled job processing:", sanitizeErrorMessage(err?.message));
-        });
-    }, pollIntervalMs);
+    // Run an initial sweep immediately
+    runSweep();
+
+    workerIntervalHandle = setInterval(runSweep, pollIntervalMs);
 
     // Ensure interval doesn't hold open test runners if unref'd
     if (workerIntervalHandle.unref) {

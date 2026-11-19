@@ -87,6 +87,7 @@ interface MockRequestState {
         message: string;
         sentat: Date;
     } | null;
+    transitStatus?: string;
 }
 
 let mockState: MockRequestState;
@@ -161,6 +162,18 @@ function setupPrismaSpies() {
                         },
                     ];
                 }
+                if (query.includes("FROM broadcastdeliveries")) {
+                    return [
+                        {
+                            deliveryid: "delivery-uuid-1",
+                            transitstatus: mockState.transitStatus || "REACHED_LOCATION",
+                            startedat: null,
+                            reachedat: null,
+                            completedat: null,
+                            transitnotes: null,
+                        },
+                    ];
+                }
                 return [];
             },
             prescription: {
@@ -178,13 +191,62 @@ function setupPrismaSpies() {
                     }
                     return mockState.volunteerNotification;
                 },
-                findFirst: async () => null,
+                findFirst: async (args: any) => {
+                    if (
+                        mockState.volunteerNotification &&
+                        args?.where?.requestid === mockState.requestid &&
+                        args?.where?.userid === mockState.volunteerNotification.userid
+                    ) {
+                        return mockState.volunteerNotification;
+                    }
+                    return null;
+                },
                 create: async (args: any) => args.data,
             },
             donors: {
                 findUnique: async () => ({ donorid: "donor-uuid-1", userid: "donor-user-uuid" }),
+                update: async (args: any) => ({ donorid: args.where.donorid, ...args.data }),
+            },
+            donationhistory: {
+                findFirst: async () => null,
+                create: async (args: any) => ({ donationhistoryid: "history-uuid-1", ...args.data }),
             },
             broadcastdeliveries: {
+                findMany: async () => {
+                    if (!mockState.volunteerNotification) {
+                        return [];
+                    }
+                    const donorUid = mockState.volunteerNotification.userid || "44444444-4444-4444-4444-444444444444";
+                    return [
+                        {
+                            deliveryid: "delivery-uuid-1",
+                            requestid: mockState.requestid,
+                            donorid: "donor-uuid-1",
+                            donoruserid: donorUid,
+                            response: "ACCEPTED",
+                            respondedat: new Date(),
+                            transitstatus: "STARTED",
+                            startedat: new Date(),
+                            reachedat: null,
+                            completedat: null,
+                            transitnotes: null,
+                            donors: {
+                                donorid: "donor-uuid-1",
+                                userid: donorUid,
+                                users: { fullname: "Mock Donor" },
+                            },
+                        },
+                    ];
+                },
+                update: async (args: any) => {
+                    if (args?.data?.transitstatus) {
+                        mockState.transitStatus = args.data.transitstatus;
+                    }
+                    return {
+                        deliveryid: "delivery-uuid-1",
+                        ...(args?.data || {}),
+                    };
+                },
                 updateMany: async () => ({ count: 1 }),
             },
             bloodrequests: {
@@ -476,6 +538,7 @@ async function runTests() {
         resetState({
             status: "DONOR_MATCHING",
             prescription: { prescriptionid: "rx-1", requestid: requestId, status: "PENDING" },
+            transitStatus: "DONOR_FOUND",
         });
         const resStarted = await patchJson(`/bloodrequests/${requestId}/transit-status`, hospitalToken, {
             status: "STARTED",

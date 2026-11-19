@@ -664,13 +664,6 @@ export const api = {
         count: number;
         availableDonors: AvailableDonorItem[];
       }>("/requesters/me/available-donors", { params }),
-
-    updateDonorTransitStatus: (requestId: string, status: string, donorUserId?: string) =>
-      api.patch<{
-        success: boolean;
-        message: string;
-        transitStatus: string;
-      }>(`/bloodrequests/${requestId}/transit-status`, { status, donorUserId }),
   },
 
   hospital: {
