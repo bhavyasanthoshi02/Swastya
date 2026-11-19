@@ -288,46 +288,125 @@ export async function executeFollowUpJob(job: ClaimedSchedulerJob): Promise<{
     }
 
     // 4. Clinical Expiration check based on requiredby deadline
-    if (request.requiredby && new Date(request.requiredby).getTime() <= Date.now()) {
-        await prisma.$transaction(async (tx) => {
+    // Only evaluate expiry if request is not already arranged or terminal
+    const nonExpirablePrecheck = ["FULFILLED", "CANCELLED", "EXPIRED", "BLOOD_ARRANGED"];
+    if (
+        !nonExpirablePrecheck.includes(request.status || "") &&
+        request.requiredby &&
+        new Date(request.requiredby).getTime() <= Date.now()
+    ) {
+        // Atomic transaction: lock row with SELECT ... FOR UPDATE, re-read status & requiredby, and conditionally expire
+        const expiryOutcome = await prisma.$transaction(async (tx) => {
+            const lockedRows: any[] = await tx.$queryRawUnsafe(
+                `SELECT requestid, status, requiredby, patientname, createdbyuserid FROM bloodrequests WHERE requestid = $1::uuid FOR UPDATE`,
+                request.requestid
+            );
+
+            if (!lockedRows || lockedRows.length === 0) {
+                return { expired: false, reason: "NOT_FOUND", currentStatus: null, lockedReq: null };
+            }
+
+            const lockedReq = lockedRows[0];
+            const currentStatus = lockedReq.status || "";
+            const currentRequiredBy = lockedReq.requiredby ? new Date(lockedReq.requiredby).getTime() : null;
+
+            // Never overwrite terminal or blood-arranged statuses
+            const nonExpirableStatuses = ["FULFILLED", "CANCELLED", "EXPIRED", "BLOOD_ARRANGED"];
+            if (nonExpirableStatuses.includes(currentStatus)) {
+                return { expired: false, reason: "INELIGIBLE_STATUS", currentStatus, lockedReq };
+            }
+
+            // Ensure the deadline has genuinely passed
+            if (!currentRequiredBy || currentRequiredBy > Date.now()) {
+                return { expired: false, reason: "DEADLINE_EXTENDED", currentStatus, lockedReq };
+            }
+
+            // Request is genuinely eligible for expiration
             await tx.bloodrequests.update({
                 where: { requestid: request.requestid },
                 data: { status: "EXPIRED" },
             });
+
             await tx.requeststatushistory.create({
                 data: {
                     requestid: request.requestid,
-                    oldstatus: request.status,
+                    oldstatus: currentStatus,
                     newstatus: "EXPIRED",
                     remarks: "Request automatically expired: requiredBy deadline passed with unfulfilled status",
                 },
             });
+
             await tx.emergencybroadcasts.updateMany({
                 where: { requestid: request.requestid, status: "ACTIVE" },
                 data: { status: "EXPIRED" },
             });
+
+            return { expired: true, reason: "EXPIRED", currentStatus, lockedReq };
         });
 
-        await createNotificationSafely({
-            userId: request.createdbyuserid,
-            requestId: request.requestid,
-            type: notification_type.REQUEST,
-            title: "Blood Requisition Expired",
-            message: `Blood requisition for patient ${request.patientname} has expired based on requiredBy deadline.`,
-        });
+        if (expiryOutcome.expired) {
+            const notifiedUserId = expiryOutcome.lockedReq?.createdbyuserid || request.createdbyuserid;
+            const patientName = expiryOutcome.lockedReq?.patientname || request.patientname;
 
-        await prisma.emergencyschedulerjobs.update({
-            where: { jobid: job.jobid },
-            data: {
-                status: "CANCELLED",
-                lasterror: "Request expired based on requiredBy timestamp",
-                lockeduntil: null,
-                lockedby: null,
-                updatedat: new Date(),
-            },
-        });
+            await createNotificationSafely({
+                userId: notifiedUserId,
+                requestId: request.requestid,
+                type: notification_type.REQUEST,
+                title: "Blood Requisition Expired",
+                message: `Blood requisition for patient ${patientName} has expired based on requiredBy deadline.`,
+            });
 
-        return { status: "EXPIRED", details: "Request expired based on requiredBy timestamp" };
+            await prisma.emergencyschedulerjobs.update({
+                where: { jobid: job.jobid },
+                data: {
+                    status: "CANCELLED",
+                    lasterror: "Request expired based on requiredBy timestamp",
+                    lockeduntil: null,
+                    lockedby: null,
+                    updatedat: new Date(),
+                },
+            });
+
+            return { status: "EXPIRED", details: "Request expired based on requiredBy timestamp" };
+        } else {
+            // Locked row was not eligible for expiry - handle safely without sending expiry notification
+            const curStatus = expiryOutcome.currentStatus || "";
+            if (["FULFILLED", "CANCELLED", "EXPIRED"].includes(curStatus)) {
+                await prisma.emergencyschedulerjobs.update({
+                    where: { jobid: job.jobid },
+                    data: {
+                        status: "CANCELLED",
+                        lasterror: `Request is in terminal state: ${curStatus}`,
+                        lockeduntil: null,
+                        lockedby: null,
+                        updatedat: new Date(),
+                    },
+                });
+                return { status: "CANCELLED", details: `Request is in terminal state: ${curStatus}` };
+            }
+
+            if (curStatus === "BLOOD_ARRANGED") {
+                await prisma.emergencyschedulerjobs.update({
+                    where: { jobid: job.jobid },
+                    data: {
+                        status: "COMPLETED",
+                        completedat: new Date(),
+                        lasterror: null,
+                        lockeduntil: null,
+                        lockedby: null,
+                        updatedat: new Date(),
+                    },
+                });
+                return {
+                    status: "COMPLETED",
+                    details: "Blood has already been arranged for this requisition. No radius expansion needed.",
+                };
+            }
+
+            if (curStatus) {
+                request.status = curStatus as any;
+            }
+        }
     }
 
     // 5. Response Adequacy check
@@ -358,7 +437,12 @@ export async function executeFollowUpJob(job: ClaimedSchedulerJob): Promise<{
     }
 
     // 6. Responses are INSUFFICIENT -> Evaluate Radius Expansion
-    const currentRadius = request.searchradius || 15;
+    // Re-check current search radius from database to avoid evaluating against stale state
+    const currentRequestState = await prisma.bloodrequests.findUnique({
+        where: { requestid: request.requestid },
+        select: { searchradius: true },
+    });
+    const currentRadius = currentRequestState?.searchradius || request.searchradius || 15;
 
     if (currentRadius >= MAX_RADIUS_KM) {
         // Already at maximum radius (100 km)
@@ -401,11 +485,11 @@ export async function executeFollowUpJob(job: ClaimedSchedulerJob): Promise<{
     // Calculate next radius, respecting MAX_RADIUS_KM
     const nextRadius = Math.min(MAX_RADIUS_KM, currentRadius + DEFAULT_RADIUS_INCREMENT_KM);
 
-    // Update request radius
-    await prisma.bloodrequests.update({
-        where: { requestid: request.requestid },
-        data: { searchradius: nextRadius },
-    });
+    // Note: Do NOT permanently advance bloodrequests.searchradius before the broadcast succeeds!
+    // searchradius is persisted atomically inside triggerEmergencyBroadcast's database transaction
+    // only after donor matching, delivery recording, and notification dispatch succeed.
+    // If the broadcast fails or rolls back, searchradius remains unchanged in DB, allowing
+    // the scheduler retry mechanism to safely retry the exact same radius band.
 
     // Execute controlled radius expansion reusing existing broadcast service
     const broadcastResult = await triggerEmergencyBroadcast({
@@ -416,6 +500,32 @@ export async function executeFollowUpJob(job: ClaimedSchedulerJob): Promise<{
         radiusKm: nextRadius,
         expandRadius: true,
     });
+
+    if (!broadcastResult.success) {
+        // Broadcast failed: do NOT advance radius, do NOT notify user of expansion, do NOT mark job COMPLETED.
+        throw new Error(broadcastResult.message || `Radius expansion broadcast failed for request ${request.requestid}`);
+    }
+
+    // If this radius band was already active (e.g. concurrent execution or previous retry completed),
+    // complete the job idempotently without sending duplicate in-app alerts.
+    if (broadcastResult.alreadyActive) {
+        await prisma.emergencyschedulerjobs.update({
+            where: { jobid: job.jobid },
+            data: {
+                status: "COMPLETED",
+                completedat: new Date(),
+                lasterror: null,
+                lockeduntil: null,
+                lockedby: null,
+                updatedat: new Date(),
+            },
+        });
+
+        return {
+            status: "COMPLETED",
+            details: `Active emergency broadcast already ongoing for ${broadcastResult.radiusKm} km radius. No redundant expansion created.`,
+        };
+    }
 
     // Send in-app notification to requester
     await createNotificationSafely({

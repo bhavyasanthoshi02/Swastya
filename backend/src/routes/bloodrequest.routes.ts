@@ -416,74 +416,139 @@ router.get("/:id", authenticate, async (req: Request, res: Response) => {
             });
         }
 
-        // Fetch genuine voluntary donor responses associated with this request
-        const volunteerNotifications = await prisma.notification.findMany({
+        // Fetch genuine voluntary donor commitments from durable broadcastdeliveries
+        const commitments = await prisma.broadcastdeliveries.findMany({
             where: {
                 requestid: targetId,
-                type: notification_type.MATCH,
-                title: "Volunteer Response Confirmed",
+                response: "ACCEPTED",
             },
             include: {
-                users: {
-                    select: {
-                        userid: true,
-                        name: true,
-                        phonenumber: true,
-                        email: true,
-                        donors: {
+                donors: {
+                    include: {
+                        users: {
                             select: {
-                                bloodgroup: true,
-                                city: true,
-                                state: true,
-                                weight: true,
-                                gender: true,
+                                userid: true,
+                                name: true,
+                                phonenumber: true,
+                                email: true,
                             },
                         },
                     },
                 },
             },
             orderBy: {
-                sentat: "desc",
+                respondedat: "desc",
             },
         });
 
-        const volunteers = volunteerNotifications.map((n) => {
-            let meta: any = {};
-            const metaMatch = n.message.match(/<!--META:([\s\S]*?)-->/);
-            if (metaMatch && metaMatch[1]) {
-                try {
-                    meta = JSON.parse(metaMatch[1]);
-                } catch {
-                    // Fallback to empty meta
+        let volunteers: any[] = [];
+        if (commitments.length > 0) {
+            volunteers = commitments.map((c) => {
+                let parsedNotes: any = {};
+                if (c.transitnotes) {
+                    try {
+                        parsedNotes = JSON.parse(c.transitnotes);
+                    } catch {}
                 }
-            }
-
-            return {
-                notificationid: n.notificationid,
-                donorId: meta.donorId || n.users?.userid,
-                donorName: meta.donorName || n.users?.name || "Voluntary Donor",
-                donorBloodGroup: meta.donorBloodGroup || n.users?.donors?.bloodgroup || "COMPATIBLE",
-                donorCity: meta.donorCity || n.users?.donors?.city || "Registered Area",
-                donorState: meta.donorState || n.users?.donors?.state || "",
-                donorPhone: meta.donorPhone || n.users?.phonenumber || "",
-                donorEmail: meta.donorEmail || n.users?.email || "",
-                respondedAt: n.sentat,
-                status: meta.transitStatus || "DONOR_FOUND",
-                transitStatus: meta.transitStatus || "DONOR_FOUND",
-                startedAt: meta.startedAt || null,
-                reachedAt: meta.reachedAt || null,
-                completedAt: meta.completedAt || null,
-                estimatedArrival: meta.estimatedArrival || "Within 1-2 hours",
-                notes: meta.notes || "",
-                screening: meta.screening || {
-                    alcoholClearance: "Passed (Screened & Cleared)",
-                    generalHealth: "Good / Symptom Free",
-                    cooldownPassed: true,
-                    eligibilityStatus: "ELIGIBLE",
+                const dUser = c.donors?.users;
+                return {
+                    deliveryId: c.deliveryid,
+                    notificationid: c.notificationid || undefined,
+                    donorId: c.donorid,
+                    donorUserId: c.donoruserid,
+                    donorName: parsedNotes.donorName || dUser?.name || "Voluntary Donor",
+                    donorBloodGroup: parsedNotes.donorBloodGroup || c.donors?.bloodgroup || "COMPATIBLE",
+                    donorCity: parsedNotes.donorCity || c.donors?.city || "Registered Area",
+                    donorState: parsedNotes.donorState || c.donors?.state || "",
+                    donorPhone: parsedNotes.donorPhone || dUser?.phonenumber || "",
+                    donorEmail: parsedNotes.donorEmail || dUser?.email || "",
+                    respondedAt: c.respondedat || c.createdat,
+                    status: c.transitstatus || "DONOR_FOUND",
+                    transitStatus: c.transitstatus || "DONOR_FOUND",
+                    startedAt: c.startedat || null,
+                    reachedAt: c.reachedat || null,
+                    completedAt: c.completedat || null,
+                    estimatedArrival: c.estimatedarrival || parsedNotes.estimatedArrival || "Within 1-2 hours",
+                    notes: parsedNotes.notes || "",
+                    screening: parsedNotes.screening || {
+                        alcoholClearance: "Passed (Screened & Cleared)",
+                        generalHealth: "Good / Symptom Free",
+                        cooldownPassed: true,
+                        eligibilityStatus: "ELIGIBLE",
+                    },
+                    isEligible: true,
+                };
+            });
+        } else {
+            // Backward-compatible fallback for legacy volunteer notifications
+            const volunteerNotifications = await prisma.notification.findMany({
+                where: {
+                    requestid: targetId,
+                    type: notification_type.MATCH,
+                    title: "Volunteer Response Confirmed",
                 },
-                isEligible: meta.isEligible !== undefined ? meta.isEligible : true,
-            };
-        });
+                include: {
+                    users: {
+                        select: {
+                            userid: true,
+                            name: true,
+                            phonenumber: true,
+                            email: true,
+                            donors: {
+                                select: {
+                                    bloodgroup: true,
+                                    city: true,
+                                    state: true,
+                                    weight: true,
+                                    gender: true,
+                                },
+                            },
+                        },
+                    },
+                },
+                orderBy: {
+                    sentat: "desc",
+                },
+            });
+
+            volunteers = volunteerNotifications.map((n) => {
+                let meta: any = {};
+                const metaMatch = n.message.match(/<!--META:([\s\S]*?)-->/);
+                if (metaMatch && metaMatch[1]) {
+                    try {
+                        meta = JSON.parse(metaMatch[1]);
+                    } catch {
+                        // Fallback to empty meta
+                    }
+                }
+
+                return {
+                    notificationid: n.notificationid,
+                    donorId: meta.donorId || n.users?.userid,
+                    donorName: meta.donorName || n.users?.name || "Voluntary Donor",
+                    donorBloodGroup: meta.donorBloodGroup || n.users?.donors?.bloodgroup || "COMPATIBLE",
+                    donorCity: meta.donorCity || n.users?.donors?.city || "Registered Area",
+                    donorState: meta.donorState || n.users?.donors?.state || "",
+                    donorPhone: meta.donorPhone || n.users?.phonenumber || "",
+                    donorEmail: meta.donorEmail || n.users?.email || "",
+                    respondedAt: n.sentat,
+                    status: meta.transitStatus || "DONOR_FOUND",
+                    transitStatus: meta.transitStatus || "DONOR_FOUND",
+                    startedAt: meta.startedAt || null,
+                    reachedAt: meta.reachedAt || null,
+                    completedAt: meta.completedAt || null,
+                    estimatedArrival: meta.estimatedArrival || "Within 1-2 hours",
+                    notes: meta.notes || "",
+                    screening: meta.screening || {
+                        alcoholClearance: "Passed (Screened & Cleared)",
+                        generalHealth: "Good / Symptom Free",
+                        cooldownPassed: true,
+                        eligibilityStatus: "ELIGIBLE",
+                    },
+                    isEligible: meta.isEligible !== undefined ? meta.isEligible : true,
+                };
+            });
+        }
 
         const prescriptionData = bloodRequest.prescription
             ? {
@@ -998,11 +1063,76 @@ router.put("/:id", authenticate, requireApprovedHospital, async (req: Request, r
 
         // Atomic transaction: Update blood request and record status transition history together
         const bloodRequest = await prisma.$transaction(async (tx) => {
-            const isStatusChanging = req.body.status !== undefined && req.body.status !== existing.status;
+            // Lock blood request row using parameterized SQL
+            const lockedRows: any[] = await tx.$queryRawUnsafe(
+                `SELECT requestid, status, requesterid, hospitalid, createdbyuserid, patientname, bloodgroup FROM bloodrequests WHERE requestid = $1::uuid FOR UPDATE`,
+                targetId
+            );
+
+            if (!lockedRows || lockedRows.length === 0) {
+                throw Object.assign(new Error("Blood request not found"), { statusCode: 404 });
+            }
+
+            const lockedRequest = lockedRows[0];
+            const currentStatus = lockedRequest.status || "";
+
+            // Terminal status protection: Cannot modify, reverse, or cancel already terminal requests
+            const terminalStatuses = ["FULFILLED", "CANCELLED", "EXPIRED"];
+            if (terminalStatuses.includes(currentStatus)) {
+                throw Object.assign(
+                    new Error(`Cannot modify or update a requisition that is already ${String(currentStatus).toLowerCase()}`),
+                    { statusCode: 400 }
+                );
+            }
+
+            // Requester role-based status transition restrictions against current locked status
+            if (isRequesterRole) {
+                if (req.body.status !== undefined && req.body.status !== currentStatus) {
+                    if (req.body.status !== "CANCELLED") {
+                        throw Object.assign(
+                            new Error("Requesters are only permitted to cancel active blood requisitions"),
+                            { statusCode: 403 }
+                        );
+                    }
+                }
+            }
+
+            // Explicit Server-Side Hospital Status Transition Allowlist against current locked status
+            if (isAssignedHospital && !isAdmin) {
+                if (req.body.status !== undefined && req.body.status !== currentStatus) {
+                    const allowedNext = HOSPITAL_PERMITTED_TRANSITIONS[currentStatus] || [];
+                    if (!allowedNext.includes(req.body.status)) {
+                        throw Object.assign(
+                            new Error(`Invalid status transition from ${currentStatus} to ${req.body.status}. Permitted transitions: ${allowedNext.join(", ") || "none"}`),
+                            { statusCode: 400 }
+                        );
+                    }
+                }
+            }
+
+            // Clinical Safety Gate: If this request is requester-created, it cannot be advanced to BLOOD_ARRANGED or FULFILLED
+            // without a clinically VERIFIED prescription
+            if (req.body.status === "BLOOD_ARRANGED" || req.body.status === "FULFILLED") {
+                const isRequesterCreated = Boolean(lockedRequest.requesterid);
+                if (isRequesterCreated) {
+                    const rx = await tx.prescription.findUnique({
+                        where: { requestid: targetId },
+                    });
+
+                    if (!rx || rx.status !== "VERIFIED") {
+                        throw Object.assign(
+                            new Error(`Cannot advance requester requisition to ${req.body.status} without a clinically verified prescription (Current prescription status: ${rx ? rx.status : "NONE"})`),
+                            { statusCode: 400 }
+                        );
+                    }
+                }
+            }
+
+            const isStatusChanging = req.body.status !== undefined && req.body.status !== currentStatus;
 
             // Hospital updates notes and status; Requester/Admin can also update patient fields
             const updateData: any = {
-                status: req.body.status !== undefined ? req.body.status : existing.status,
+                status: req.body.status !== undefined ? req.body.status : currentStatus,
                 notes: req.body.notes !== undefined ? req.body.notes : existing.notes,
                 updatedat: new Date(),
             };
@@ -1069,12 +1199,12 @@ router.put("/:id", authenticate, requireApprovedHospital, async (req: Request, r
                     ? String(req.body.remarks).trim()
                     : (req.body.status === "FULFILLED"
                         ? "Transfusion completed and clinically verified by hospital staff"
-                        : `Status transitioned from ${existing.status} to ${req.body.status} by ${user.role.toLowerCase()}`);
+                        : `Status transitioned from ${currentStatus} to ${req.body.status} by ${user.role.toLowerCase()}`);
 
                 await tx.requeststatushistory.create({
                     data: {
                         requestid: targetId,
-                        oldstatus: existing.status,
+                        oldstatus: currentStatus,
                         newstatus: req.body.status,
                         changedbyuserid: user.userid,
                         remarks,
@@ -1082,14 +1212,14 @@ router.put("/:id", authenticate, requireApprovedHospital, async (req: Request, r
                 });
 
                 // Notify requester if status was transitioned by hospital or admin
-                if (existing.createdbyuserid !== user.userid) {
+                if (lockedRequest.createdbyuserid !== user.userid) {
                     await tx.notification.create({
                         data: {
-                            userid: existing.createdbyuserid,
+                            userid: lockedRequest.createdbyuserid,
                             requestid: targetId,
                             type: notification_type.REQUEST,
                             title: `Requisition Status: ${req.body.status}`,
-                            message: `Blood request for patient ${existing.patientname} (${existing.bloodgroup}) was transitioned to ${req.body.status}. Remarks: ${remarks}`,
+                            message: `Blood request for patient ${lockedRequest.patientname || existing.patientname} (${lockedRequest.bloodgroup || existing.bloodgroup}) was transitioned to ${req.body.status}. Remarks: ${remarks}`,
                             isread: false,
                         },
                     });
@@ -1131,7 +1261,13 @@ router.put("/:id", authenticate, requireApprovedHospital, async (req: Request, r
         }
 
         res.status(200).json(bloodRequest);
-    } catch (error) {
+    } catch (error: any) {
+        if (error?.statusCode) {
+            return res.status(error.statusCode).json({
+                success: false,
+                message: error.message,
+            });
+        }
         console.error("Error updating blood request:", error);
 
         res.status(500).json({
@@ -1739,6 +1875,22 @@ router.post("/:id/broadcast", authenticate, async (req: Request, res: Response) 
         }
 
         const expandRadius = Boolean(req.body?.expandRadius);
+        if (expandRadius) {
+            // Guard: Cannot expand radius if no genuine emergency broadcast has been initiated
+            const existingGenuineBroadcast = await prisma.emergencybroadcasts.findFirst({
+                where: {
+                    requestid: targetId,
+                    triggertype: { not: "DIRECT_VOLUNTEER" },
+                },
+            });
+            if (!existingGenuineBroadcast) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Cannot expand broadcast coverage: no active emergency broadcast exists for this requisition",
+                });
+            }
+        }
+
         let requestedRadius = req.body?.radiusKm ? parseInt(req.body.radiusKm, 10) : undefined;
         if (requestedRadius !== undefined) {
             if (isNaN(requestedRadius) || requestedRadius < 1 || requestedRadius > 100) {
@@ -1890,13 +2042,12 @@ router.post("/:id/respond", authenticate, async (req: Request, res: Response) =>
             });
         }
 
-        // Deduplication: Prevent duplicate responses from the same donor
-        const existingResponse = await prisma.notification.findFirst({
+        // Deduplication: Prevent duplicate responses from the same donor using durable commitments
+        const existingResponse = await prisma.broadcastdeliveries.findFirst({
             where: {
-                userid: user.userid,
                 requestid: request.requestid,
-                type: notification_type.MATCH,
-                title: "Volunteer Response Confirmed",
+                donorid: donor.donorid,
+                response: "ACCEPTED",
             },
         });
 
@@ -2022,66 +2173,176 @@ router.post("/:id/respond", authenticate, async (req: Request, res: Response) =>
 
         const metaString = `<!--META:${JSON.stringify(metaData)}-->`;
 
-        // Atomic transaction: Lock donor row, deduplicate, Notify Requester, Record Donor Confirmation, Progress Status
+        // Atomic transaction: Lock bloodrequests row first, then donor row (canonical order), re-verify status, deduplicate, record confirmation
+        let finalStatus = request.status;
         await prisma.$transaction(async (tx) => {
+            // 1. Lock bloodrequests row using parameterized SQL
+            const lockedRequestRows: any[] = await tx.$queryRawUnsafe(
+                `SELECT requestid, status, patientname, bloodgroup, unitsrequired, searchradius, createdbyuserid, hospitalid FROM bloodrequests WHERE requestid = $1::uuid FOR UPDATE`,
+                request.requestid
+            );
+
+            if (!lockedRequestRows || lockedRequestRows.length === 0) {
+                throw Object.assign(new Error("Blood request not found"), { statusCode: 404 });
+            }
+
+            const lockedRequest = lockedRequestRows[0];
+            const currentStatus = lockedRequest.status || "";
+
+            // 2. Reject if locked status is terminal or ineligible to receive volunteers
+            const terminalStatuses = ["FULFILLED", "CANCELLED", "EXPIRED"];
+            if (terminalStatuses.includes(currentStatus)) {
+                throw Object.assign(
+                    new Error(`Cannot volunteer for a blood requisition that is already ${String(currentStatus).toLowerCase()}`),
+                    { statusCode: 400 }
+                );
+            }
+
+            // 3. Lock donor row using consistent lock hierarchy (bloodrequests -> donors)
             await tx.$queryRawUnsafe(
                 `SELECT donorid FROM donors WHERE donorid = $1 FOR UPDATE`,
                 donor.donorid
             );
 
-            const concurrentResponse = await tx.notification.findFirst({
+            // 4. Deduplication: Prevent duplicate responses from the same donor
+            const concurrentResponse = await tx.broadcastdeliveries.findFirst({
                 where: {
-                    userid: user.userid,
                     requestid: request.requestid,
-                    type: notification_type.MATCH,
-                    title: "Volunteer Response Confirmed",
+                    donorid: donor.donorid,
+                    response: "ACCEPTED",
                 },
             });
             if (concurrentResponse) {
                 throw Object.assign(new Error("You have already volunteered for this blood request."), { statusCode: 400 });
             }
 
-            // 1. In-app confirmation notification for the donor (serves as donor response persistence)
-            await tx.notification.create({
+            // 5. Ensure parent broadcast container exists for this blood request
+            let broadcast = await tx.emergencybroadcasts.findFirst({
+                where: { requestid: request.requestid },
+                orderBy: { createdat: "desc" },
+            });
+            if (!broadcast) {
+                broadcast = await tx.emergencybroadcasts.create({
+                    data: {
+                        requestid: request.requestid,
+                        triggeredbyuserid: lockedRequest.createdbyuserid || request.createdbyuserid,
+                        triggertype: "DIRECT_VOLUNTEER",
+                        triggerreason: "Direct donor response registration",
+                        radiuskm: lockedRequest.searchradius || request.searchradius || 5,
+                        status: "DONOR_RESPONDED",
+                        totalmatched: 1,
+                        totalnotified: 0,
+                        totalresponded: 1,
+                    },
+                });
+            }
+
+            // 6. Record or update durable commitment in broadcastdeliveries
+            const existingDeliveries = await tx.broadcastdeliveries.findMany({
+                where: {
+                    donorid: donor.donorid,
+                    requestid: request.requestid,
+                },
+                orderBy: { createdat: "desc" },
+            });
+
+            const metaNotes = JSON.stringify({
+                donorName,
+                donorBloodGroup,
+                donorPhone: contactPhone,
+                donorEmail: donor.users?.email || "",
+                donorCity: donor.city || "Registered Area",
+                donorState: donor.state || "",
+                estimatedArrival,
+                screening: metaData.screening,
+                notes,
+            });
+
+            let deliveryRecord;
+            if (existingDeliveries.length > 0) {
+                deliveryRecord = await tx.broadcastdeliveries.update({
+                    where: { deliveryid: existingDeliveries[0].deliveryid },
+                    data: {
+                        deliverystatus: "RESPONDED",
+                        response: "ACCEPTED",
+                        respondedat: new Date(),
+                        transitstatus: "DONOR_FOUND",
+                        estimatedarrival: estimatedArrival,
+                        transitnotes: metaNotes,
+                    },
+                });
+            } else {
+                deliveryRecord = await tx.broadcastdeliveries.create({
+                    data: {
+                        broadcastid: broadcast.broadcastid,
+                        requestid: request.requestid,
+                        donorid: donor.donorid,
+                        donoruserid: user.userid,
+                        matchtype: "DIRECT_VOLUNTEER",
+                        deliverystatus: "RESPONDED",
+                        attemptcount: 1,
+                        response: "ACCEPTED",
+                        respondedat: new Date(),
+                        transitstatus: "DONOR_FOUND",
+                        estimatedarrival: estimatedArrival,
+                        transitnotes: metaNotes,
+                    },
+                });
+            }
+
+            await tx.emergencybroadcasts.update({
+                where: { broadcastid: broadcast.broadcastid },
+                data: {
+                    totalresponded: { increment: 1 },
+                    status: "DONOR_RESPONDED",
+                },
+            });
+
+            // 7. In-app confirmation notification for the donor (pure alert, links to deliveryid)
+            const donorNotif = await tx.notification.create({
                 data: {
                     userid: user.userid,
                     requestid: request.requestid,
                     type: notification_type.MATCH,
                     title: "Volunteer Response Confirmed",
-                    message: `You volunteered to donate for patient ${request.patientname} (${request.bloodgroup}, ${request.unitsrequired} unit(s)) at ${request.hospitals?.hospitalname || "Care Facility"}. Estimated Arrival: ${estimatedArrival}.\n${metaString}`,
+                    message: `You volunteered to donate for patient ${lockedRequest.patientname || request.patientname} (${lockedRequest.bloodgroup || request.bloodgroup}, ${lockedRequest.unitsrequired || request.unitsrequired} unit(s)) at ${request.hospitals?.hospitalname || "Care Facility"}. Estimated Arrival: ${estimatedArrival}.\n${metaString}`,
                     isread: false,
                 },
             });
 
-            // 2. In-app notification for the creator of the request
+            await tx.broadcastdeliveries.update({
+                where: { deliveryid: deliveryRecord.deliveryid },
+                data: { notificationid: donorNotif.notificationid },
+            });
+
+            // 8. In-app notification for the creator of the request
             await tx.notification.create({
                 data: {
-                    userid: request.createdbyuserid,
+                    userid: lockedRequest.createdbyuserid || request.createdbyuserid,
                     requestid: request.requestid,
                     type: notification_type.MATCH,
                     title: "Donor Volunteered for Blood Request",
-                    message: `${donorName} (${donorBloodGroup}) has volunteered to donate for patient ${request.patientname} (${request.bloodgroup}). Estimated arrival: ${estimatedArrival}.\n${metaString}`,
+                    message: `${donorName} (${donorBloodGroup}) has volunteered to donate for patient ${lockedRequest.patientname || request.patientname} (${lockedRequest.bloodgroup || request.bloodgroup}). Estimated arrival: ${estimatedArrival}.\n${metaString}`,
                     isread: false,
                 },
             });
 
-            // 2b. In-app notification for the assigned hospital if request is assigned to a hospital
-            if (request.hospitals && request.hospitals.userid && request.hospitals.userid !== user.userid && request.hospitals.userid !== request.createdbyuserid) {
+            // 8b. In-app notification for the assigned hospital if request is assigned to a hospital
+            if (request.hospitals && request.hospitals.userid && request.hospitals.userid !== user.userid && request.hospitals.userid !== (lockedRequest.createdbyuserid || request.createdbyuserid)) {
                 await tx.notification.create({
                     data: {
                         userid: request.hospitals.userid,
                         requestid: request.requestid,
                         type: notification_type.MATCH,
                         title: "Volunteer Donor Matched",
-                        message: `Donor ${donorName} (${donorBloodGroup}) has volunteered for blood request for patient ${request.patientname} (${request.bloodgroup}) at ${request.hospitals.hospitalname}. Estimated arrival: ${estimatedArrival}.\n${metaString}`,
+                        message: `Donor ${donorName} (${donorBloodGroup}) has volunteered for blood request for patient ${lockedRequest.patientname || request.patientname} (${lockedRequest.bloodgroup || request.bloodgroup}) at ${request.hospitals.hospitalname}. Estimated arrival: ${estimatedArrival}.\n${metaString}`,
                         isread: false,
                     },
                 });
             }
 
-            // 3. Operational status advancement: Transition CREATED / VERIFIED requests to DONOR_MATCHING
-            // Note: Does NOT falsely transition to FULFILLED.
-            if (request.status === "CREATED" || request.status === "VERIFIED") {
+            // 9. Operational status advancement: Transition CREATED / VERIFIED requests to DONOR_MATCHING using locked status
+            if (currentStatus === "CREATED" || currentStatus === "VERIFIED") {
                 await tx.bloodrequests.update({
                     where: { requestid: request.requestid },
                     data: { status: "DONOR_MATCHING" },
@@ -2090,78 +2351,15 @@ router.post("/:id/respond", authenticate, async (req: Request, res: Response) =>
                 await tx.requeststatushistory.create({
                     data: {
                         requestid: request.requestid,
-                        oldstatus: request.status,
+                        oldstatus: currentStatus,
                         newstatus: "DONOR_MATCHING",
                         changedbyuserid: user.userid,
                         remarks: `Donor ${donorName} (${donorBloodGroup}) volunteered for blood requisition`,
                     },
                 });
-            }
-
-            // 4. Update or record broadcast delivery response in the relational model
-            const activeDeliveries = await tx.broadcastdeliveries.findMany({
-                where: {
-                    donorid: donor.donorid,
-                    emergencybroadcasts: {
-                        requestid: request.requestid,
-                    },
-                },
-                include: {
-                    emergencybroadcasts: true,
-                },
-                orderBy: { createdat: "desc" },
-            });
-
-            if (activeDeliveries.length > 0) {
-                const delivery = activeDeliveries[0];
-                if (delivery.deliverystatus !== "RESPONDED") {
-                    await tx.broadcastdeliveries.update({
-                        where: { deliveryid: delivery.deliveryid },
-                        data: {
-                            deliverystatus: "RESPONDED",
-                            response: "ACCEPTED",
-                            respondedat: new Date(),
-                            transitstatus: "DONOR_FOUND",
-                        },
-                    });
-
-                    await tx.emergencybroadcasts.update({
-                        where: { broadcastid: delivery.broadcastid },
-                        data: {
-                            totalresponded: { increment: 1 },
-                            status: "DONOR_RESPONDED",
-                        },
-                    });
-                }
+                finalStatus = "DONOR_MATCHING";
             } else {
-                // If there is an active broadcast for this request, record the response delivery
-                const latestBroadcast = await tx.emergencybroadcasts.findFirst({
-                    where: { requestid: request.requestid },
-                    orderBy: { createdat: "desc" },
-                });
-                if (latestBroadcast) {
-                    await tx.broadcastdeliveries.create({
-                        data: {
-                            broadcastid: latestBroadcast.broadcastid,
-                            requestid: request.requestid,
-                            donorid: donor.donorid,
-                            donoruserid: user.userid,
-                            matchtype: "DIRECT_VOLUNTEER",
-                            deliverystatus: "RESPONDED",
-                            attemptcount: 1,
-                            response: "ACCEPTED",
-                            respondedat: new Date(),
-                            transitstatus: "DONOR_FOUND",
-                        },
-                    });
-                    await tx.emergencybroadcasts.update({
-                        where: { broadcastid: latestBroadcast.broadcastid },
-                        data: {
-                            totalresponded: { increment: 1 },
-                            status: "DONOR_RESPONDED",
-                        },
-                    });
-                }
+                finalStatus = currentStatus;
             }
         });
 
@@ -2171,11 +2369,11 @@ router.post("/:id/respond", authenticate, async (req: Request, res: Response) =>
             requestId: request.requestid,
             patientName: request.patientname,
             transitStatus: "DONOR_FOUND",
-            status: request.status === "CREATED" || request.status === "VERIFIED" ? "DONOR_MATCHING" : request.status,
+            status: finalStatus,
         });
     } catch (error: any) {
-        if (error?.statusCode === 400) {
-            return res.status(400).json({
+        if (error?.statusCode) {
+            return res.status(error.statusCode).json({
                 success: false,
                 message: error.message,
             });
@@ -2250,40 +2448,88 @@ router.patch("/:id/transit-status", authenticate, requireApprovedHospital, async
             });
         }
 
-        // Find the volunteer notification record
-        const targetUserId = isDonor ? user.userid : (donorUserId || undefined);
-        const whereClause: any = {
-            requestid: request.requestid,
-            type: notification_type.MATCH,
-            title: "Volunteer Response Confirmed",
-        };
-        if (targetUserId) {
-            whereClause.userid = targetUserId;
-        }
-
-        const volunteerNotification = await prisma.notification.findFirst({
-            where: whereClause,
-            orderBy: { sentat: "desc" },
-            include: { users: true },
-        });
-
-        if (!volunteerNotification) {
-            return res.status(404).json({
+        // Pre-transaction check: Terminal status protection (CANCELLED, EXPIRED, FULFILLED)
+        const terminalStatuses = ["FULFILLED", "CANCELLED", "EXPIRED"];
+        if (terminalStatuses.includes(request.status || "")) {
+            return res.status(400).json({
                 success: false,
-                message: "No volunteer record found for this request",
+                message: `Cannot update transit status for a blood requisition that is already ${String(request.status).toLowerCase()}`,
             });
         }
 
-        // Parse existing meta
-        let meta: any = {};
-        const metaMatch = volunteerNotification.message.match(/<!--META:([\s\S]*?)-->/);
-        if (metaMatch && metaMatch[1]) {
-            try {
-                meta = JSON.parse(metaMatch[1]);
-            } catch {}
+        // Find the volunteer commitment record from durable broadcastdeliveries
+        const targetUserId = isDonor ? user.userid : (donorUserId || undefined);
+        const commitmentWhere: any = {
+            requestid: request.requestid,
+            response: "ACCEPTED",
+        };
+        if (targetUserId) {
+            commitmentWhere.donoruserid = targetUserId;
         }
 
-        const nowIso = new Date().toISOString();
+        let commitment = await prisma.broadcastdeliveries.findFirst({
+            where: commitmentWhere,
+            orderBy: { respondedat: "desc" },
+            include: {
+                donors: {
+                    include: {
+                        users: true,
+                    },
+                },
+            },
+        });
+
+        // Fallback for legacy volunteer notification if durable commitment not yet present
+        let volunteerNotification: any = null;
+        let meta: any = {};
+        if (!commitment) {
+            const whereClause: any = {
+                requestid: request.requestid,
+                type: notification_type.MATCH,
+                title: "Volunteer Response Confirmed",
+            };
+            if (targetUserId) {
+                whereClause.userid = targetUserId;
+            }
+
+            volunteerNotification = await prisma.notification.findFirst({
+                where: whereClause,
+                orderBy: { sentat: "desc" },
+                include: { users: true },
+            });
+
+            if (!volunteerNotification) {
+                return res.status(404).json({
+                    success: false,
+                    message: "No volunteer record found for this request",
+                });
+            }
+
+            const metaMatch = volunteerNotification.message.match(/<!--META:([\s\S]*?)-->/);
+            if (metaMatch && metaMatch[1]) {
+                try {
+                    meta = JSON.parse(metaMatch[1]);
+                } catch {}
+            }
+        } else {
+            if (commitment.transitnotes) {
+                try {
+                    meta = JSON.parse(commitment.transitnotes);
+                } catch {}
+            }
+            volunteerNotification = await prisma.notification.findFirst({
+                where: {
+                    requestid: request.requestid,
+                    userid: commitment.donoruserid,
+                    type: notification_type.MATCH,
+                    title: "Volunteer Response Confirmed",
+                },
+                orderBy: { sentat: "desc" },
+            });
+        }
+
+        const now = new Date();
+        const nowIso = now.toISOString();
         meta.transitStatus = status;
         if (status === "STARTED" && !meta.startedAt) {
             meta.startedAt = nowIso;
@@ -2293,116 +2539,173 @@ router.patch("/:id/transit-status", authenticate, requireApprovedHospital, async
             meta.completedAt = nowIso;
         }
 
-        const cleanMessage = volunteerNotification.message.replace(/<!--META:[\s\S]*?-->/g, "").trim();
-        const updatedMessage = `${cleanMessage}\n<!--META:${JSON.stringify(meta)}-->`;
+        const donorUserTarget = isDonor ? user.userid : (targetUserId || commitment?.donoruserid || volunteerNotification?.userid);
+        const donorDisplayName = meta.donorName || commitment?.donors?.users?.name || volunteerNotification?.users?.name || "Volunteer";
 
-        // Update volunteer notification
-        await prisma.notification.update({
-            where: { notificationid: volunteerNotification.notificationid },
-            data: { message: updatedMessage },
-        });
-
-        // Also update the requester's corresponding notification if it exists
-        const requesterNotif = await prisma.notification.findFirst({
-            where: {
-                requestid: request.requestid,
-                userid: request.createdbyuserid,
-                type: notification_type.MATCH,
-                title: "Donor Volunteered for Blood Request",
-            },
-            orderBy: { sentat: "desc" },
-        });
-
-        if (requesterNotif) {
-            const reqCleanMsg = requesterNotif.message.replace(/<!--META:[\s\S]*?-->/g, "").trim();
-            await prisma.notification.update({
-                where: { notificationid: requesterNotif.notificationid },
-                data: { message: `${reqCleanMsg}\n<!--META:${JSON.stringify(meta)}-->` },
-            });
-        }
-
-        // Relational update: synchronize transit milestones to broadcastdeliveries
-        const donorUserTarget = isDonor ? user.userid : (targetUserId || volunteerNotification.userid);
-        if (donorUserTarget) {
-            const donorProfile = await prisma.donors.findUnique({
-                where: { userid: donorUserTarget },
-            });
-            if (donorProfile) {
-                await prisma.broadcastdeliveries.updateMany({
-                    where: {
-                        donorid: donorProfile.donorid,
-                        emergencybroadcasts: {
-                            requestid: request.requestid,
-                        },
-                    },
-                    data: {
-                        transitstatus: status,
-                        ...(status === "STARTED" ? { startedat: new Date() } : {}),
-                        ...(status === "REACHED_LOCATION" ? { reachedat: new Date() } : {}),
-                        ...(status === "COMPLETED" ? { completedat: new Date() } : {}),
-                    },
-                });
-            }
-        }
-
-        // Notify the requester and assigned hospital about the transit update
         const statusDescriptions: Record<string, string> = {
-            STARTED: `Donor ${meta.donorName || "Volunteer"} has started their journey to ${request.hospitals?.hospitalname || "the hospital"}.`,
-            REACHED_LOCATION: `Donor ${meta.donorName || "Volunteer"} has reached ${request.hospitals?.hospitalname || "the hospital"} transfusion desk!`,
-            COMPLETED: `Blood donation for patient ${request.patientname} by donor ${meta.donorName || "Volunteer"} has been completed.`,
+            STARTED: `Donor ${donorDisplayName} has started their journey to ${request.hospitals?.hospitalname || "the hospital"}.`,
+            REACHED_LOCATION: `Donor ${donorDisplayName} has reached ${request.hospitals?.hospitalname || "the hospital"} transfusion desk!`,
+            COMPLETED: `Blood donation for patient ${request.patientname} by donor ${donorDisplayName} has been completed.`,
         };
 
-        if (statusDescriptions[status]) {
-            // Notify requester
-            if (request.createdbyuserid !== user.userid) {
-                await prisma.notification.create({
+        // Atomic transaction: lock row, verify terminal status & prescription verification, update milestones, record history
+        await prisma.$transaction(async (tx) => {
+            // 1. Lock blood request row to serialize against concurrent cancellations or status updates
+            const lockedRows: any[] = await tx.$queryRawUnsafe(
+                `SELECT requestid, status, requesterid, hospitalid FROM bloodrequests WHERE requestid = $1::uuid FOR UPDATE`,
+                request.requestid
+            );
+
+            if (!lockedRows || lockedRows.length === 0) {
+                throw Object.assign(new Error("Blood request not found"), { statusCode: 404 });
+            }
+
+            const currentRequest = lockedRows[0];
+
+            // 2. Strict terminal state guard on current locked database status
+            if (terminalStatuses.includes(currentRequest.status || "")) {
+                throw Object.assign(
+                    new Error(`Cannot update transit status for a blood requisition that is already ${String(currentRequest.status).toLowerCase()}`),
+                    { statusCode: 400 }
+                );
+            }
+
+            // 3. Clinical Prescription Gate for COMPLETED donation
+            if (status === "COMPLETED") {
+                const isRequesterCreated = Boolean(currentRequest.requesterid);
+                if (isRequesterCreated) {
+                    const rx = await tx.prescription.findUnique({
+                        where: { requestid: currentRequest.requestid },
+                    });
+
+                    if (!rx || rx.status !== "VERIFIED") {
+                        throw Object.assign(
+                            new Error(`Cannot advance requester requisition to BLOOD_ARRANGED without a clinically verified prescription (Current prescription status: ${rx ? rx.status : "NONE"})`),
+                            { statusCode: 400 }
+                        );
+                    }
+                }
+            }
+
+            // 4. Update durable commitment in broadcastdeliveries
+            if (commitment) {
+                await tx.broadcastdeliveries.update({
+                    where: { deliveryid: commitment.deliveryid },
                     data: {
+                        transitstatus: status,
+                        ...(status === "STARTED" && !commitment.startedat ? { startedat: now } : {}),
+                        ...(status === "REACHED_LOCATION" && !commitment.reachedat ? { reachedat: now } : {}),
+                        ...(status === "COMPLETED" && !commitment.completedat ? { completedat: now } : {}),
+                        transitnotes: JSON.stringify(meta),
+                    },
+                });
+            } else if (donorUserTarget) {
+                const donorProfile = await tx.donors.findUnique({
+                    where: { userid: donorUserTarget },
+                });
+                if (donorProfile) {
+                    await tx.broadcastdeliveries.updateMany({
+                        where: {
+                            donorid: donorProfile.donorid,
+                            emergencybroadcasts: {
+                                requestid: request.requestid,
+                            },
+                        },
+                        data: {
+                            transitstatus: status,
+                            ...(status === "STARTED" ? { startedat: now } : {}),
+                            ...(status === "REACHED_LOCATION" ? { reachedat: now } : {}),
+                            ...(status === "COMPLETED" ? { completedat: now } : {}),
+                        },
+                    });
+                }
+            }
+
+            // 5. Best-effort notification sync (safe if user deleted notifications)
+            if (volunteerNotification) {
+                try {
+                    const cleanMessage = volunteerNotification.message.replace(/<!--META:[\s\S]*?-->/g, "").trim();
+                    await tx.notification.update({
+                        where: { notificationid: volunteerNotification.notificationid },
+                        data: { message: `${cleanMessage}\n<!--META:${JSON.stringify(meta)}-->` },
+                    });
+                } catch {
+                    // Non-fatal if notification was deleted
+                }
+            }
+
+            // 6. Best-effort requester notification update
+            try {
+                const requesterNotif = await tx.notification.findFirst({
+                    where: {
+                        requestid: request.requestid,
                         userid: request.createdbyuserid,
-                        requestid: request.requestid,
                         type: notification_type.MATCH,
-                        title: status === "REACHED_LOCATION" ? "Donor Reached Hospital" : status === "STARTED" ? "Donor Started Journey" : "Donation Completed",
-                        message: statusDescriptions[status],
-                        isread: false,
+                        title: "Donor Volunteered for Blood Request",
                     },
+                    orderBy: { sentat: "desc" },
                 });
+
+                if (requesterNotif) {
+                    const reqCleanMsg = requesterNotif.message.replace(/<!--META:[\s\S]*?-->/g, "").trim();
+                    await tx.notification.update({
+                        where: { notificationid: requesterNotif.notificationid },
+                        data: { message: `${reqCleanMsg}\n<!--META:${JSON.stringify(meta)}-->` },
+                    });
+                }
+            } catch {
+                // Non-fatal
             }
 
-            // Notify assigned hospital
-            if (request.hospitals && request.hospitals.userid && request.hospitals.userid !== user.userid && request.hospitals.userid !== request.createdbyuserid) {
-                await prisma.notification.create({
-                    data: {
-                        userid: request.hospitals.userid,
-                        requestid: request.requestid,
-                        type: notification_type.MATCH,
-                        title: status === "REACHED_LOCATION" ? "Donor Reached Facility" : status === "STARTED" ? "Donor In Transit" : "Donation Completed at Facility",
-                        message: statusDescriptions[status],
-                        isread: false,
-                    },
-                });
-            }
-        }
+            // 7. Notify requester and assigned hospital
+            if (statusDescriptions[status]) {
+                if (request.createdbyuserid !== user.userid) {
+                    await tx.notification.create({
+                        data: {
+                            userid: request.createdbyuserid,
+                            requestid: request.requestid,
+                            type: notification_type.MATCH,
+                            title: status === "REACHED_LOCATION" ? "Donor Reached Hospital" : status === "STARTED" ? "Donor Started Journey" : "Donation Completed",
+                            message: statusDescriptions[status],
+                            isread: false,
+                        },
+                    });
+                }
 
-        // If completed, update blood request status to BLOOD_ARRANGED atomically with history
-        if (status === "COMPLETED") {
-            await prisma.$transaction(async (tx) => {
-                if (request.status !== "BLOOD_ARRANGED" && request.status !== "FULFILLED") {
+                if (request.hospitals && request.hospitals.userid && request.hospitals.userid !== user.userid && request.hospitals.userid !== request.createdbyuserid) {
+                    await tx.notification.create({
+                        data: {
+                            userid: request.hospitals.userid,
+                            requestid: request.requestid,
+                            type: notification_type.MATCH,
+                            title: status === "REACHED_LOCATION" ? "Donor Reached Facility" : status === "STARTED" ? "Donor In Transit" : "Donation Completed at Facility",
+                            message: statusDescriptions[status],
+                            isread: false,
+                        },
+                    });
+                }
+            }
+
+            // 8. If completed, update blood request status to BLOOD_ARRANGED atomically with history
+            if (status === "COMPLETED") {
+                if (currentRequest.status !== "BLOOD_ARRANGED" && currentRequest.status !== "FULFILLED") {
                     await tx.bloodrequests.update({
-                        where: { requestid: request.requestid },
+                        where: { requestid: currentRequest.requestid },
                         data: { status: "BLOOD_ARRANGED" },
                     });
 
                     await tx.requeststatushistory.create({
                         data: {
-                            requestid: request.requestid,
-                            oldstatus: request.status,
+                            requestid: currentRequest.requestid,
+                            oldstatus: currentRequest.status,
                             newstatus: "BLOOD_ARRANGED",
                             changedbyuserid: user.userid,
                             remarks: `Donation completed by donor ${meta.donorName || "Volunteer"}. Blood unit arranged for transfusion.`,
                         },
                     });
                 }
-            });
-        }
+            }
+        });
 
         return res.status(200).json({
             success: true,
@@ -2410,8 +2713,14 @@ router.patch("/:id/transit-status", authenticate, requireApprovedHospital, async
             transitStatus: status,
             meta,
         });
-    } catch (error) {
+    } catch (error: any) {
         console.error("Error updating transit status:", error);
+        if (error?.statusCode) {
+            return res.status(error.statusCode).json({
+                success: false,
+                message: error.message,
+            });
+        }
         return res.status(500).json({
             success: false,
             message: "Failed to update transit status",

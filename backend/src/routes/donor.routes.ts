@@ -534,18 +534,31 @@ router.get("/me/dashboard", authenticate, authorize("DONOR", "ADMIN"), async (re
             })),
         ].sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime()).slice(0, 5);
 
-        // Check which matching requests the donor has already volunteered for
+        // Check which matching requests the donor has already volunteered for (from durable broadcastdeliveries and legacy notifications)
         const matchingIds = matchingRequests.map((r) => r.requestid);
-        const myVolunteeredResponses = await prisma.notification.findMany({
-            where: {
-                userid: user.userid,
-                type: notification_type.MATCH,
-                title: "Volunteer Response Confirmed",
-                requestid: { in: matchingIds },
-            },
-            select: { requestid: true },
-        });
-        const myRespondedSet = new Set(myVolunteeredResponses.map((v) => v.requestid));
+        const [myDeliveries, myVolunteeredNotifications] = await Promise.all([
+            prisma.broadcastdeliveries.findMany({
+                where: {
+                    donoruserid: user.userid,
+                    requestid: { in: matchingIds },
+                    response: "ACCEPTED",
+                },
+                select: { requestid: true },
+            }),
+            prisma.notification.findMany({
+                where: {
+                    userid: user.userid,
+                    type: notification_type.MATCH,
+                    title: "Volunteer Response Confirmed",
+                    requestid: { in: matchingIds },
+                },
+                select: { requestid: true },
+            }),
+        ]);
+        const myRespondedSet = new Set([
+            ...myDeliveries.map((d) => d.requestid),
+            ...myVolunteeredNotifications.map((v) => v.requestid),
+        ]);
 
         const sanitizedMatchingRequests = matchingRequests.map((r) =>
             sanitizeRequestForDonor(r, myRespondedSet.has(r.requestid))
@@ -779,18 +792,31 @@ router.get("/me/matching-requests", authenticate, authorize("DONOR", "ADMIN"), a
         const total = matchedList.length;
         const paginated = matchedList.slice(skip, skip + limit);
 
-        // Check which requests the current donor has already volunteered for
+        // Check which requests the current donor has already volunteered for (from durable broadcastdeliveries and legacy notifications)
         const requestIds = paginated.map((item) => item.request.requestid);
-        const myVolunteeredResponses = await prisma.notification.findMany({
-            where: {
-                userid: user.userid,
-                type: notification_type.MATCH,
-                title: "Volunteer Response Confirmed",
-                requestid: { in: requestIds },
-            },
-            select: { requestid: true },
-        });
-        const myRespondedSet = new Set(myVolunteeredResponses.map((v) => v.requestid));
+        const [myDeliveries, myVolunteeredNotifications] = await Promise.all([
+            prisma.broadcastdeliveries.findMany({
+                where: {
+                    donoruserid: user.userid,
+                    requestid: { in: requestIds },
+                    response: "ACCEPTED",
+                },
+                select: { requestid: true },
+            }),
+            prisma.notification.findMany({
+                where: {
+                    userid: user.userid,
+                    type: notification_type.MATCH,
+                    title: "Volunteer Response Confirmed",
+                    requestid: { in: requestIds },
+                },
+                select: { requestid: true },
+            }),
+        ]);
+        const myRespondedSet = new Set([
+            ...myDeliveries.map((d) => d.requestid),
+            ...myVolunteeredNotifications.map((v) => v.requestid),
+        ]);
 
         // Format and sanitize output (strip patient contact and exact raw coordinates)
         const sanitizedRequests = paginated.map((item) => {

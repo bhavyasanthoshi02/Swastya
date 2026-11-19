@@ -37,52 +37,54 @@ export interface BroadcastResult {
 export async function triggerEmergencyBroadcast(options: TriggerBroadcastOptions): Promise<BroadcastResult> {
     const { requestId, triggeredByUserId, triggerType, triggerReason, radiusKm, expandRadius } = options;
 
-    // 1. Fetch request details
-    const request = await prisma.bloodrequests.findUnique({
-        where: { requestid: requestId },
-        include: {
-            hospitals: true,
-            requesters: true,
-        },
-    });
+    return await prisma.$transaction(async (tx) => {
+        // 1. Lock bloodrequests row using parameterized SQL to serialize concurrent broadcast triggers per request
+        const lockedRows: any[] = await tx.$queryRawUnsafe(
+            `SELECT requestid, status, isemergency, urgencylevel, bloodgroup, bloodcomponent, searchradius, latitude, longitude, requiredby, unitsrequired, hospitalid, requesterid FROM bloodrequests WHERE requestid = $1::uuid FOR UPDATE`,
+            requestId
+        );
 
-    if (!request) {
-        return { success: false, message: "Blood request not found", totalMatched: 0, totalNotified: 0 };
-    }
+        if (!lockedRows || lockedRows.length === 0) {
+            return { success: false, message: "Blood request not found", totalMatched: 0, totalNotified: 0 };
+        }
 
-    // Clinical Safety Rule: Do not broadcast inactive, terminal, or arranged requests
-    const terminalStatuses = ["FULFILLED", "CANCELLED", "EXPIRED"];
-    if (terminalStatuses.includes(request.status || "")) {
-        return {
-            success: false,
-            message: `Cannot broadcast a blood requisition that is already ${String(request.status).toLowerCase()}`,
-            totalMatched: 0,
-            totalNotified: 0,
-        };
-    }
+        const request = lockedRows[0];
 
-    // Non-emergency check on creation: skip if not marked emergency or critical
-    const isEmergency = Boolean(request.isemergency) || request.urgencylevel === "CRITICAL";
-    if (!isEmergency && triggerType === "REQUEST_CREATION") {
-        return {
-            success: false,
-            message: "Request is not marked as emergency or critical. Ordinary requests do not trigger emergency broadcast.",
-            totalMatched: 0,
-            totalNotified: 0,
-        };
-    }
+        // Clinical Safety Rule: Do not broadcast inactive, terminal, or arranged requests
+        const terminalStatuses = ["FULFILLED", "CANCELLED", "EXPIRED"];
+        if (terminalStatuses.includes(request.status || "")) {
+            return {
+                success: false,
+                message: `Cannot broadcast a blood requisition that is already ${String(request.status).toLowerCase()}`,
+                totalMatched: 0,
+                totalNotified: 0,
+            };
+        }
 
-    // Resolve search radius (capped between 1 and 100 km)
-    let effectiveRadius = radiusKm ?? (request.searchradius || 15);
-    effectiveRadius = Math.max(1, Math.min(100, effectiveRadius));
+        // Non-emergency check on creation: skip if not marked emergency or critical
+        const isEmergency = Boolean(request.isemergency) || request.urgencylevel === "CRITICAL";
+        if (!isEmergency && triggerType === "REQUEST_CREATION") {
+            return {
+                success: false,
+                message: "Request is not marked as emergency or critical. Ordinary requests do not trigger emergency broadcast.",
+                totalMatched: 0,
+                totalNotified: 0,
+            };
+        }
 
-    // 2. Concurrency & Deduplication check:
-    // If not expanding radius, check if an ACTIVE broadcast was created recently (within last 10 minutes)
-    if (!expandRadius) {
-        const recentActiveBroadcast = await prisma.emergencybroadcasts.findFirst({
+        // Resolve search radius (capped between 1 and 100 km)
+        let effectiveRadius = radiusKm ?? (request.searchradius || 15);
+        effectiveRadius = Math.max(1, Math.min(100, effectiveRadius));
+
+        // 2. Concurrency & Deduplication check under the lock:
+        // If expanding radius, check if an ACTIVE genuine broadcast covering at least this radius was created recently (within last 10 minutes)
+        // If not expanding radius, check if ANY active genuine broadcast was created recently (within last 10 minutes)
+        const recentActiveBroadcast = await tx.emergencybroadcasts.findFirst({
             where: {
                 requestid: requestId,
                 status: "ACTIVE",
+                triggertype: { not: "DIRECT_VOLUNTEER" },
+                ...(expandRadius ? { radiuskm: { gte: effectiveRadius } } : {}),
                 createdat: {
                     gte: new Date(Date.now() - 10 * 60 * 1000),
                 },
@@ -91,6 +93,13 @@ export async function triggerEmergencyBroadcast(options: TriggerBroadcastOptions
         });
 
         if (recentActiveBroadcast) {
+            // Also ensure bloodrequests.searchradius in DB reflects at least this existing active broadcast radius
+            if ((request.searchradius || 0) < recentActiveBroadcast.radiuskm) {
+                await tx.bloodrequests.update({
+                    where: { requestid: requestId },
+                    data: { searchradius: recentActiveBroadcast.radiuskm },
+                });
+            }
             return {
                 success: true,
                 message: "An active emergency broadcast is already ongoing for this requisition.",
@@ -102,147 +111,156 @@ export async function triggerEmergencyBroadcast(options: TriggerBroadcastOptions
                 isExisting: true,
             };
         }
-    }
 
-    // 3. Find compatible and eligible donors using Component-Aware Compatibility rules
-    const compatibleDonorGroups = resolveCompatibleDonorGroups(request.bloodgroup, request.bloodcomponent);
-
-    if (compatibleDonorGroups.length === 0) {
-        return {
-            success: false,
-            message: `Unsupported or invalid blood component: ${request.bloodcomponent}`,
-            totalMatched: 0,
-            totalNotified: 0,
-        };
-    }
-
-    // Resolve request coordinates and location
-    const reqLat = request.latitude ? Number(request.latitude) : null;
-    const reqLng = request.longitude ? Number(request.longitude) : null;
-    const requestCity = (request.hospitals?.city || request.requesters?.city || "").trim().toLowerCase();
-    const hospitalName = request.hospitals?.hospitalname || "Emergency Medical Center";
-
-    // Query all active donors matching component-aware ABO/Rh groups
-    const candidateDonors = await prisma.donors.findMany({
-        where: {
-            bloodgroup: { in: compatibleDonorGroups },
-            availabilitystatus: "AVAILABLE",
-            iseligible: true,
-            users: {
-                isactive: true,
+        // Fetch hospital and requester details for location & notification rendering
+        const fullRequest = await tx.bloodrequests.findUnique({
+            where: { requestid: requestId },
+            include: {
+                hospitals: true,
+                requesters: true,
             },
-        },
-        include: {
-            users: {
-                select: {
-                    userid: true,
-                    name: true,
-                    email: true,
-                    phonenumber: true,
+        });
+
+        const reqHospital = fullRequest?.hospitals;
+        const reqRequester = fullRequest?.requesters;
+
+        // 3. Find compatible and eligible donors using Component-Aware Compatibility rules
+        const compatibleDonorGroups = resolveCompatibleDonorGroups(request.bloodgroup, request.bloodcomponent);
+
+        if (compatibleDonorGroups.length === 0) {
+            return {
+                success: false,
+                message: `Unsupported or invalid blood component: ${request.bloodcomponent}`,
+                totalMatched: 0,
+                totalNotified: 0,
+            };
+        }
+
+        // Resolve request coordinates and location
+        const reqLat = request.latitude ? Number(request.latitude) : null;
+        const reqLng = request.longitude ? Number(request.longitude) : null;
+        const requestCity = (reqHospital?.city || reqRequester?.city || "").trim().toLowerCase();
+        const hospitalName = reqHospital?.hospitalname || "Emergency Medical Center";
+
+        // Query all active donors matching component-aware ABO/Rh groups
+        const candidateDonors = await tx.donors.findMany({
+            where: {
+                bloodgroup: { in: compatibleDonorGroups },
+                availabilitystatus: "AVAILABLE",
+                iseligible: true,
+                users: {
+                    isactive: true,
                 },
             },
-        },
-    });
+            include: {
+                users: {
+                    select: {
+                        userid: true,
+                        name: true,
+                        email: true,
+                        phonenumber: true,
+                    },
+                },
+            },
+        });
 
-    // Existing successfully notified donor IDs for this request across ALL previous broadcasts
-    // Note: Donors whose delivery failed previously are eligible for retry in this broadcast
-    const previouslyNotifiedDeliveries = await prisma.broadcastdeliveries.findMany({
-        where: {
-            requestid: requestId,
-            deliverystatus: { in: ["DELIVERED", "RESPONDED"] },
-        },
-        select: { donorid: true },
-    });
-    const previouslyNotifiedDonorIds = new Set(previouslyNotifiedDeliveries.map((d) => d.donorid));
+        // Existing successfully notified donor IDs for this request across ALL previous broadcasts
+        // Note: Donors whose delivery failed previously are eligible for retry in this broadcast
+        const previouslyNotifiedDeliveries = await tx.broadcastdeliveries.findMany({
+            where: {
+                requestid: requestId,
+                deliverystatus: { in: ["DELIVERED", "RESPONDED"] },
+            },
+            select: { donorid: true },
+        });
+        const previouslyNotifiedDonorIds = new Set(previouslyNotifiedDeliveries.map((d) => d.donorid));
 
-    // Filter by cooldown (90 days) and location
-    const matchedDonors: Array<{
-        donor: typeof candidateDonors[0];
-        matchType: "COORDINATES" | "CITY_FALLBACK";
-        distanceKm: number | null;
-        distanceDisplay: string;
-    }> = [];
+        // Filter by cooldown (90 days) and location
+        const matchedDonors: Array<{
+            donor: typeof candidateDonors[0];
+            matchType: "COORDINATES" | "CITY_FALLBACK";
+            distanceKm: number | null;
+            distanceDisplay: string;
+        }> = [];
 
-    const now = Date.now();
-    for (const d of candidateDonors) {
-        // Cooldown interval check
-        if (d.lastdonationdate) {
-            const daysSince = Math.floor((now - new Date(d.lastdonationdate).getTime()) / (1000 * 60 * 60 * 24));
-            if (daysSince < 90) {
-                continue; // In 90-day cooldown
+        const now = Date.now();
+        for (const d of candidateDonors) {
+            // Cooldown interval check
+            if (d.lastdonationdate) {
+                const daysSince = Math.floor((now - new Date(d.lastdonationdate).getTime()) / (1000 * 60 * 60 * 24));
+                if (daysSince < 90) {
+                    continue; // In 90-day cooldown
+                }
+            }
+
+            // Location evaluation
+            const donorLat = d.latitude ? Number(d.latitude) : null;
+            const donorLng = d.longitude ? Number(d.longitude) : null;
+
+            const locEval = evaluateLocationDistance(donorLat, donorLng, reqLat, reqLng, effectiveRadius);
+
+            if (locEval.hasCoordinates && locEval.locationMatch === "COORDINATES") {
+                if (locEval.isWithinRadius) {
+                    matchedDonors.push({
+                        donor: d,
+                        matchType: "COORDINATES",
+                        distanceKm: locEval.distanceKm,
+                        distanceDisplay: locEval.distanceDisplay,
+                    });
+                }
+            } else {
+                // Coordinate fallback: City match
+                const donorCity = (d.city || "").trim().toLowerCase();
+                if (donorCity && requestCity && donorCity === requestCity) {
+                    matchedDonors.push({
+                        donor: d,
+                        matchType: "CITY_FALLBACK",
+                        distanceKm: null,
+                        distanceDisplay: `City Match (${d.city})`,
+                    });
+                }
             }
         }
 
-        // Location evaluation
-        const donorLat = d.latitude ? Number(d.latitude) : null;
-        const donorLng = d.longitude ? Number(d.longitude) : null;
+        // Filter out donors who were already successfully delivered or responded
+        const newDonorsToNotify = matchedDonors.filter((m) => !previouslyNotifiedDonorIds.has(m.donor.donorid));
 
-        const locEval = evaluateLocationDistance(donorLat, donorLng, reqLat, reqLng, effectiveRadius);
+        // 4. Create Durable Broadcast Record
+        const broadcast = await tx.emergencybroadcasts.create({
+            data: {
+                requestid: requestId,
+                triggeredbyuserid: triggeredByUserId,
+                triggertype: triggerType,
+                triggerreason: triggerReason || `Emergency broadcast (${effectiveRadius} km search radius)`,
+                radiuskm: effectiveRadius,
+                status: "ACTIVE",
+                totalmatched: matchedDonors.length,
+                totalnotified: 0,
+                totalresponded: 0,
+            },
+        });
 
-        if (locEval.hasCoordinates && locEval.locationMatch === "COORDINATES") {
-            if (locEval.isWithinRadius) {
-                matchedDonors.push({
-                    donor: d,
-                    matchType: "COORDINATES",
-                    distanceKm: locEval.distanceKm,
-                    distanceDisplay: locEval.distanceDisplay,
-                });
-            }
-        } else {
-            // Coordinate fallback: City match
-            const donorCity = (d.city || "").trim().toLowerCase();
-            if (donorCity && requestCity && donorCity === requestCity) {
-                matchedDonors.push({
-                    donor: d,
-                    matchType: "CITY_FALLBACK",
-                    distanceKm: null,
-                    distanceDisplay: `City Match (${d.city})`,
-                });
-            }
-        }
-    }
+        let notifiedCount = 0;
 
-    // Filter out donors who were already successfully delivered or responded
-    const newDonorsToNotify = matchedDonors.filter((m) => !previouslyNotifiedDonorIds.has(m.donor.donorid));
+        // 5. Deliver Notifications with Transaction Isolation & Durable Failure Logging
+        for (const item of newDonorsToNotify) {
+            const donor = item.donor;
+            try {
+                // Formulate secure in-app notification without sensitive patient or raw coordinate data
+                const distanceText =
+                    item.matchType === "COORDINATES" && item.distanceKm !== null
+                        ? `~${item.distanceKm.toFixed(1)} km away`
+                        : `City Match: ${donor.city || "Local area"}`;
 
-    // 4. Create Durable Broadcast Record
-    const broadcast = await prisma.emergencybroadcasts.create({
-        data: {
-            requestid: requestId,
-            triggeredbyuserid: triggeredByUserId,
-            triggertype: triggerType,
-            triggerreason: triggerReason || `Emergency broadcast (${effectiveRadius} km search radius)`,
-            radiuskm: effectiveRadius,
-            status: "ACTIVE",
-            totalmatched: matchedDonors.length,
-            totalnotified: 0,
-            totalresponded: 0,
-        },
-    });
+                const requiredByFormatted = request.requiredby
+                    ? new Date(request.requiredby).toLocaleString("en-US", {
+                          dateStyle: "medium",
+                          timeStyle: "short",
+                      })
+                    : "Immediate";
 
-    let notifiedCount = 0;
+                const notificationMessage = `EMERGENCY ALERT: Urgent need for ${request.bloodgroup} (${request.bloodcomponent || "Whole Blood"}), ${request.unitsrequired} unit(s). Urgency: ${request.urgencylevel}.\nFacility: ${hospitalName} (${distanceText}). Required by: ${requiredByFormatted}.\nPlease respond immediately if available to donate.`;
 
-    // 5. Deliver Notifications with Transaction Isolation & Durable Failure Logging
-    for (const item of newDonorsToNotify) {
-        const donor = item.donor;
-        try {
-            // Formulate secure in-app notification without sensitive patient or raw coordinate data
-            const distanceText =
-                item.matchType === "COORDINATES" && item.distanceKm !== null
-                    ? `~${item.distanceKm.toFixed(1)} km away`
-                    : `City Match: ${donor.city || "Local area"}`;
-
-            const requiredByFormatted = request.requiredby
-                ? new Date(request.requiredby).toLocaleString("en-US", {
-                      dateStyle: "medium",
-                      timeStyle: "short",
-                  })
-                : "Immediate";
-
-            const notificationMessage = `EMERGENCY ALERT: Urgent need for ${request.bloodgroup} (${request.bloodcomponent || "Whole Blood"}), ${request.unitsrequired} unit(s). Urgency: ${request.urgencylevel}.\nFacility: ${hospitalName} (${distanceText}). Required by: ${requiredByFormatted}.\nPlease respond immediately if available to donate.`;
-
-            // Atomic unit: in-app notification creation + DELIVERED broadcast delivery record
-            await prisma.$transaction(async (tx) => {
                 const notif = await tx.notification.create({
                     data: {
                         userid: donor.userid,
@@ -267,50 +285,56 @@ export async function triggerEmergencyBroadcast(options: TriggerBroadcastOptions
                         attemptcount: 1,
                     },
                 });
-            });
 
-            notifiedCount++;
-        } catch (deliverError: any) {
-            console.error(`Failed to deliver notification to donor ${donor.donorid}:`, deliverError);
+                notifiedCount++;
+            } catch (deliverError: any) {
+                console.error(`Failed to deliver notification to donor ${donor.donorid}:`, deliverError);
 
-            // Per-donor transaction aborted cleanly and rolled back.
-            // Persist failed delivery record in an independent query so PostgreSQL error 25P02 is completely avoided.
-            try {
-                await prisma.broadcastdeliveries.create({
-                    data: {
-                        broadcastid: broadcast.broadcastid,
-                        requestid: requestId,
-                        donorid: donor.donorid,
-                        donoruserid: donor.userid,
-                        matchtype: item.matchType,
-                        distancekm: item.distanceKm !== null ? item.distanceKm : undefined,
-                        deliverystatus: "FAILED",
-                        failuremessage: deliverError?.message || "In-app notification delivery error",
-                        attemptcount: 1,
-                    },
-                });
-            } catch (recordError: any) {
-                console.error(`Failed to record delivery failure for donor ${donor.donorid}:`, recordError);
+                try {
+                    await tx.broadcastdeliveries.create({
+                        data: {
+                            broadcastid: broadcast.broadcastid,
+                            requestid: requestId,
+                            donorid: donor.donorid,
+                            donoruserid: donor.userid,
+                            matchtype: item.matchType,
+                            distancekm: item.distanceKm !== null ? item.distanceKm : undefined,
+                            deliverystatus: "FAILED",
+                            failuremessage: deliverError?.message || "In-app notification delivery error",
+                            attemptcount: 1,
+                        },
+                    });
+                } catch (recordError: any) {
+                    console.error(`Failed to record delivery failure for donor ${donor.donorid}:`, recordError);
+                }
             }
         }
-    }
 
-    // 6. Update total notified on the broadcast record
-    const updatedBroadcast = await prisma.emergencybroadcasts.update({
-        where: { broadcastid: broadcast.broadcastid },
-        data: {
-            totalnotified: notifiedCount,
-        },
+        // 6. Update total notified on the broadcast record
+        const updatedBroadcast = await tx.emergencybroadcasts.update({
+            where: { broadcastid: broadcast.broadcastid },
+            data: {
+                totalnotified: notifiedCount,
+            },
+        });
+
+        // 7. Persist the new search radius on the request row ONLY after broadcast succeeds, inside the transaction
+        if (expandRadius || effectiveRadius > (request.searchradius || 0)) {
+            await tx.bloodrequests.update({
+                where: { requestid: requestId },
+                data: { searchradius: effectiveRadius },
+            });
+        }
+
+        return {
+            success: true,
+            message: `Emergency broadcast initiated successfully. ${updatedBroadcast.totalnotified} donor(s) notified.`,
+            broadcastId: updatedBroadcast.broadcastid,
+            radiusKm: updatedBroadcast.radiuskm,
+            totalMatched: updatedBroadcast.totalmatched,
+            totalNotified: updatedBroadcast.totalnotified,
+        };
     });
-
-    return {
-        success: true,
-        message: `Emergency broadcast initiated successfully. ${updatedBroadcast.totalnotified} donor(s) notified.`,
-        broadcastId: updatedBroadcast.broadcastid,
-        radiusKm: updatedBroadcast.radiuskm,
-        totalMatched: updatedBroadcast.totalmatched,
-        totalNotified: updatedBroadcast.totalnotified,
-    };
 }
 
 /**
@@ -318,8 +342,12 @@ export async function triggerEmergencyBroadcast(options: TriggerBroadcastOptions
  * and authorized delivery records for a blood requisition.
  */
 export async function getRequestBroadcastStatus(requestId: string) {
+    // Only query genuine emergency broadcasts (exclude internal direct-volunteer containers)
     const broadcasts = await prisma.emergencybroadcasts.findMany({
-        where: { requestid: requestId },
+        where: {
+            requestid: requestId,
+            triggertype: { not: "DIRECT_VOLUNTEER" },
+        },
         orderBy: { createdat: "desc" },
         include: {
             users: {
@@ -336,10 +364,14 @@ export async function getRequestBroadcastStatus(requestId: string) {
     }
 
     const latest = broadcasts[0];
+    const genuineBroadcastIds = broadcasts.map((b) => b.broadcastid);
 
-    // Fetch delivery records across ALL broadcasts for this request to calculate true cumulative metrics
+    // Fetch delivery records across genuine broadcasts for this request to calculate true cumulative metrics
     const allDeliveries = await prisma.broadcastdeliveries.findMany({
-        where: { requestid: requestId },
+        where: {
+            requestid: requestId,
+            broadcastid: { in: genuineBroadcastIds },
+        },
         orderBy: { createdat: "desc" },
         include: {
             donors: {

@@ -215,100 +215,199 @@ router.get("/me/available-donors", authenticate, authorize("REQUESTER", "PATIENT
             });
         }
 
-        // 2. Fetch volunteer confirmations
-        const volunteerNotifications = await prisma.notification.findMany({
+        // 2. Fetch persistent donor commitments from broadcastdeliveries (with legacy notification fallback)
+        const commitments = await prisma.broadcastdeliveries.findMany({
             where: {
                 requestid: { in: requestIds },
-                type: notification_type.MATCH,
-                title: "Volunteer Response Confirmed",
+                response: "ACCEPTED",
             },
             include: {
-                users: {
-                    select: {
-                        userid: true,
-                        name: true,
-                        phonenumber: true,
-                        email: true,
-                        donors: {
+                donors: {
+                    include: {
+                        users: {
                             select: {
-                                donorid: true,
-                                bloodgroup: true,
-                                city: true,
-                                state: true,
-                                weight: true,
-                                gender: true,
-                                lastdonationdate: true,
+                                userid: true,
+                                name: true,
+                                phonenumber: true,
+                                email: true,
+                                donors: {
+                                    select: {
+                                        donorid: true,
+                                        bloodgroup: true,
+                                        city: true,
+                                        state: true,
+                                        weight: true,
+                                        gender: true,
+                                        lastdonationdate: true,
+                                    },
+                                },
                             },
                         },
                     },
                 },
             },
             orderBy: {
-                sentat: "desc",
+                respondedat: "desc",
             },
         });
 
-        // 3. Map to rich donor profiles with clinical screening status
-        const availableDonors = volunteerNotifications.map((n) => {
-            let meta: any = {};
-            const metaMatch = n.message.match(/<!--META:([\s\S]*?)-->/);
-            if (metaMatch && metaMatch[1]) {
-                try {
-                    meta = JSON.parse(metaMatch[1]);
-                } catch {
-                    // Fallback
+        let availableDonors: any[] = [];
+        if (commitments.length > 0) {
+            availableDonors = commitments.map((c) => {
+                let meta: any = {};
+                if (c.transitnotes) {
+                    try {
+                        meta = JSON.parse(c.transitnotes);
+                    } catch {}
                 }
-            }
 
-            const linkedReq = n.requestid ? requestMap.get(n.requestid) : null;
+                const linkedReq = c.requestid ? requestMap.get(c.requestid) : null;
+                const donorUser = c.donors?.users;
+                const donorProfile = donorUser?.donors || c.donors;
 
-            return {
-                notificationId: n.notificationid,
-                donorId: meta.donorId || n.users?.donors?.donorid || n.users?.userid,
-                donorUserId: n.users?.userid,
-                donorName: meta.donorName || n.users?.name || "Voluntary Hero Donor",
-                donorBloodGroup: meta.donorBloodGroup || n.users?.donors?.bloodgroup || "COMPATIBLE",
-                donorCity: meta.donorCity || n.users?.donors?.city || "Registered Area",
-                donorState: meta.donorState || n.users?.donors?.state || "",
-                donorPhone: meta.donorPhone || n.users?.phonenumber || "",
-                donorEmail: meta.donorEmail || n.users?.email || "",
-                donorGender: n.users?.donors?.gender || "OTHER",
-                donorWeight: n.users?.donors?.weight ? Number(n.users?.donors?.weight) : null,
-                lastDonationDate: n.users?.donors?.lastdonationdate || null,
-                respondedAt: n.sentat,
-                status: meta.transitStatus || "DONOR_FOUND",
-                transitStatus: meta.transitStatus || "DONOR_FOUND",
-                startedAt: meta.startedAt || null,
-                reachedAt: meta.reachedAt || null,
-                completedAt: meta.completedAt || null,
-                estimatedArrival: meta.estimatedArrival || "Within 1-2 hours",
-                notes: meta.notes || "",
-                screening: meta.screening || {
-                    drinksAlcohol: false,
-                    alcoholInPast24Hours: false,
-                    feelingHealthy: true,
-                    recentAntibioticsOrMedication: false,
-                    recentTattooOrSurgery: false,
-                    donatedInLast90Days: false,
-                    chronicIllness: false,
-                    alcoholClearance: "Passed (Screened & Cleared)",
-                    generalHealth: "Good / Symptom Free",
-                    cooldownPassed: true,
-                    eligibilityStatus: "ELIGIBLE",
+                return {
+                    notificationId: c.notificationid || c.deliveryid,
+                    deliveryId: c.deliveryid,
+                    donorId: meta.donorId || donorProfile?.donorid || c.donorid,
+                    donorUserId: c.donoruserid,
+                    donorName: meta.donorName || donorUser?.name || "Voluntary Hero Donor",
+                    donorBloodGroup: meta.donorBloodGroup || donorProfile?.bloodgroup || "COMPATIBLE",
+                    donorCity: meta.donorCity || donorProfile?.city || "Registered Area",
+                    donorState: meta.donorState || donorProfile?.state || "",
+                    donorPhone: meta.donorPhone || donorUser?.phonenumber || "",
+                    donorEmail: meta.donorEmail || donorUser?.email || "",
+                    donorGender: donorProfile?.gender || "OTHER",
+                    donorWeight: donorProfile?.weight ? Number(donorProfile?.weight) : null,
+                    lastDonationDate: donorProfile?.lastdonationdate || null,
+                    respondedAt: c.respondedat || c.createdat,
+                    status: c.transitstatus || "DONOR_FOUND",
+                    transitStatus: c.transitstatus || "DONOR_FOUND",
+                    startedAt: c.startedat || null,
+                    reachedAt: c.reachedat || null,
+                    completedAt: c.completedat || null,
+                    estimatedArrival: c.estimatedarrival || meta.estimatedArrival || "Within 1-2 hours",
+                    notes: meta.notes || "",
+                    screening: meta.screening || {
+                        drinksAlcohol: false,
+                        alcoholInPast24Hours: false,
+                        feelingHealthy: true,
+                        recentAntibioticsOrMedication: false,
+                        recentTattooOrSurgery: false,
+                        donatedInLast90Days: false,
+                        chronicIllness: false,
+                        alcoholClearance: "Passed (Screened & Cleared)",
+                        generalHealth: "Good / Symptom Free",
+                        cooldownPassed: true,
+                        eligibilityStatus: "ELIGIBLE",
+                    },
+                    isEligible: meta.isEligible !== undefined ? meta.isEligible : true,
+                    requestId: c.requestid,
+                    patientName: linkedReq?.patientname || "Emergency Patient",
+                    requiredBloodGroup: linkedReq?.bloodgroup || "UNKNOWN",
+                    unitsRequired: linkedReq?.unitsrequired || 1,
+                    bloodComponent: linkedReq?.bloodcomponent || "WHOLE_BLOOD",
+                    urgencyLevel: linkedReq?.urgencylevel || "HIGH",
+                    hospitalName: linkedReq?.hospitals?.hospitalname || "Care Facility",
+                    hospitalAddress: linkedReq?.hospitals?.address || "",
+                    hospitalCity: linkedReq?.hospitals?.city || "",
+                    requestStatus: linkedReq?.status || "DONOR_MATCHING",
+                };
+            });
+        } else {
+            // Legacy notification fallback
+            const volunteerNotifications = await prisma.notification.findMany({
+                where: {
+                    requestid: { in: requestIds },
+                    type: notification_type.MATCH,
+                    title: "Volunteer Response Confirmed",
                 },
-                isEligible: meta.isEligible !== undefined ? meta.isEligible : true,
-                requestId: n.requestid,
-                patientName: linkedReq?.patientname || "Emergency Patient",
-                requiredBloodGroup: linkedReq?.bloodgroup || "UNKNOWN",
-                unitsRequired: linkedReq?.unitsrequired || 1,
-                bloodComponent: linkedReq?.bloodcomponent || "WHOLE_BLOOD",
-                urgencyLevel: linkedReq?.urgencylevel || "HIGH",
-                hospitalName: linkedReq?.hospitals?.hospitalname || "Care Facility",
-                hospitalAddress: linkedReq?.hospitals?.address || "",
-                hospitalCity: linkedReq?.hospitals?.city || "",
-                requestStatus: linkedReq?.status || "DONOR_MATCHING",
-            };
-        });
+                include: {
+                    users: {
+                        select: {
+                            userid: true,
+                            name: true,
+                            phonenumber: true,
+                            email: true,
+                            donors: {
+                                select: {
+                                    donorid: true,
+                                    bloodgroup: true,
+                                    city: true,
+                                    state: true,
+                                    weight: true,
+                                    gender: true,
+                                    lastdonationdate: true,
+                                },
+                            },
+                        },
+                    },
+                },
+                orderBy: {
+                    sentat: "desc",
+                },
+            });
+
+            availableDonors = volunteerNotifications.map((n) => {
+                let meta: any = {};
+                const metaMatch = n.message.match(/<!--META:([\s\S]*?)-->/);
+                if (metaMatch && metaMatch[1]) {
+                    try {
+                        meta = JSON.parse(metaMatch[1]);
+                    } catch {
+                        // Fallback
+                    }
+                }
+
+                const linkedReq = n.requestid ? requestMap.get(n.requestid) : null;
+
+                return {
+                    notificationId: n.notificationid,
+                    donorId: meta.donorId || n.users?.donors?.donorid || n.users?.userid,
+                    donorUserId: n.users?.userid,
+                    donorName: meta.donorName || n.users?.name || "Voluntary Hero Donor",
+                    donorBloodGroup: meta.donorBloodGroup || n.users?.donors?.bloodgroup || "COMPATIBLE",
+                    donorCity: meta.donorCity || n.users?.donors?.city || "Registered Area",
+                    donorState: meta.donorState || n.users?.donors?.state || "",
+                    donorPhone: meta.donorPhone || n.users?.phonenumber || "",
+                    donorEmail: meta.donorEmail || n.users?.email || "",
+                    donorGender: n.users?.donors?.gender || "OTHER",
+                    donorWeight: n.users?.donors?.weight ? Number(n.users?.donors?.weight) : null,
+                    lastDonationDate: n.users?.donors?.lastdonationdate || null,
+                    respondedAt: n.sentat,
+                    status: meta.transitStatus || "DONOR_FOUND",
+                    transitStatus: meta.transitStatus || "DONOR_FOUND",
+                    startedAt: meta.startedAt || null,
+                    reachedAt: meta.reachedAt || null,
+                    completedAt: meta.completedAt || null,
+                    estimatedArrival: meta.estimatedArrival || "Within 1-2 hours",
+                    notes: meta.notes || "",
+                    screening: meta.screening || {
+                        drinksAlcohol: false,
+                        alcoholInPast24Hours: false,
+                        feelingHealthy: true,
+                        recentAntibioticsOrMedication: false,
+                        recentTattooOrSurgery: false,
+                        donatedInLast90Days: false,
+                        chronicIllness: false,
+                        alcoholClearance: "Passed (Screened & Cleared)",
+                        generalHealth: "Good / Symptom Free",
+                        cooldownPassed: true,
+                        eligibilityStatus: "ELIGIBLE",
+                    },
+                    isEligible: meta.isEligible !== undefined ? meta.isEligible : true,
+                    requestId: n.requestid,
+                    patientName: linkedReq?.patientname || "Emergency Patient",
+                    requiredBloodGroup: linkedReq?.bloodgroup || "UNKNOWN",
+                    unitsRequired: linkedReq?.unitsrequired || 1,
+                    bloodComponent: linkedReq?.bloodcomponent || "WHOLE_BLOOD",
+                    urgencyLevel: linkedReq?.urgencylevel || "HIGH",
+                    hospitalName: linkedReq?.hospitals?.hospitalname || "Care Facility",
+                    hospitalAddress: linkedReq?.hospitals?.address || "",
+                    hospitalCity: linkedReq?.hospitals?.city || "",
+                    requestStatus: linkedReq?.status || "DONOR_MATCHING",
+                };
+            });
+        }
 
         return res.status(200).json({
             success: true,
