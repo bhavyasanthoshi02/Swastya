@@ -23,25 +23,46 @@ export interface DonorProfile {
   quietHours: boolean;
 }
 
+export interface DonorCommitmentInfo {
+  deliveryId: string;
+  acceptanceStatus: "PENDING" | "ACCEPTED" | "REJECTED" | string;
+  acceptedAt?: string | null;
+  rejectedAt?: string | null;
+  transitStatus: "DONOR_FOUND" | "STARTED" | "REACHED_LOCATION" | "COMPLETED" | string;
+  startedAt?: string | null;
+  reachedAt?: string | null;
+  completedAt?: string | null;
+  receiptConfirmedAt?: string | null;
+  respondedAt?: string | null;
+}
+
 export interface RequestPreviewItem {
   id: string;
   rawId?: string;
   hospitalName: string;
   bloodGroup: string;
+  bloodComponent?: string;
   distance: string;
   distanceKm?: number | null;
   locationMatch?: "COORDINATES" | "CITY_FALLBACK" | "NONE";
   searchradius?: number;
   urgency: "Critical Emergency" | "Urgent" | "Standard";
+  urgencyLabel?: string;
+  isEmergency?: boolean;
   units: number;
   location: string;
+  wardOrRoom?: string;
   postedTime: string;
   caseDetails?: string;
   contactPerson?: string;
   contactPhone?: string;
   requiredWithin?: string;
+  requiredByDateTime?: string;
   patientAgeGroup?: string;
+  prescriptionStatus?: string;
+  requestStatus?: string;
   hasResponded?: boolean;
+  myCommitment?: DonorCommitmentInfo | null;
 }
 
 export interface RecentActivityItem {

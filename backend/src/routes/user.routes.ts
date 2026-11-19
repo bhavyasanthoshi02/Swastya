@@ -322,6 +322,9 @@ router.put("/:id", authenticate, async (req: Request, res: Response) => {
                     });
                 }
                 updateData.email = normalizedEmail;
+                if (!isAdmin) {
+                    updateData.emailverified = false;
+                }
             }
         }
 
@@ -335,20 +338,53 @@ router.put("/:id", authenticate, async (req: Request, res: Response) => {
                         message: `Invalid role. Allowed roles: ${validRoles.join(", ")}`,
                     });
                 }
+                if (targetId === authUser.userid && req.body.role !== "ADMIN") {
+                    return res.status(400).json({
+                        success: false,
+                        message: "Administrators cannot demote their own account",
+                    });
+                }
                 updateData.role = req.body.role;
             }
             if (req.body.isactive !== undefined) {
-                updateData.isactive = Boolean(req.body.isactive);
+                if (typeof req.body.isactive !== "boolean") {
+                    return res.status(400).json({
+                        success: false,
+                        message: "isactive must be a boolean",
+                    });
+                }
+                if (targetId === authUser.userid && req.body.isactive === false) {
+                    return res.status(400).json({
+                        success: false,
+                        message: "Administrators cannot deactivate their own account",
+                    });
+                }
+                updateData.isactive = req.body.isactive;
             }
             if (req.body.emailverified !== undefined) {
-                updateData.emailverified = Boolean(req.body.emailverified);
+                if (typeof req.body.emailverified !== "boolean") {
+                    return res.status(400).json({
+                        success: false,
+                        message: "emailverified must be a boolean",
+                    });
+                }
+                updateData.emailverified = req.body.emailverified;
             }
         }
 
-        const updatedUser = await prisma.users.update({
-            where: { userid: targetId },
-            data: updateData,
-            select: SAFE_USER_SELECT,
+        const updatedUser = await prisma.$transaction(async (tx) => {
+            const u = await tx.users.update({
+                where: { userid: targetId },
+                data: updateData,
+                select: SAFE_USER_SELECT,
+            });
+            if (updateData.isactive === false) {
+                await tx.donoractivationtokens.updateMany({
+                    where: { userid: targetId, usedat: null },
+                    data: { usedat: new Date() },
+                });
+            }
+            return u;
         });
 
         return res.status(200).json(updatedUser);
@@ -434,10 +470,16 @@ router.delete("/:id", authenticate, authorize("ADMIN"), async (req: Request, res
             dispositionCount > 0
         ) {
             // Relational and clinical data retention: deactivate account rather than destructive hard-delete
-            await prisma.users.update({
-                where: { userid: targetId },
-                data: { isactive: false },
-            });
+            await prisma.$transaction([
+                prisma.users.update({
+                    where: { userid: targetId },
+                    data: { isactive: false },
+                }),
+                prisma.donoractivationtokens.updateMany({
+                    where: { userid: targetId, usedat: null },
+                    data: { usedat: new Date() },
+                }),
+            ]);
 
             return res.status(200).json({
                 success: true,

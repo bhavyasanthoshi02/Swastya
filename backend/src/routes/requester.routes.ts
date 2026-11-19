@@ -182,6 +182,13 @@ router.get("/me/available-donors", authenticate, authorize("REQUESTER", "PATIENT
         const requester = await resolveOrCreateRequester(user);
         const filterRequestId = req.query.requestId as string | undefined;
 
+        if (filterRequestId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(filterRequestId)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid requestId format",
+            });
+        }
+
         // 1. Find all blood requests belonging to this requester
         const requestWhere: any = {
             OR: [
@@ -264,6 +271,7 @@ router.get("/me/available-donors", authenticate, authorize("REQUESTER", "PATIENT
                 const linkedReq = c.requestid ? requestMap.get(c.requestid) : null;
                 const donorUser = c.donors?.users;
                 const donorProfile = donorUser?.donors || c.donors;
+                const isRejectedOffer = (c.acceptancestatus || "PENDING") === "REJECTED";
 
                 return {
                     notificationId: c.notificationid || c.deliveryid,
@@ -274,12 +282,15 @@ router.get("/me/available-donors", authenticate, authorize("REQUESTER", "PATIENT
                     donorBloodGroup: meta.donorBloodGroup || donorProfile?.bloodgroup || "COMPATIBLE",
                     donorCity: meta.donorCity || donorProfile?.city || "Registered Area",
                     donorState: meta.donorState || donorProfile?.state || "",
-                    donorPhone: meta.donorPhone || donorUser?.phonenumber || "",
-                    donorEmail: meta.donorEmail || donorUser?.email || "",
-                    donorGender: donorProfile?.gender || "OTHER",
-                    donorWeight: donorProfile?.weight ? Number(donorProfile?.weight) : null,
-                    lastDonationDate: donorProfile?.lastdonationdate || null,
+                    donorPhone: isRejectedOffer ? "" : (meta.donorPhone || donorUser?.phonenumber || ""),
+                    donorEmail: isRejectedOffer ? "" : (meta.donorEmail || donorUser?.email || ""),
+                    donorGender: isRejectedOffer ? undefined : (donorProfile?.gender || "OTHER"),
+                    donorWeight: isRejectedOffer ? null : (donorProfile?.weight ? Number(donorProfile?.weight) : null),
+                    lastDonationDate: isRejectedOffer ? null : (donorProfile?.lastdonationdate || null),
                     respondedAt: c.respondedat || c.createdat,
+                    acceptanceStatus: c.acceptancestatus || "PENDING",
+                    acceptedAt: c.acceptedat || null,
+                    receiptConfirmedAt: c.receiptconfirmedat || null,
                     status: c.transitstatus || "DONOR_FOUND",
                     transitStatus: c.transitstatus || "DONOR_FOUND",
                     startedAt: c.startedat || null,

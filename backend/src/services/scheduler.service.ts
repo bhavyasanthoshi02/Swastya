@@ -453,7 +453,9 @@ export async function executeFollowUpJob(job: ClaimedSchedulerJob): Promise<{
     // 5. Response Adequacy check
     // Configurable policy: count confirmed pledges / active transit / accepted responses
     const confirmedDeliveries = request.broadcastdeliveries.filter(
-        (d) => d.response === "ACCEPTED" || ["IN_TRANSIT", "REACHED", "COMPLETED"].includes(d.transitstatus || "")
+        (d) =>
+            (d.acceptancestatus || "PENDING") !== "REJECTED" &&
+            (d.response === "ACCEPTED" || ["STARTED", "REACHED_LOCATION", "COMPLETED"].includes(d.transitstatus || ""))
     );
     const requiredUnits = request.unitsrequired || 1;
 
@@ -689,9 +691,9 @@ export async function processJob(job: ClaimedSchedulerJob) {
 
         const latestReq = typeof prisma.bloodrequests?.findUnique === "function"
             ? await prisma.bloodrequests.findUnique({
-                  where: { requestid: job.requestid },
-                  select: { status: true },
-              })
+                where: { requestid: job.requestid },
+                select: { status: true },
+            })
             : null;
 
         if (latestReq && ["FULFILLED", "CANCELLED", "EXPIRED", "BLOOD_ARRANGED"].includes(latestReq.status || "")) {

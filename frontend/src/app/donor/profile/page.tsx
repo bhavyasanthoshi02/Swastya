@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -8,15 +8,22 @@ import {
   Phone,
   Mail,
   MapPin,
-  Check,
+  CheckCircle2,
   Edit2,
   Save,
+  X,
   Droplet,
   Heart,
-  Loader2,
   AlertCircle,
   RefreshCw,
-  Navigation,
+  Compass,
+  User,
+  Lock,
+  Scale,
+  Calendar,
+  Activity,
+  Building,
+  ArrowRight,
 } from "lucide-react";
 import { DonorProfile } from "@/components/donor/DonorTypes";
 import { api } from "@/lib/api";
@@ -26,122 +33,200 @@ import {
   mapDisplayToBloodGroup,
 } from "@/lib/mappers";
 
+const BLOOD_GROUPS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
+
 export default function DonorProfilePage() {
   const [profile, setProfile] = useState<DonorProfile | null>(null);
+  const [rawWeight, setRawWeight] = useState<number | null>(null);
+  const [rawAddress, setRawAddress] = useState<string>("");
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [isDetectingLocation, setIsDetectingLocation] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [geoStatus, setGeoStatus] = useState<string | null>(null);
+  const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
 
-  // Editable Form state
   const [formData, setFormData] = useState({
     city: "",
     state: "",
     pincode: "",
     address: "",
     weight: "",
-    bloodGroup: "O+",
+    bloodGroup: "",
     latitude: "",
     longitude: "",
   });
 
-  const fetchProfile = async () => {
-    try {
-      setIsLoading(true);
-      setError(null);
-      const res = await api.donor.getProfile();
+  const hydrateFromDonor = useCallback((donor: any, eligibility: any, stats?: any) => {
+    const user = donor?.users;
+    const mapped = mapBackendDonorToProfile(donor, user, stats, eligibility);
+    setProfile(mapped);
 
-      if (res.success && res.donor) {
-        const user = (res.donor as any).users;
-        const mapped = mapBackendDonorToProfile(res.donor, user, undefined, res.eligibility);
-        setProfile(mapped);
+    const actualWeight =
+      donor?.weight !== undefined && donor?.weight !== null && !isNaN(Number(donor.weight))
+        ? Number(donor.weight)
+        : null;
+    const actualAddress =
+      donor?.address && donor.address !== "Not Provided" ? String(donor.address) : "";
+    const actualCity = donor?.city && donor.city !== "Not Provided" ? String(donor.city) : "";
+    const actualState = donor?.state && donor.state !== "Not Provided" ? String(donor.state) : "";
+    const actualPincode =
+      donor?.pincode && donor.pincode !== "000000" ? String(donor.pincode) : "";
 
-        setFormData({
-          city: res.donor.city || "",
-          state: res.donor.state || "",
-          pincode: res.donor.pincode || "",
-          address: res.donor.address || "",
-          weight: res.donor.weight ? String(res.donor.weight) : "65",
-          bloodGroup: mapBloodGroupToDisplay(res.donor.bloodgroup),
-          latitude:
-            res.donor.latitude !== undefined && res.donor.latitude !== null
-              ? String(res.donor.latitude)
-              : "",
-          longitude:
-            res.donor.longitude !== undefined && res.donor.longitude !== null
-              ? String(res.donor.longitude)
-              : "",
-        });
-      } else {
-        setError("Failed to load donor profile data.");
+    setRawWeight(actualWeight);
+    setRawAddress(actualAddress);
+
+    setFormData({
+      city: actualCity,
+      state: actualState,
+      pincode: actualPincode,
+      address: actualAddress,
+      weight: actualWeight !== null ? String(actualWeight) : "",
+      bloodGroup: mapBloodGroupToDisplay(donor?.bloodgroup),
+      latitude:
+        donor?.latitude !== undefined && donor?.latitude !== null ? String(donor.latitude) : "",
+      longitude:
+        donor?.longitude !== undefined && donor?.longitude !== null ? String(donor.longitude) : "",
+    });
+  }, []);
+
+  const fetchProfile = useCallback(
+    async (isInitial = false) => {
+      try {
+        if (isInitial) setIsLoading(true);
+        setError(null);
+        const res = await api.donor.getProfile();
+
+        if (res.success && res.donor) {
+          hydrateFromDonor(res.donor, res.eligibility, (res as any).stats);
+        } else {
+          setError("Failed to load donor profile data.");
+        }
+      } catch (err: unknown) {
+        setError(
+          err instanceof Error ? err.message : "Failed to connect to Swastya server."
+        );
+      } finally {
+        setIsLoading(false);
       }
-    } catch (err: any) {
-      setError(err?.message || "Failed to connect to Swastya server.");
-    } finally {
-      setIsLoading(false);
+    },
+    [hydrateFromDonor]
+  );
+
+  useEffect(() => {
+    fetchProfile(true);
+  }, [fetchProfile]);
+
+  const validateForm = (): boolean => {
+    const errors: Record<string, string> = {};
+
+    if (formData.pincode.trim() && !/^\d{6}$/.test(formData.pincode.trim())) {
+      errors.pincode = "PIN code must be a 6-digit number.";
     }
+
+    if (formData.weight.trim()) {
+      const w = parseFloat(formData.weight);
+      if (isNaN(w) || w <= 0 || w > 300) {
+        errors.weight = "Enter a valid weight in kg.";
+      }
+    }
+
+    if (formData.latitude.trim()) {
+      const lat = parseFloat(formData.latitude);
+      if (isNaN(lat) || lat < -90 || lat > 90) {
+        errors.latitude = "Latitude must be between -90 and 90.";
+      }
+    }
+
+    if (formData.longitude.trim()) {
+      const lng = parseFloat(formData.longitude);
+      if (isNaN(lng) || lng < -180 || lng > 180) {
+        errors.longitude = "Longitude must be between -180 and 180.";
+      }
+    }
+
+    setValidationErrors(errors);
+    return Object.keys(errors).length === 0;
   };
 
   const handleDetectLocation = () => {
     if (typeof window === "undefined" || !navigator.geolocation) {
-      setGeoStatus("Geolocation is not supported by your browser. Please enter coordinates manually.");
+      setGeoStatus("Geolocation is not supported by your browser.");
       return;
     }
-    setGeoStatus("Requesting browser GPS position...");
+    setIsDetectingLocation(true);
+    setGeoStatus(null);
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        const lat = pos.coords.latitude.toFixed(6);
-        const lng = pos.coords.longitude.toFixed(6);
         setFormData((prev) => ({
           ...prev,
-          latitude: lat,
-          longitude: lng,
+          latitude: pos.coords.latitude.toFixed(6),
+          longitude: pos.coords.longitude.toFixed(6),
         }));
-        setGeoStatus("GPS coordinates detected successfully!");
+        setIsDetectingLocation(false);
+        setGeoStatus("GPS coordinates detected.");
         setTimeout(() => setGeoStatus(null), 3500);
       },
-      (_geoErr) => {
-        setGeoStatus("Location access denied or unavailable. You can enter coordinates manually.");
+      () => {
+        setIsDetectingLocation(false);
+        setGeoStatus("Location access unavailable. You can enter coordinates manually.");
         setTimeout(() => setGeoStatus(null), 4000);
       },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
     );
   };
 
-  useEffect(() => {
-    fetchProfile();
-  }, []);
+  const handleCancel = () => {
+    if (profile) {
+      setFormData({
+        city: profile.city === "Not Provided" ? "" : profile.city || "",
+        state: profile.state === "Not Provided" ? "" : profile.state || "",
+        pincode: profile.pincode === "000000" ? "" : profile.pincode || "",
+        address: rawAddress,
+        weight: rawWeight !== null ? String(rawWeight) : "",
+        bloodGroup: profile.bloodGroup,
+        latitude:
+          typeof profile.latitude === "number" ? String(profile.latitude) : "",
+        longitude:
+          typeof profile.longitude === "number" ? String(profile.longitude) : "",
+      });
+    }
+    setValidationErrors({});
+    setError(null);
+    setGeoStatus(null);
+    setIsEditing(false);
+  };
 
-  const handleSave = async () => {
-    if (!profile) return;
+  const handleSave = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!profile || isSaving) return;
+
+    if (!validateForm()) return;
+
     setIsSaving(true);
     setError(null);
+    setSavedSuccess(false);
 
-    const updatePayload: any = {
-      city: formData.city.trim(),
-      state: formData.state.trim(),
-      pincode: formData.pincode.trim(),
+    const updatePayload: Record<string, unknown> = {
+      city: formData.city.trim() || undefined,
+      state: formData.state.trim() || undefined,
+      pincode: formData.pincode.trim() || undefined,
       address: formData.address.trim() || undefined,
     };
 
-    if (formData.weight) {
+    if (formData.weight.trim()) {
       const parsedWeight = parseFloat(formData.weight);
       if (!isNaN(parsedWeight) && parsedWeight > 0) {
         updatePayload.weight = parsedWeight;
       }
     }
 
-    if (formData.latitude !== "" && formData.longitude !== "") {
+    if (formData.latitude.trim() !== "" && formData.longitude.trim() !== "") {
       const lat = parseFloat(formData.latitude);
       const lng = parseFloat(formData.longitude);
       if (!isNaN(lat) && !isNaN(lng)) {
-        if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
-          setError("Latitude must be between -90 and 90, Longitude between -180 and 180.");
-          setIsSaving(false);
-          return;
-        }
         updatePayload.latitude = lat;
         updatePayload.longitude = lng;
       }
@@ -152,14 +237,12 @@ export default function DonorProfilePage() {
     }
 
     try {
-      const res = await api.donor.updateProfile(updatePayload);
+      const res = await api.donor.updateProfile(updatePayload as any);
       if (res.success && res.donor) {
-        const user = (res.donor as any).users;
-        const mapped = mapBackendDonorToProfile(res.donor, user, undefined, res.eligibility);
-        setProfile(mapped);
+        hydrateFromDonor(res.donor, res.eligibility, (res as any).stats);
         setIsEditing(false);
         setSavedSuccess(true);
-        setTimeout(() => setSavedSuccess(false), 3000);
+        setTimeout(() => setSavedSuccess(false), 5000);
 
         if (typeof window !== "undefined") {
           window.dispatchEvent(new Event("swastya-auth-change"));
@@ -167,162 +250,284 @@ export default function DonorProfilePage() {
       } else {
         setError(res.message || "Failed to update profile.");
       }
-    } catch (err: any) {
-      setError(err?.message || "Failed to save profile changes.");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to save profile changes.");
     } finally {
       setIsSaving(false);
     }
   };
 
-  if (isLoading) {
-    return (
-      <div className="py-24 flex flex-col items-center justify-center gap-3">
-        <Loader2 className="w-8 h-8 text-[#317786] animate-spin" />
-        <p className="text-xs text-slate-500 font-medium">Loading clinical donor profile...</p>
-      </div>
-    );
-  }
+  const hasValidCoords =
+    typeof profile?.latitude === "number" &&
+    typeof profile?.longitude === "number" &&
+    !isNaN(profile.latitude) &&
+    !isNaN(profile.longitude);
 
-  if (!profile) {
-    return (
-      <div className="p-8 max-w-lg mx-auto bg-white rounded-3xl border border-[#F3E9D1] text-center space-y-4 my-12">
-        <AlertCircle className="w-8 h-8 text-[#A2363A] mx-auto" />
-        <h2 className="font-serif text-lg font-bold text-[#053845]">Profile Not Found</h2>
-        <p className="text-xs text-slate-600">{error || "Could not retrieve donor profile."}</p>
-        <button
-          type="button"
-          onClick={fetchProfile}
-          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold text-white bg-[#317786] hover:bg-[#245964] transition-all cursor-pointer"
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-          <span>Retry</span>
-        </button>
-      </div>
-    );
-  }
+  const initials = profile?.name ? profile.name.slice(0, 2).toUpperCase() : "DN";
 
   return (
-    <div className="space-y-6 sm:space-y-8">
-      {/* Top Breadcrumb Header */}
-      <div className="flex items-center justify-between">
+    <div className="space-y-3.5 max-w-6xl mx-auto pb-4">
+      {/* Top Breadcrumb & Save Feedback */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <Link
           href="/donor/dashboard"
           className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#053845] hover:text-[#317786] transition-colors"
         >
-          <ArrowLeft className="w-4 h-4" />
+          <ArrowLeft className="w-3.5 h-3.5" />
           <span>Back to Donor Dashboard</span>
         </Link>
 
         {savedSuccess && (
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 animate-in fade-in">
-            <Check className="w-3.5 h-3.5 text-emerald-600" />
-            <span>Profile saved to database successfully!</span>
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+            <span>Profile updated successfully</span>
           </span>
         )}
       </div>
 
+      {/* 1. Compact Full-Width Profile Header */}
+      <header className="bg-white rounded-2xl border border-[#F3E9D1] px-5 py-3.5 shadow-2xs">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3.5 min-w-0">
+            <div className="w-12 h-12 rounded-xl bg-[#053845] text-white font-serif font-bold text-lg flex items-center justify-center shrink-0">
+              {initials}
+            </div>
+            <div className="min-w-0 space-y-0.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="font-serif text-xl sm:text-2xl font-bold text-[#053845] truncate">
+                  {profile?.name || "Donor Profile"}
+                </h1>
+                {profile && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">
+                    <ShieldCheck className="w-3 h-3 text-emerald-600" />
+                    <span>Verified Donor</span>
+                  </span>
+                )}
+              </div>
+              {profile && (
+                <p className="text-xs text-slate-500 font-mono">
+                  Swastya Donor ID: {profile.donorId}
+                </p>
+              )}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2.5 shrink-0 self-start sm:self-center">
+            {profile && (
+              <div className="px-3 py-1.5 rounded-xl bg-[#B94F30] text-white flex items-center gap-1.5 text-xs font-semibold shadow-2xs">
+                <Droplet className="w-3.5 h-3.5 fill-current" />
+                <span>Blood Group {profile.bloodGroup}</span>
+              </div>
+            )}
+
+            {!isEditing ? (
+              <button
+                type="button"
+                onClick={() => setIsEditing(true)}
+                disabled={isLoading || !profile}
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold text-[#053845] bg-[#FAF6EE] hover:bg-[#F3E9D1] border border-[#F3E9D1] transition-colors cursor-pointer disabled:opacity-50"
+              >
+                <Edit2 className="w-3.5 h-3.5 text-[#317786]" />
+                <span>Edit Profile</span>
+              </button>
+            ) : (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleCancel}
+                  disabled={isSaving}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-medium text-slate-600 bg-white border border-[#F3E9D1] hover:bg-[#FAF6EE] transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  <X className="w-3.5 h-3.5" />
+                  <span>Cancel</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleSave()}
+                  disabled={isSaving}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold text-white bg-[#317786] hover:bg-[#053845] transition-colors cursor-pointer shadow-2xs disabled:opacity-50"
+                >
+                  {isSaving ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Saving...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Save className="w-3.5 h-3.5" />
+                      <span>Save Changes</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </header>
+
+      {/* Error Alert */}
       {error && (
-        <div className="p-3.5 rounded-2xl bg-[#fdf2f2] border border-[#A2363A]/30 text-[#A2363A] text-xs font-semibold flex items-center gap-2">
-          <AlertCircle className="w-4 h-4 shrink-0" />
-          <span>{error}</span>
+        <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 flex items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2.5">
+            <AlertCircle className="w-4 h-4 text-[#A2363A] shrink-0" />
+            <span>{error}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => fetchProfile(true)}
+            className="px-3 py-1 rounded-lg text-xs font-semibold bg-white border border-rose-300 text-[#A2363A] hover:bg-rose-100 transition-colors cursor-pointer shrink-0"
+          >
+            Retry
+          </button>
         </div>
       )}
 
-      <div className="bg-white rounded-3xl border border-[#F3E9D1] p-6 sm:p-8 shadow-xs space-y-6 sm:space-y-8">
-        {/* Header Profile Identity Strip */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-5 pb-6 border-b border-slate-100">
-          <div className="flex items-center gap-4 sm:gap-5">
-            <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-[#053845] text-white font-serif font-bold text-2xl sm:text-3xl flex items-center justify-center shadow-sm">
-              {profile.name.slice(0, 2).toUpperCase()}
-            </div>
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <h1 className="font-serif text-2xl sm:text-3xl font-bold text-[#053845]">
-                  {profile.name}
-                </h1>
-                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                  <ShieldCheck className="w-3 h-3 text-emerald-600" />
-                  <span>Verified Donor</span>
-                </span>
-              </div>
-              <p className="text-xs text-slate-500 font-mono">
-                Swastya Donor ID: {profile.donorId}
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3 self-start sm:self-auto">
-            <div className="px-4 py-2 rounded-2xl bg-[#A2363A] text-white flex items-center gap-2 shadow-xs">
-              <Droplet className="w-4 h-4 fill-current" />
-              <span className="font-bold text-sm">Blood Group {profile.bloodGroup}</span>
-            </div>
-
-            <button
-              type="button"
-              disabled={isSaving}
-              onClick={() => {
-                if (isEditing) {
-                  handleSave();
-                } else {
-                  setIsEditing(true);
-                }
-              }}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold text-[#053845] bg-[#FAF6EE] hover:bg-[#F3E9D1] border border-[#F3E9D1] shadow-2xs transition-all cursor-pointer disabled:opacity-60"
-            >
-              {isSaving ? (
-                <>
-                  <Loader2 className="w-3.5 h-3.5 text-[#317786] animate-spin" />
-                  <span>Saving...</span>
-                </>
-              ) : isEditing ? (
-                <>
-                  <Save className="w-3.5 h-3.5 text-[#317786]" />
-                  <span>Save Changes</span>
-                </>
-              ) : (
-                <>
-                  <Edit2 className="w-3.5 h-3.5 text-[#317786]" />
-                  <span>Edit Profile</span>
-                </>
-              )}
-            </button>
-          </div>
+      {/* Loading Skeleton */}
+      {isLoading && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 animate-pulse">
+          <div className="lg:col-span-6 h-72 rounded-2xl bg-white border border-[#F3E9D1]" />
+          <div className="lg:col-span-6 h-72 rounded-2xl bg-white border border-[#F3E9D1]" />
         </div>
+      )}
 
-        {/* 2 Column Details Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 lg:gap-8">
-          {/* Column 1: Contact & Geographic Location Details */}
-          <div className="space-y-4">
-            <h2 className="font-serif text-lg font-bold text-[#053845] flex items-center gap-2">
-              <Phone className="w-4 h-4 text-[#317786]" />
-              <span>Contact &amp; Location Details</span>
-            </h2>
-
-            <div className="p-5 rounded-2xl bg-[#FAF6EE]/50 border border-[#F3E9D1] space-y-4 text-xs">
-              <div>
-                <label className="text-slate-500 font-medium block mb-1">Full Legal Name</label>
-                <span className="font-bold text-[#053845] text-sm">{profile.name}</span>
+      {/* 2. Balanced Two-Column Card Layout */}
+      {!isLoading && profile && (
+        <form onSubmit={handleSave} className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch">
+          {/* Left Column: Personal & Contact Details */}
+          <section className="lg:col-span-6 bg-white rounded-2xl border border-[#F3E9D1] p-4 sm:p-5 shadow-2xs flex flex-col justify-between space-y-3.5">
+            <div className="space-y-3.5">
+              <div className="flex items-center justify-between pb-2.5 border-b border-[#F3E9D1]/70">
+                <div className="flex items-center gap-2">
+                  <User className="w-4 h-4 text-[#317786]" />
+                  <h2 className="font-serif text-base font-bold text-[#053845]">
+                    Personal &amp; Contact Details
+                  </h2>
+                </div>
+                {isEditing && (
+                  <button
+                    type="button"
+                    onClick={handleDetectLocation}
+                    disabled={isDetectingLocation}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-[#317786] bg-[#317786]/10 hover:bg-[#317786]/20 transition-colors cursor-pointer"
+                  >
+                    <Compass
+                      className={`w-3.5 h-3.5 ${isDetectingLocation ? "animate-spin" : ""}`}
+                    />
+                    <span>{isDetectingLocation ? "Detecting..." : "Detect GPS"}</span>
+                  </button>
+                )}
               </div>
 
-              <div>
-                <label className="text-slate-500 font-medium block mb-1 flex items-center gap-1">
-                  <Phone className="w-3 h-3 text-slate-400" />
-                  <span>Phone Number</span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* Full Legal Name */}
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-[#053845]">Full Legal Name</label>
+                  <p className="text-sm font-semibold text-[#053845] py-1.5 px-3 bg-[#FAF6EE]/60 rounded-xl truncate">
+                    {profile.name}
+                  </p>
+                </div>
+
+                {/* Email Address (Read-Only) */}
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between gap-1">
+                    <label className="text-xs font-semibold text-[#053845] flex items-center gap-1">
+                      <Mail className="w-3 h-3 text-[#317786]" />
+                      <span>Email Address</span>
+                    </label>
+                    <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-slate-500">
+                      <Lock className="w-2.5 h-2.5" />
+                      <span>Read-Only</span>
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-slate-50 rounded-xl border border-slate-200/80">
+                    <span className="text-xs text-slate-700 font-medium truncate">
+                      {profile.email || "Not provided"}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Phone Number */}
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-[#053845] flex items-center gap-1">
+                    <Phone className="w-3 h-3 text-[#317786]" />
+                    <span>Phone Number</span>
+                  </label>
+                  <p className="text-sm font-semibold text-[#053845] py-1.5 px-3 bg-[#FAF6EE]/60 rounded-xl font-mono">
+                    {profile.phone || (
+                      <span className="text-slate-400 font-sans font-normal text-xs">
+                        Not provided
+                      </span>
+                    )}
+                  </p>
+                </div>
+
+                {/* Weight */}
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-[#053845] flex items-center gap-1">
+                    <Scale className="w-3 h-3 text-[#317786]" />
+                    <span>Weight (kg)</span>
+                  </label>
+                  {isEditing ? (
+                    <div>
+                      <input
+                        type="number"
+                        step="0.5"
+                        min="30"
+                        max="250"
+                        value={formData.weight}
+                        onChange={(e) => setFormData({ ...formData, weight: e.target.value })}
+                        placeholder="e.g. 68"
+                        className={`w-full h-9 px-3 rounded-xl text-xs sm:text-sm border transition-colors focus:outline-none ${
+                          validationErrors.weight
+                            ? "border-[#A2363A] bg-rose-50/30"
+                            : "border-[#F3E9D1] focus:border-[#317786] bg-white"
+                        }`}
+                      />
+                      {validationErrors.weight && (
+                        <p className="text-[11px] text-[#A2363A] mt-0.5">
+                          {validationErrors.weight}
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-sm font-semibold text-[#053845] py-1.5 px-3 bg-[#FAF6EE]/60 rounded-xl">
+                      {rawWeight !== null ? (
+                        `${rawWeight} kg`
+                      ) : (
+                        <span className="text-slate-400 font-normal text-xs">Not recorded</span>
+                      )}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Street / Area Address */}
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-[#053845] flex items-center gap-1">
+                  <Building className="w-3 h-3 text-[#317786]" />
+                  <span>Street / Residential Address</span>
                 </label>
-                <span className="font-mono font-semibold text-[#053845]">{profile.phone}</span>
+                {isEditing ? (
+                  <input
+                    type="text"
+                    value={formData.address}
+                    onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+                    maxLength={255}
+                    placeholder="Area, street or locality"
+                    className="w-full h-9 px-3 rounded-xl text-xs sm:text-sm border border-[#F3E9D1] focus:border-[#317786] bg-white transition-colors focus:outline-none"
+                  />
+                ) : (
+                  <p className="text-xs sm:text-sm text-[#053845] py-1.5 px-3 bg-[#FAF6EE]/60 rounded-xl truncate">
+                    {rawAddress || <span className="text-slate-400">Not provided</span>}
+                  </p>
+                )}
               </div>
 
-              <div>
-                <label className="text-slate-500 font-medium block mb-1 flex items-center gap-1">
-                  <Mail className="w-3 h-3 text-slate-400" />
-                  <span>Email Address</span>
-                </label>
-                <span className="font-mono font-semibold text-[#053845]">{profile.email}</span>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3 pt-1 border-t border-[#F3E9D1]/60">
-                <div>
-                  <label className="text-slate-500 font-medium block mb-1 flex items-center gap-1">
+              {/* City, State, PIN Code in One Compact Row */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-[#053845] flex items-center gap-1">
                     <MapPin className="w-3 h-3 text-[#B94F30]" />
                     <span>City</span>
                   </label>
@@ -331,191 +536,307 @@ export default function DonorProfilePage() {
                       type="text"
                       value={formData.city}
                       onChange={(e) => setFormData({ ...formData, city: e.target.value })}
-                      className="w-full px-3 py-2 rounded-xl border border-[#F3E9D1] bg-white text-xs font-semibold text-[#053845] focus:outline-none focus:border-[#317786]"
+                      maxLength={100}
+                      className="w-full h-9 px-3 rounded-xl text-xs sm:text-sm border border-[#F3E9D1] focus:border-[#317786] bg-white focus:outline-none"
                     />
                   ) : (
-                    <span className="font-semibold text-[#053845]">{profile.city}</span>
+                    <p className="text-xs sm:text-sm font-semibold text-[#053845] py-1.5 px-3 bg-[#FAF6EE]/60 rounded-xl truncate">
+                      {profile.city && profile.city !== "Not Provided" ? (
+                        profile.city
+                      ) : (
+                        <span className="text-slate-400 font-normal">Not provided</span>
+                      )}
+                    </p>
                   )}
                 </div>
 
-                <div>
-                  <label className="text-slate-500 font-medium block mb-1">State</label>
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-[#053845]">State</label>
                   {isEditing ? (
                     <input
                       type="text"
                       value={formData.state}
                       onChange={(e) => setFormData({ ...formData, state: e.target.value })}
-                      className="w-full px-3 py-2 rounded-xl border border-[#F3E9D1] bg-white text-xs font-semibold text-[#053845] focus:outline-none focus:border-[#317786]"
+                      maxLength={100}
+                      className="w-full h-9 px-3 rounded-xl text-xs sm:text-sm border border-[#F3E9D1] focus:border-[#317786] bg-white focus:outline-none"
                     />
                   ) : (
-                    <span className="font-semibold text-[#053845]">{profile.state || "Karnataka"}</span>
+                    <p className="text-xs sm:text-sm font-semibold text-[#053845] py-1.5 px-3 bg-[#FAF6EE]/60 rounded-xl truncate">
+                      {profile.state && profile.state !== "Not Provided" ? (
+                        profile.state
+                      ) : (
+                        <span className="text-slate-400 font-normal">Not provided</span>
+                      )}
+                    </p>
+                  )}
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-[#053845]">PIN Code</label>
+                  {isEditing ? (
+                    <div>
+                      <input
+                        type="text"
+                        value={formData.pincode}
+                        onChange={(e) => setFormData({ ...formData, pincode: e.target.value })}
+                        maxLength={6}
+                        className={`w-full h-9 px-3 rounded-xl text-xs sm:text-sm border focus:outline-none ${
+                          validationErrors.pincode
+                            ? "border-[#A2363A] bg-rose-50/30"
+                            : "border-[#F3E9D1] focus:border-[#317786] bg-white"
+                        }`}
+                      />
+                      {validationErrors.pincode && (
+                        <p className="text-[11px] text-[#A2363A] mt-0.5">
+                          {validationErrors.pincode}
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-xs sm:text-sm font-semibold text-[#053845] py-1.5 px-3 bg-[#FAF6EE]/60 rounded-xl font-mono">
+                      {profile.pincode && profile.pincode !== "000000" ? (
+                        profile.pincode
+                      ) : (
+                        <span className="text-slate-400 font-sans font-normal">Not provided</span>
+                      )}
+                    </p>
                   )}
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-slate-500 font-medium block mb-1">Area PIN Code</label>
-                  {isEditing ? (
-                    <input
-                      type="text"
-                      value={formData.pincode}
-                      onChange={(e) => setFormData({ ...formData, pincode: e.target.value })}
-                      className="w-full px-3 py-2 rounded-xl border border-[#F3E9D1] bg-white text-xs font-semibold text-[#053845] focus:outline-none focus:border-[#317786]"
-                    />
-                  ) : (
-                    <span className="font-semibold text-[#053845]">{profile.pincode || "560001"}</span>
-                  )}
-                </div>
-
-                <div>
-                  <label className="text-slate-500 font-medium block mb-1">Weight (kg)</label>
-                  {isEditing ? (
-                    <input
-                      type="number"
-                      value={formData.weight}
-                      onChange={(e) => setFormData({ ...formData, weight: e.target.value })}
-                      className="w-full px-3 py-2 rounded-xl border border-[#F3E9D1] bg-white text-xs font-semibold text-[#053845] focus:outline-none focus:border-[#317786]"
-                    />
-                  ) : (
-                    <span className="font-semibold text-[#053845]">{formData.weight} kg</span>
-                  )}
-                </div>
-              </div>
-
-              {/* Geographic Coordinates for Matching */}
-              <div className="pt-3 border-t border-[#F3E9D1]/60 space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-slate-600 font-bold flex items-center gap-1.5">
-                    <Navigation className="w-3.5 h-3.5 text-[#317786]" />
+              {/* Matching Coordinates */}
+              <div className="pt-2.5 border-t border-[#F3E9D1]/60 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold text-[#053845] inline-flex items-center gap-1.5">
+                    <Compass className="w-3.5 h-3.5 text-[#317786]" />
                     <span>Location-Aware Matching Coordinates</span>
-                  </label>
-                  {isEditing && (
-                    <button
-                      type="button"
-                      onClick={handleDetectLocation}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#317786]/10 text-[#317786] hover:bg-[#317786]/20 text-[11px] font-semibold transition-colors cursor-pointer"
-                    >
-                      <Navigation className="w-3 h-3" />
-                      <span>Use Current Location</span>
-                    </button>
+                  </span>
+                  {geoStatus && (
+                    <span className="text-[11px] text-[#317786] font-medium">{geoStatus}</span>
                   )}
                 </div>
-
-                {geoStatus && (
-                  <p className="text-[11px] text-[#317786] font-medium animate-in fade-in">
-                    {geoStatus}
-                  </p>
-                )}
 
                 {isEditing ? (
-                  <div className="grid grid-cols-2 gap-3 pt-1">
+                  <div className="grid grid-cols-2 gap-2.5">
                     <div>
-                      <label className="text-[10px] uppercase font-bold text-slate-400 block mb-0.5">
-                        Latitude (-90 to 90)
+                      <label className="text-[10px] font-semibold uppercase text-slate-400 block mb-0.5">
+                        Latitude
                       </label>
                       <input
                         type="text"
-                        placeholder="e.g. 12.9716"
                         value={formData.latitude}
                         onChange={(e) => setFormData({ ...formData, latitude: e.target.value })}
-                        className="w-full px-3 py-2 rounded-xl border border-[#F3E9D1] bg-white text-xs font-mono text-[#053845] focus:outline-none focus:border-[#317786]"
+                        placeholder="e.g. 17.3850"
+                        className={`w-full h-8 px-2.5 rounded-lg text-xs font-mono border focus:outline-none ${
+                          validationErrors.latitude
+                            ? "border-[#A2363A]"
+                            : "border-[#F3E9D1] focus:border-[#317786]"
+                        }`}
                       />
+                      {validationErrors.latitude && (
+                        <p className="text-[10px] text-[#A2363A] mt-0.5">
+                          {validationErrors.latitude}
+                        </p>
+                      )}
                     </div>
                     <div>
-                      <label className="text-[10px] uppercase font-bold text-slate-400 block mb-0.5">
-                        Longitude (-180 to 180)
+                      <label className="text-[10px] font-semibold uppercase text-slate-400 block mb-0.5">
+                        Longitude
                       </label>
                       <input
                         type="text"
-                        placeholder="e.g. 77.5946"
                         value={formData.longitude}
                         onChange={(e) => setFormData({ ...formData, longitude: e.target.value })}
-                        className="w-full px-3 py-2 rounded-xl border border-[#F3E9D1] bg-white text-xs font-mono text-[#053845] focus:outline-none focus:border-[#317786]"
+                        placeholder="e.g. 78.4867"
+                        className={`w-full h-8 px-2.5 rounded-lg text-xs font-mono border focus:outline-none ${
+                          validationErrors.longitude
+                            ? "border-[#A2363A]"
+                            : "border-[#F3E9D1] focus:border-[#317786]"
+                        }`}
                       />
-                    </div>
-                  </div>
-                ) : (
-                  <div className="p-3 rounded-xl bg-white border border-[#F3E9D1] flex items-center justify-between">
-                    <div>
-                      {profile.latitude !== undefined && profile.longitude !== undefined ? (
-                        <div className="space-y-0.5">
-                          <span className="font-semibold text-[#053845] text-xs flex items-center gap-1.5">
-                            <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                            <span>GPS Enabled for Radius Matching</span>
-                          </span>
-                          <span className="text-[11px] text-slate-400 font-mono block">
-                            Confidential coordinates saved securely (~{Number(profile.latitude).toFixed(4)}°, ~{Number(profile.longitude).toFixed(4)}°)
-                          </span>
-                        </div>
-                      ) : (
-                        <div className="space-y-0.5">
-                          <span className="font-semibold text-amber-700 text-xs flex items-center gap-1.5">
-                            <span className="w-2 h-2 rounded-full bg-amber-500" />
-                            <span>City Fallback Matching Only</span>
-                          </span>
-                          <span className="text-[11px] text-slate-400 block">
-                            Exact coordinates not set. Matches will use {profile.city || "your city"}.
-                          </span>
-                        </div>
+                      {validationErrors.longitude && (
+                        <p className="text-[10px] text-[#A2363A] mt-0.5">
+                          {validationErrors.longitude}
+                        </p>
                       )}
                     </div>
                   </div>
+                ) : (
+                  <div className="px-3 py-2 rounded-xl bg-[#FAF6EE]/60 border border-[#F3E9D1] text-xs">
+                    {hasValidCoords ? (
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="font-semibold text-[#053845] inline-flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                          <span>GPS Enabled for Radius Matching</span>
+                        </span>
+                        <span className="text-[11px] text-slate-500 font-mono">
+                          ~{Number(profile.latitude).toFixed(4)}&deg;, ~
+                          {Number(profile.longitude).toFixed(4)}&deg;
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="font-semibold text-amber-800 inline-flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-amber-500" />
+                          <span>City Fallback Matching</span>
+                        </span>
+                        <span className="text-[11px] text-slate-500">
+                          Uses {profile.city || "your city"} for matching
+                        </span>
+                      </div>
+                    )}
+                  </div>
                 )}
-
-                <p className="text-[10px] text-slate-400 leading-tight">
-                  Privacy notice: Your exact coordinates are confidential, never exposed publicly, and strictly used on the server to compute proximity distance to emergency requisitions.
-                </p>
               </div>
             </div>
-          </div>
 
-          {/* Column 2: Clinical Coordination & Readiness Status */}
-          <div className="space-y-4">
-            <h2 className="font-serif text-lg font-bold text-[#053845] flex items-center gap-2">
-              <Heart className="w-4 h-4 text-[#A2363A]" />
-              <span>Transfusion &amp; Coordination Profile</span>
-            </h2>
+            <p className="text-[11px] text-slate-400 pt-2 border-t border-[#F3E9D1]/60">
+              Coordinates stay confidential and are used only on the server to compute matching distance.
+            </p>
+          </section>
 
-            <div className="p-5 rounded-2xl bg-[#FAF6EE]/50 border border-[#F3E9D1] space-y-4 text-xs">
-              <div className="flex items-center justify-between pb-3 border-b border-[#F3E9D1]/70">
-                <span className="text-slate-500 font-medium">ABO / Rh Phenotype</span>
-                <span className="font-bold text-[#A2363A] text-sm">
-                  {profile.bloodGroup}
-                </span>
+          {/* Right Column: Donor Coordination Profile */}
+          <section className="lg:col-span-6 bg-white rounded-2xl border border-[#F3E9D1] p-4 sm:p-5 shadow-2xs flex flex-col justify-between space-y-4">
+            <div className="space-y-3.5">
+              <div className="flex items-center justify-between pb-2.5 border-b border-[#F3E9D1]/70">
+                <div className="flex items-center gap-2">
+                  <Heart className="w-4 h-4 text-[#B94F30]" />
+                  <h2 className="font-serif text-base font-bold text-[#053845]">
+                    Donor Coordination Profile
+                  </h2>
+                </div>
+                <span className="text-[11px] font-mono text-slate-400">{profile.donorId}</span>
               </div>
 
-              <div className="flex items-center justify-between pb-3 border-b border-[#F3E9D1]/70">
-                <span className="text-slate-500 font-medium">Current Availability Status</span>
-                <span className="font-bold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
-                  {profile.availability}
-                </span>
-              </div>
+              <dl className="divide-y divide-[#F3E9D1]/70 text-xs">
+                {/* ABO / Rh Blood Group */}
+                <div className="py-2.5 flex items-center justify-between gap-3">
+                  <dt className="text-slate-600 font-medium inline-flex items-center gap-1.5">
+                    <Droplet className="w-3.5 h-3.5 text-[#B94F30]" />
+                    <span>ABO / Rh Blood Group</span>
+                  </dt>
+                  <dd>
+                    {isEditing ? (
+                      <select
+                        value={formData.bloodGroup}
+                        onChange={(e) => setFormData({ ...formData, bloodGroup: e.target.value })}
+                        className="h-8 px-2.5 rounded-lg border border-[#F3E9D1] bg-white text-xs font-bold text-[#053845] focus:outline-none focus:border-[#317786]"
+                      >
+                        {BLOOD_GROUPS.map((bg) => (
+                          <option key={bg} value={bg}>
+                            {bg}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span className="font-serif text-sm font-bold text-[#B94F30]">
+                        {profile.bloodGroup}
+                      </span>
+                    )}
+                  </dd>
+                </div>
 
-              <div className="flex items-center justify-between pb-3 border-b border-[#F3E9D1]/70">
-                <span className="text-slate-500 font-medium">Clinical Eligibility</span>
-                <span className="font-bold text-emerald-700">
-                  {profile.eligibility}
-                </span>
-              </div>
+                {/* Current Availability Status */}
+                <div className="py-2.5 flex items-center justify-between gap-3">
+                  <dt className="text-slate-600 font-medium inline-flex items-center gap-1.5">
+                    <Activity className="w-3.5 h-3.5 text-[#317786]" />
+                    <span>Current Availability Status</span>
+                  </dt>
+                  <dd>
+                    <span
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${
+                        profile.availability === "Available"
+                          ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                          : "bg-amber-50 text-amber-800 border-amber-200"
+                      }`}
+                    >
+                      <span
+                        className={`w-1.5 h-1.5 rounded-full ${
+                          profile.availability === "Available" ? "bg-emerald-500" : "bg-amber-500"
+                        }`}
+                      />
+                      <span>{profile.availability}</span>
+                    </span>
+                  </dd>
+                </div>
 
-              <div className="flex items-center justify-between pb-3 border-b border-[#F3E9D1]/70">
-                <span className="text-slate-500 font-medium">Last Donation Date</span>
-                <span className="font-bold text-[#053845]">
-                  {profile.lastDonationDate}
-                </span>
-              </div>
+                {/* Clinical Eligibility */}
+                <div className="py-2.5 flex items-center justify-between gap-3">
+                  <dt className="text-slate-600 font-medium inline-flex items-center gap-1.5">
+                    <ShieldCheck className="w-3.5 h-3.5 text-[#317786]" />
+                    <span>Clinical Eligibility</span>
+                  </dt>
+                  <dd>
+                    <span
+                      className={`font-semibold ${
+                        profile.eligibility === "Eligible"
+                          ? "text-emerald-700"
+                          : profile.eligibility === "Cooldown"
+                          ? "text-amber-700"
+                          : "text-[#A2363A]"
+                      }`}
+                    >
+                      {profile.eligibility}
+                    </span>
+                  </dd>
+                </div>
 
-              <div className="flex items-center justify-between">
-                <span className="text-slate-500 font-medium">Total Lifetime Donations</span>
-                <span className="font-bold text-[#053845]">
-                  {profile.totalDonations} Completed Donations
-                </span>
-              </div>
+                {/* Last Donation Date */}
+                <div className="py-2.5 flex items-center justify-between gap-3">
+                  <dt className="text-slate-600 font-medium inline-flex items-center gap-1.5">
+                    <Calendar className="w-3.5 h-3.5 text-[#317786]" />
+                    <span>Last Donation Date</span>
+                  </dt>
+                  <dd className="font-semibold text-[#053845]">{profile.lastDonationDate}</dd>
+                </div>
+
+                {/* Total Lifetime Verified Donations */}
+                <div className="py-2.5 flex items-center justify-between gap-3">
+                  <dt className="text-slate-600 font-medium inline-flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-[#317786]" />
+                    <span>Total Lifetime Verified Donations</span>
+                  </dt>
+                  <dd className="font-semibold text-[#053845]">
+                    {profile.totalDonations}{" "}
+                    {profile.totalDonations === 1 ? "Verified Donation" : "Verified Donations"}
+                  </dd>
+                </div>
+
+                {/* Coverage Radius */}
+                <div className="py-2.5 flex items-center justify-between gap-3">
+                  <dt className="text-slate-600 font-medium inline-flex items-center gap-1.5">
+                    <MapPin className="w-3.5 h-3.5 text-[#317786]" />
+                    <span>Coordination Area</span>
+                  </dt>
+                  <dd className="font-semibold text-[#053845] text-right truncate max-w-[200px]">
+                    {profile.location && profile.location !== "Not Provided"
+                      ? profile.location
+                      : "Not specified"}
+                  </dd>
+                </div>
+              </dl>
             </div>
-          </div>
-        </div>
-      </div>
+
+            {/* Compact Footer Actions */}
+            <div className="pt-3 border-t border-[#F3E9D1]/70 flex flex-wrap items-center justify-between gap-2 text-xs">
+              <Link
+                href="/donor/settings"
+                className="inline-flex items-center gap-1 font-semibold text-[#317786] hover:text-[#053845] transition-colors"
+              >
+                <span>Availability Settings</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </Link>
+              <Link
+                href="/donor/history"
+                className="inline-flex items-center gap-1 font-semibold text-[#317786] hover:text-[#053845] transition-colors"
+              >
+                <span>View Donation History</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </Link>
+            </div>
+          </section>
+        </form>
+      )}
     </div>
   );
 }

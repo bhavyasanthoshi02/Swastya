@@ -467,23 +467,42 @@ export class DonorImportService {
                 });
             }
 
-            if (existingUser && existingUser.donors) {
-                // Existing account found: verify authorization & safety
-                const existingPhone = existingUser.phonenumber?.trim();
-                const phoneMatches = !phone || !existingPhone || phone === existingPhone;
+            if (existingUser && !existingUser.donors) {
+                // Email/phone belongs to an existing non-donor user: flag conflict without leaking role or PII
+                conflicts.push({
+                    rowNumber,
+                    name,
+                    email,
+                    phone,
+                    reason: "This email or phone is already associated with an existing account and cannot be imported as a donor.",
+                });
+                invalidRows.push({
+                    rowNumber,
+                    name,
+                    email,
+                    phone,
+                    errors: ["Identity conflict: identifier is already registered on Swastya."],
+                });
+            } else if (existingUser && existingUser.donors) {
+                // Existing donor account found: require BOTH non-empty email AND non-empty phone to match strictly
+                const existingPhone = existingUser.phonenumber?.trim() || "";
+                const existingEmail = existingUser.email?.trim().toLowerCase() || "";
+                const bothMatch =
+                    Boolean(email) &&
+                    Boolean(phone) &&
+                    email === existingEmail &&
+                    phone === existingPhone;
 
-                if (phoneMatches) {
-                    // Safe linking: verified email + matching phone
+                if (bothMatch) {
+                    // Safe linking without leaking any global donor fields not already provided by the hospital
                     toLink.push({
                         rowNumber,
-                        userId: existingUser.userid,
-                        donorId: existingUser.donors.donorid,
-                        name: existingUser.name,
-                        email: existingUser.email,
-                        phone: existingUser.phonenumber || phone,
-                        bloodGroup: existingUser.donors.bloodgroup,
+                        name,
+                        email,
+                        phone,
+                        bloodGroup,
                         action: "LINK_EXISTING_ACCOUNT",
-                        message: "Existing Swastya donor account verified. Will be linked to your registry.",
+                        message: "Existing Swastya donor verified via matching email and phone. Will be linked to your registry.",
                     });
                     validRows.push({
                         rowNumber,
@@ -492,24 +511,22 @@ export class DonorImportService {
                         email,
                         phone,
                         bloodGroup,
-                        donorId: existingUser.donors.donorid,
                     });
                 } else {
-                    // Ambiguous / conflict: same email but conflicting phone number
+                    // Ambiguous / conflict: do NOT expose existingPhone or other global PII
                     conflicts.push({
                         rowNumber,
                         name,
                         email,
                         phone,
-                        existingPhone,
-                        reason: "Email matches existing account but phone number differs. Manual verification required.",
+                        reason: "An existing account matches partially; both exact email and phone number are required to link.",
                     });
                     invalidRows.push({
                         rowNumber,
                         name,
                         email,
                         phone,
-                        errors: ["Identity conflict: Email exists with different phone number. Cannot merge automatically."],
+                        errors: ["Identity conflict: both exact email and phone number are required to link an existing account."],
                     });
                 }
             } else {

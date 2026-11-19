@@ -31,16 +31,22 @@ const formatBloodGroup = (bg: string): string => {
     return map[bg] || bg;
 };
 
-// Helper to extract authenticated user without rejecting unauthenticated public requests
-const extractOptionalUser = (req: Request): { userid: string; role: string } | null => {
+// Helper to extract authenticated user without rejecting unauthenticated public requests (verifies DB isactive + live role)
+const extractOptionalUser = async (req: Request): Promise<{ userid: string; role: string } | null> => {
     try {
         const authHeader = req.headers.authorization;
         if (authHeader && authHeader.startsWith("Bearer ")) {
             const token = authHeader.split(" ")[1];
             if (token && token.trim() !== "") {
                 const secret = getJwtSecret();
-                const decoded = jwt.verify(token, secret);
-                return decoded as { userid: string; role: string };
+                const decoded = jwt.verify(token, secret, { algorithms: ["HS256"] }) as { userid?: string };
+                if (!decoded?.userid || !UUID_REGEX.test(decoded.userid)) return null;
+                const dbUser = await prisma.users.findUnique({
+                    where: { userid: decoded.userid },
+                    select: { userid: true, role: true, isactive: true },
+                });
+                if (!dbUser || !dbUser.isactive) return null;
+                return { userid: dbUser.userid, role: dbUser.role };
             }
         }
     } catch {
@@ -52,11 +58,12 @@ const extractOptionalUser = (req: Request): { userid: string; role: string } | n
 /*
  * GET ALL HOSPITALS (PUBLIC DIRECTORY)
  * GET /hospitals
- * Returns public facility directory projection. Never leaks user passwords or private tokens.
+ * Returns public facility directory projection (APPROVED facilities only). Never leaks user passwords or private tokens.
  */
 router.get("/", async (_req: Request, res: Response) => {
     try {
         const hospitals = await prisma.hospitals.findMany({
+            where: { approvalstatus: "APPROVED" },
             select: {
                 hospitalid: true,
                 hospitalname: true,
@@ -387,7 +394,7 @@ router.get(
  * GET AUTHENTICATED HOSPITAL BLOOD REQUESTS
  * GET /hospitals/me/bloodrequests
  */
-router.get("/me/bloodrequests", authenticate, authorize("HOSPITAL", "ADMIN"), async (req: Request, res: Response) => {
+router.get("/me/bloodrequests", authenticate, authorize("HOSPITAL", "ADMIN"), requireApprovedHospital, async (req: Request, res: Response) => {
     try {
         const user = (req as any).user;
 
@@ -674,6 +681,7 @@ router.get(
     authenticate,
     authorize("HOSPITAL", "ADMIN"),
     checkHospitalOwnership,
+    requireApprovedHospital,
     async (req: Request, res: Response) => {
         try {
             const hospitalId = req.params.hospitalId as string;
@@ -801,7 +809,7 @@ router.get("/:id", async (req: Request, res: Response) => {
             });
         }
 
-        const optionalUser = extractOptionalUser(req);
+        const optionalUser = await extractOptionalUser(req);
 
         // Security boundary: If caller is authenticated as a HOSPITAL, prevent accessing another hospital's private record
         if (optionalUser && optionalUser.role === "HOSPITAL" && hospital.userid !== optionalUser.userid) {
@@ -1208,6 +1216,7 @@ router.get(
     "/me/donors",
     authenticate,
     authorize("HOSPITAL", "ADMIN"),
+    requireApprovedHospital,
     async (req: Request, res: Response) => {
         try {
             const user = (req as any).user;
@@ -1383,6 +1392,7 @@ router.get(
     "/me/donors/:donorId",
     authenticate,
     authorize("HOSPITAL", "ADMIN"),
+    requireApprovedHospital,
     async (req: Request, res: Response) => {
         try {
             const user = (req as any).user;

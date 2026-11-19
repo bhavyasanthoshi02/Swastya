@@ -135,13 +135,12 @@ export function DonorTopNav({
     setIsNotificationsOpen(false);
   }, [pathname]);
 
-  const navLinks = [
+  const navLinks: Array<{ href: string; label: string; icon: typeof LayoutDashboard; badge?: string }> = [
     { href: "/donor/dashboard", label: "Dashboard", icon: LayoutDashboard },
     {
       href: "/donor/requests",
       label: "Blood Requests",
       icon: Droplets,
-      badge: "2",
     },
     { href: "/donor/history", label: "Donation History", icon: History },
   ];

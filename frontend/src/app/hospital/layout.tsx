@@ -1,9 +1,9 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { HospitalTopNav } from "@/components/hospital/HospitalTopNav";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import {
   getAuthToken,
   setStoredUser,
@@ -23,18 +23,26 @@ export default function HospitalLayout({
   const [user, setUser] = useState<AuthUser | null>(null);
   const [hospital, setHospital] = useState<AuthHospital | null>(null);
   const [isVerifying, setIsVerifying] = useState(true);
+  const inFlightRef = useRef(false);
 
   const verifyAndLoadProfile = useCallback(async () => {
+    if (inFlightRef.current) return;
     const token = getAuthToken();
     if (!token) {
+      setUser(null);
+      setHospital(null);
+      setIsVerifying(false);
       router.replace("/signin");
       return;
     }
 
+    inFlightRef.current = true;
     try {
       const res = await api.auth.me();
       if (!res.success || !res.user) {
         clearAuthToken();
+        setUser(null);
+        setHospital(null);
         router.replace("/signin");
         return;
       }
@@ -45,21 +53,28 @@ export default function HospitalLayout({
       if (!isHospitalRole) {
         if (res.user.role === "DONOR") {
           router.replace("/donor/dashboard");
-        } else if (res.user.role === "REQUESTER" || (res.user.role as any) === "PATIENT") {
+        } else if (res.user.role === "REQUESTER" || (res.user.role as string) === "PATIENT") {
           router.replace("/requester/dashboard");
+        } else if (res.user.role === "BLOOD_BANK") {
+          router.replace("/bloodbank/dashboard");
         } else {
-          router.replace("/dashboard");
+          router.replace("/signin");
         }
         return;
       }
 
-      setStoredUser(res.user, res.donor, res.requester, res.hospital);
+      setStoredUser(res.user, res.donor, res.requester, res.hospital, res.bloodbank, { silent: true });
       setUser(res.user);
       setHospital(res.hospital || null);
-    } catch {
-      clearAuthToken();
-      router.replace("/signin");
+    } catch (err: unknown) {
+      if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+        clearAuthToken();
+        setUser(null);
+        setHospital(null);
+        router.replace("/signin");
+      }
     } finally {
+      inFlightRef.current = false;
       setIsVerifying(false);
     }
   }, [router]);
@@ -67,12 +82,24 @@ export default function HospitalLayout({
   useEffect(() => {
     verifyAndLoadProfile();
 
-    const handleAuthChange = () => {
+    const handleAuthChange = (event: Event) => {
+      const detail = (event as CustomEvent)?.detail;
+      if (detail?.reason === "profile-sync") return;
       verifyAndLoadProfile();
     };
 
+    const handleStorageChange = (event: StorageEvent) => {
+      if (event.key === null || event.key === "swastya_auth_token" || event.key === "swastya_auth_user") {
+        verifyAndLoadProfile();
+      }
+    };
+
     window.addEventListener("swastya-auth-change", handleAuthChange);
-    return () => window.removeEventListener("swastya-auth-change", handleAuthChange);
+    window.addEventListener("storage", handleStorageChange);
+    return () => {
+      window.removeEventListener("swastya-auth-change", handleAuthChange);
+      window.removeEventListener("storage", handleStorageChange);
+    };
   }, [verifyAndLoadProfile]);
 
   if (isVerifying) {

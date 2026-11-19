@@ -125,7 +125,10 @@ router.patch("/:id/read", authenticate, async (req: Request, res: Response) => {
         return res.status(200).json({
             success: true,
             message: "Notification marked as read",
-            notification: updated,
+            notification: {
+                ...updated,
+                message: updated.message.replace(/<!--META:[\s\S]*?-->/g, "").trim(),
+            },
         });
     } catch (error) {
         console.error("Error updating notification:", error);

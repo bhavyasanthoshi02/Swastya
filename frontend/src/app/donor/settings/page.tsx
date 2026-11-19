@@ -1,315 +1,515 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
-  Check,
-  Compass,
-  BellRing,
-  Moon,
-  MessageSquare,
+  ArrowRight,
+  CheckCircle2,
   Power,
-  ShieldCheck,
   AlertCircle,
   Loader2,
-  Info,
+  MapPin,
+  Droplet,
+  Droplets,
+  ShieldCheck,
+  Compass,
+  RefreshCw,
+  Bell,
+  Activity,
 } from "lucide-react";
 import { api } from "@/lib/api";
-import { mapAvailabilityToDisplay, mapDisplayToAvailability } from "@/lib/mappers";
+import {
+  mapAvailabilityToDisplay,
+  mapDisplayToAvailability,
+  mapBloodGroupToDisplay,
+  getCompatibleRecipientBloodGroups,
+} from "@/lib/mappers";
+
+interface MatchingContext {
+  bloodGroup: string;
+  compatibleGroups: string[];
+  city: string;
+  state: string;
+  hasGps: boolean;
+  eligibilityStatus: string;
+  eligibilityIsEligible: boolean;
+}
 
 export default function DonorSettingsPage() {
-  const [distance, setDistance] = useState(15);
-  const [sms, setSms] = useState(true);
-  const [whatsapp, setWhatsapp] = useState(true);
-  const [quiet, setQuiet] = useState(false);
   const [availability, setAvailability] = useState<"Available" | "Paused">("Available");
+  const [savedAvailability, setSavedAvailability] = useState<"Available" | "Paused">("Available");
+  const [matchingRadius, setMatchingRadius] = useState<number>(15);
+  const [matchingContext, setMatchingContext] = useState<MatchingContext | null>(null);
   const [saved, setSaved] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchCurrentSettings = async () => {
+  const fetchCurrentSettings = useCallback(async () => {
     try {
       setIsLoading(true);
       setError(null);
-      const res = await api.donor.getProfile();
-      if (res.success && res.donor) {
-        setAvailability(mapAvailabilityToDisplay(res.donor.availabilitystatus));
+      const [profileRes, matchingRes] = await Promise.all([
+        api.donor.getProfile(),
+        api.donor.getMatchingRequests({ limit: 1 }).catch(() => null),
+      ]);
+      if (profileRes.success && profileRes.donor) {
+        const displayStatus = mapAvailabilityToDisplay(profileRes.donor.availabilitystatus);
+        setAvailability(displayStatus);
+        setSavedAvailability(displayStatus);
+
+        const existingRadius = (profileRes.donor as { radiuskm?: number; radiusKm?: number }).radiuskm ??
+          (profileRes.donor as { radiuskm?: number; radiusKm?: number }).radiusKm;
+        if (typeof existingRadius === "number" && existingRadius >= 3 && existingRadius <= 30) {
+          setMatchingRadius(existingRadius);
+        }
+
+        const hasGps =
+          profileRes.donor.latitude !== undefined &&
+          profileRes.donor.latitude !== null &&
+          profileRes.donor.longitude !== undefined &&
+          profileRes.donor.longitude !== null &&
+          !isNaN(Number(profileRes.donor.latitude)) &&
+          !isNaN(Number(profileRes.donor.longitude));
+
+        const backendCompatible =
+          matchingRes?.success &&
+          Array.isArray(matchingRes.compatibleGroups) &&
+          matchingRes.compatibleGroups.length > 1
+            ? matchingRes.compatibleGroups.map(mapBloodGroupToDisplay)
+            : getCompatibleRecipientBloodGroups(profileRes.donor.bloodgroup);
+
+        const rawEligibility = profileRes.eligibility;
+        const isClinicallyEligible =
+          typeof rawEligibility?.isEligible === "boolean"
+            ? rawEligibility.isEligible
+            : rawEligibility?.status === "Eligible";
+        const eligibilityLabel =
+          rawEligibility?.status ||
+          (isClinicallyEligible ? "Eligible" : "Ineligible");
+
+        setMatchingContext({
+          bloodGroup: profileRes.donor.bloodgroup
+            ? mapBloodGroupToDisplay(profileRes.donor.bloodgroup)
+            : "",
+          compatibleGroups: backendCompatible,
+          city: profileRes.donor.city && profileRes.donor.city !== "Not Provided" ? profileRes.donor.city : "",
+          state: profileRes.donor.state && profileRes.donor.state !== "Not Provided" ? profileRes.donor.state : "",
+          hasGps,
+          eligibilityStatus: eligibilityLabel,
+          eligibilityIsEligible: isClinicallyEligible,
+        });
+      } else {
+        setError("Unable to load your current availability settings.");
       }
-    } catch (err: any) {
-      setError(err?.message || "Failed to load current donor availability.");
+    } catch (err: unknown) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to load your current availability settings. Please try again."
+      );
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchCurrentSettings();
-  }, []);
+  }, [fetchCurrentSettings]);
 
   const handleSave = async () => {
+    if (isSaving || isLoading) return;
     try {
       setIsSaving(true);
       setError(null);
+      setSaved(false);
       const backendStatus = mapDisplayToAvailability(availability);
       const res = await api.donor.updateAvailability(backendStatus);
 
       if (res.success) {
+        setSavedAvailability(availability);
         setSaved(true);
-        setTimeout(() => setSaved(false), 2600);
+        setTimeout(() => setSaved(false), 3500);
 
         if (typeof window !== "undefined") {
           window.dispatchEvent(new Event("swastya-auth-change"));
         }
       } else {
-        setError(res.message || "Failed to persist availability to database.");
+        setError(res.message || "Unable to save your availability changes. Please try again.");
       }
-    } catch (err: any) {
-      setError(err?.message || "Network error updating availability.");
+    } catch (err: unknown) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to save your availability changes. Please check your connection."
+      );
     } finally {
       setIsSaving(false);
     }
   };
 
+  const hasUnsavedChanges = availability !== savedAvailability;
+  const locationDisplay = [matchingContext?.city, matchingContext?.state]
+    .filter(Boolean)
+    .join(", ");
+
   return (
-    <div className="space-y-6 sm:space-y-8">
-      {/* Top Breadcrumb */}
-      <div className="flex items-center justify-between">
+    <div className="space-y-4 max-w-5xl mx-auto pb-8">
+      {/* Top Breadcrumb & Save Feedback */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <Link
           href="/donor/dashboard"
-          className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#053845] hover:text-[#317786] transition-colors"
+          className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#317786] hover:text-[#053845] transition-colors"
         >
-          <ArrowLeft className="w-4 h-4" />
+          <ArrowLeft className="w-3.5 h-3.5" />
           <span>Back to Donor Dashboard</span>
         </Link>
 
         {saved && (
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 animate-in fade-in">
-            <Check className="w-3.5 h-3.5 text-emerald-600" />
-            <span>Availability saved to database!</span>
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+            <span>Availability updated</span>
           </span>
         )}
       </div>
 
+      {/* 1. Compact Page Header */}
+      <header className="pb-3.5 border-b border-[#317786]/15 space-y-0.5">
+        <h1 className="font-serif text-2xl sm:text-3xl font-bold text-[#053845] tracking-tight">
+          Availability &amp; Match Settings
+        </h1>
+        <p className="text-xs sm:text-sm text-slate-600">
+          Control your emergency donation availability and review the location details used to match nearby blood requests.
+        </p>
+      </header>
+
+      {/* Error State */}
       {error && (
-        <div className="p-3.5 rounded-2xl bg-[#fdf2f2] border border-[#A2363A]/30 text-[#A2363A] text-xs font-semibold flex items-center gap-2">
-          <AlertCircle className="w-4 h-4 shrink-0" />
-          <span>{error}</span>
+        <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-900 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2.5">
+            <AlertCircle className="w-4 h-4 text-[#A2363A] shrink-0" />
+            <span>{error}</span>
+          </div>
+          <button
+            type="button"
+            onClick={fetchCurrentSettings}
+            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold bg-white border border-rose-300 text-[#A2363A] hover:bg-rose-100 transition-colors cursor-pointer self-start sm:self-auto shrink-0"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>Retry</span>
+          </button>
         </div>
       )}
 
-      <div className="bg-white rounded-3xl border border-[#F3E9D1] p-6 sm:p-8 shadow-xs space-y-6 sm:space-y-8">
-        <div className="pb-6 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <h1 className="font-serif text-2xl sm:text-3xl font-bold text-[#053845]">
-              Availability &amp; Match Settings
-            </h1>
-            <p className="text-xs sm:text-sm text-slate-500 mt-1 max-w-xl">
-              Configure your emergency donor readiness status and review preview notification settings.
-            </p>
-          </div>
-
-          <div className="inline-flex items-center gap-2 p-2.5 rounded-2xl bg-[#FAF6EE] border border-[#F3E9D1]">
-            <ShieldCheck className="w-4 h-4 text-[#317786]" />
-            <span className="text-xs font-semibold text-[#053845]">
-              Live PostgreSQL Database Sync
-            </span>
-          </div>
+      {/* Loading Skeleton */}
+      {isLoading ? (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 animate-pulse">
+          <div className="lg:col-span-7 h-60 rounded-2xl bg-white border border-[#F3E9D1]" />
+          <div className="lg:col-span-5 h-60 rounded-2xl bg-white border border-[#F3E9D1]" />
         </div>
-
-        <div className="space-y-6 max-w-2xl">
-          {/* Availability Active Switch - PERSISTED TO POSTGRESQL */}
-          <div className="p-5 rounded-2xl bg-[#FAF6EE]/50 border border-[#F3E9D1] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-bold text-[#053845] flex items-center gap-2">
+      ) : (
+        /* 2. Balanced Two-Column Desktop Layout */
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch">
+          {/* Left Card: Emergency Availability */}
+          <section className="lg:col-span-7 bg-white rounded-2xl border border-[#F3E9D1] p-5 shadow-2xs flex flex-col justify-between space-y-5">
+            <div className="space-y-4">
+              <div className="flex items-center justify-between gap-3 pb-3 border-b border-[#F3E9D1]/70">
+                <div className="flex items-center gap-2">
                   <Power className="w-4 h-4 text-[#317786]" />
-                  <span>Emergency Availability Mode</span>
-                </span>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
-                  Persisted
+                  <h2 className="font-serif text-base sm:text-lg font-bold text-[#053845]">
+                    Emergency Availability Mode
+                  </h2>
+                </div>
+
+                <span
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${
+                    savedAvailability === "Available"
+                      ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                      : "bg-amber-50 text-amber-800 border-amber-200"
+                  }`}
+                >
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full ${
+                      savedAvailability === "Available" ? "bg-emerald-500" : "bg-amber-500"
+                    }`}
+                  />
+                  <span>{savedAvailability}</span>
                 </span>
               </div>
-              <p className="text-[11px] text-slate-500 leading-relaxed">
-                When active, your profile is considered by nearby certified hospitals for urgent whole blood matching.
+
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Choose whether you can be matched with urgent blood requests in your area. You can pause or resume your availability at any time.
               </p>
+
+              {/* Accessible Available / Paused Selector */}
+              <div
+                role="radiogroup"
+                aria-label="Emergency availability mode"
+                className="grid grid-cols-1 sm:grid-cols-2 gap-3"
+              >
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={availability === "Available"}
+                  disabled={isSaving}
+                  onClick={() => setAvailability("Available")}
+                  className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer space-y-1 ${
+                    availability === "Available"
+                      ? "bg-emerald-50/70 border-emerald-400 ring-1 ring-emerald-400/40"
+                      : "bg-[#FAF6EE]/50 border-[#F3E9D1] hover:border-[#317786]/40"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-bold text-[#053845]">Available</span>
+                    <span
+                      className={`w-4 h-4 rounded-full border flex items-center justify-center ${
+                        availability === "Available"
+                          ? "border-emerald-600 bg-emerald-600"
+                          : "border-slate-300 bg-white"
+                      }`}
+                    >
+                      {availability === "Available" && (
+                        <span className="w-1.5 h-1.5 rounded-full bg-white" />
+                      )}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-600 leading-snug">
+                    Receive matching blood requests and respond when you are able to donate.
+                  </p>
+                </button>
+
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={availability === "Paused"}
+                  disabled={isSaving}
+                  onClick={() => setAvailability("Paused")}
+                  className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer space-y-1 ${
+                    availability === "Paused"
+                      ? "bg-amber-50/70 border-amber-400 ring-1 ring-amber-400/40"
+                      : "bg-[#FAF6EE]/50 border-[#F3E9D1] hover:border-[#317786]/40"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-bold text-[#053845]">Paused</span>
+                    <span
+                      className={`w-4 h-4 rounded-full border flex items-center justify-center ${
+                        availability === "Paused"
+                          ? "border-amber-600 bg-amber-600"
+                          : "border-slate-300 bg-white"
+                      }`}
+                    >
+                      {availability === "Paused" && (
+                        <span className="w-1.5 h-1.5 rounded-full bg-white" />
+                      )}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-600 leading-snug">
+                    Temporarily step back from new request matching without deleting your profile.
+                  </p>
+                </button>
+              </div>
+
+              {/* Divider + Matching Radius */}
+              <div className="pt-4 border-t border-[#F3E9D1]/70 space-y-2.5">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <Compass className="w-4 h-4 text-[#317786]" />
+                    <label
+                      htmlFor="donor-matching-radius"
+                      className="font-serif text-sm sm:text-base font-bold text-[#053845] cursor-pointer"
+                    >
+                      Matching Radius
+                    </label>
+                  </div>
+                  <span className="font-serif text-sm font-bold text-[#053845] px-2.5 py-0.5 rounded-lg bg-[#FAF6EE] border border-[#F3E9D1] tabular-nums">
+                    {matchingRadius} km
+                  </span>
+                </div>
+
+                <p className="text-xs text-slate-600 leading-snug">
+                  Choose how far away blood requests can be to match with you.
+                </p>
+
+                <input
+                  id="donor-matching-radius"
+                  type="range"
+                  min={3}
+                  max={30}
+                  step={1}
+                  value={matchingRadius}
+                  onChange={(e) => setMatchingRadius(Number(e.target.value))}
+                  aria-label="Matching Radius in kilometers"
+                  className="w-full accent-[#317786] h-1.5 bg-[#F3E9D1] rounded-lg cursor-pointer"
+                />
+
+                <div className="flex items-center justify-between text-[11px] font-medium text-slate-400">
+                  <span>3 km</span>
+                  <span>15 km</span>
+                  <span>30 km</span>
+                </div>
+              </div>
             </div>
 
-            <button
-              type="button"
-              disabled={isLoading || isSaving}
-              onClick={() =>
-                setAvailability(availability === "Available" ? "Paused" : "Available")
-              }
-              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-2xs shrink-0 ${
-                availability === "Available"
-                  ? "bg-emerald-600 hover:bg-emerald-700 text-white"
-                  : "bg-slate-300 hover:bg-slate-400 text-slate-800"
-              }`}
-            >
-              {availability === "Available" ? "Active (Available)" : "Paused (Standby)"}
-            </button>
-          </div>
-
-          {/* Database Schema Notice */}
-          <div className="p-3 rounded-2xl bg-[#e8f3f5] border border-[#317786]/20 text-[11px] text-[#053845] flex items-start gap-2.5">
-            <Info className="w-4 h-4 text-[#317786] shrink-0 mt-0.5" />
-            <p className="leading-snug">
-              <strong className="font-semibold">Schema Notice:</strong> Availability status is stored in PostgreSQL (<code className="font-mono text-[10px]">donors.availabilitystatus</code>). Geographic radius and SMS notification settings below are UI client previews and are not yet stored in the current database schema.
-            </p>
-          </div>
-
-          {/* Distance Slider (Client preview) */}
-          <div className="p-4 sm:p-5 rounded-2xl bg-white border border-[#F3E9D1] space-y-3 opacity-90">
-            <div className="flex items-center justify-between text-xs">
-              <div className="flex items-center gap-2">
-                <span className="font-bold text-[#053845] flex items-center gap-2">
-                  <Compass className="w-4 h-4 text-[#317786]" />
-                  <span>Maximum Travel Perimeter</span>
-                </span>
-                <span className="text-[9.5px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
-                  Client Preview
-                </span>
-              </div>
-              <span className="font-bold font-mono px-3 py-1 rounded-lg bg-[#FAF6EE] border border-[#F3E9D1] text-[#053845] text-sm">
-                {distance} km
+            {/* Save Action */}
+            <div className="pt-3 border-t border-[#F3E9D1]/70 flex flex-wrap items-center justify-between gap-3">
+              <span className="text-[11px] text-slate-500">
+                {hasUnsavedChanges
+                  ? "You have unsaved availability changes."
+                  : `Currently set to ${savedAvailability}.`}
               </span>
+
+              <button
+                type="button"
+                disabled={isSaving || !hasUnsavedChanges}
+                onClick={handleSave}
+                className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold text-white bg-[#317786] hover:bg-[#053845] transition-colors cursor-pointer shadow-2xs disabled:opacity-45 disabled:cursor-not-allowed"
+              >
+                {isSaving ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Saving...</span>
+                  </>
+                ) : (
+                  <span>Save Changes</span>
+                )}
+              </button>
             </div>
+          </section>
 
-            <input
-              type="range"
-              min="3"
-              max="30"
-              step="1"
-              value={distance}
-              onChange={(e) => setDistance(Number(e.target.value))}
-              className="w-full accent-[#317786] h-2 bg-slate-200 rounded-lg cursor-pointer"
-            />
-
-            <div className="flex justify-between text-[11px] text-slate-400">
-              <span>3 km (Walking / Immediate Zone)</span>
-              <span>15 km (City Center)</span>
-              <span>30 km (District Perimeter)</span>
-            </div>
-          </div>
-
-          {/* Alert Channel Toggles (Client previews) */}
-          <div className="space-y-3 pt-2">
-            <div className="flex items-center justify-between">
-              <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                Notification Channel Previews
-              </h2>
-              <span className="text-[10px] text-slate-400 font-medium">
-                Disabled from DB persistence
-              </span>
-            </div>
-
-            <div className="flex items-center justify-between p-4 rounded-2xl border border-slate-100 bg-white/60">
-              <div className="flex items-start gap-3">
-                <BellRing className="w-4 h-4 text-[#317786] mt-0.5" />
-                <div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs font-bold text-[#053845] block">
-                      Critical Emergency SMS Alerts
-                    </span>
-                    <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-50 text-amber-800 border border-amber-200 font-semibold">
-                      Unsupported in Schema
-                    </span>
-                  </div>
-                  <span className="text-[11px] text-slate-500">
-                    Direct SMS dispatch upon urgent trauma matches.
-                  </span>
-                </div>
+          {/* Right Card: Matching Profile Overview */}
+          <section className="lg:col-span-5 bg-white rounded-2xl border border-[#F3E9D1] p-5 shadow-2xs flex flex-col justify-between space-y-4">
+            <div className="space-y-3.5">
+              <div className="flex items-center gap-2 pb-3 border-b border-[#F3E9D1]/70">
+                <Compass className="w-4 h-4 text-[#317786]" />
+                <h2 className="font-serif text-base sm:text-lg font-bold text-[#053845]">
+                  How Requests Match You
+                </h2>
               </div>
-              <input
-                type="checkbox"
-                checked={sms}
-                onChange={(e) => setSms(e.target.checked)}
-                className="h-4 w-4 rounded accent-[#317786] cursor-pointer"
-              />
-            </div>
 
-            <div className="flex items-center justify-between p-4 rounded-2xl border border-slate-100 bg-white/60">
-              <div className="flex items-start gap-3">
-                <MessageSquare className="w-4 h-4 text-[#317786] mt-0.5" />
-                <div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs font-bold text-[#053845] block">
-                      WhatsApp Coordination Notifications
-                    </span>
-                    <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-50 text-amber-800 border border-amber-200 font-semibold">
-                      Unsupported in Schema
-                    </span>
-                  </div>
-                  <span className="text-[11px] text-slate-500">
-                    Hospital desk location links and donation updates.
-                  </span>
+              <dl className="divide-y divide-[#F3E9D1]/70 text-xs">
+                {/* 1. Blood Group */}
+                <div className="py-2.5 flex items-center justify-between gap-3">
+                  <dt className="text-slate-600 font-medium inline-flex items-center gap-1.5">
+                    <Droplet className="w-3.5 h-3.5 text-[#B94F30]" />
+                    <span>Blood Group</span>
+                  </dt>
+                  <dd className="font-serif text-sm font-bold text-[#B94F30]">
+                    {matchingContext?.bloodGroup || "Not set"}
+                  </dd>
                 </div>
-              </div>
-              <input
-                type="checkbox"
-                checked={whatsapp}
-                onChange={(e) => setWhatsapp(e.target.checked)}
-                className="h-4 w-4 rounded accent-[#317786] cursor-pointer"
-              />
-            </div>
 
-            <div className="flex items-center justify-between p-4 rounded-2xl border border-slate-100 bg-white/60">
-              <div className="flex items-start gap-3">
-                <Moon className="w-4 h-4 text-[#317786] mt-0.5" />
-                <div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs font-bold text-[#053845] block">
-                      Quiet Hours (10:00 PM to 7:00 AM)
-                    </span>
-                    <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-50 text-amber-800 border border-amber-200 font-semibold">
-                      Unsupported in Schema
-                    </span>
-                  </div>
-                  <span className="text-[11px] text-slate-500">
-                    Mute routine elective alerts during night hours.
-                  </span>
+                {/* 2. Blood Compatibility */}
+                <div className="py-2.5 flex items-start justify-between gap-3">
+                  <dt className="text-slate-600 font-medium inline-flex items-center gap-1.5 shrink-0 pt-0.5">
+                    <Droplets className="w-3.5 h-3.5 text-[#317786]" />
+                    <span>Blood Compatibility</span>
+                  </dt>
+                  <dd className="flex flex-wrap justify-end gap-1">
+                    {matchingContext?.compatibleGroups && matchingContext.compatibleGroups.length > 0 ? (
+                      matchingContext.compatibleGroups.map((group) => (
+                        <span
+                          key={group}
+                          className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-[#317786]/10 text-[#053845] border border-[#317786]/20"
+                        >
+                          {group}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-slate-400">Not available</span>
+                    )}
+                  </dd>
                 </div>
-              </div>
-              <input
-                type="checkbox"
-                checked={quiet}
-                onChange={(e) => setQuiet(e.target.checked)}
-                className="h-4 w-4 rounded accent-[#317786] cursor-pointer"
-              />
-            </div>
-          </div>
 
-          {/* Save Action Button */}
-          <div className="pt-4">
-            <button
-              type="button"
-              disabled={isSaving}
-              onClick={handleSave}
-              className={`px-6 py-3 rounded-2xl text-xs sm:text-sm font-semibold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md disabled:opacity-60 ${
-                saved
-                  ? "bg-emerald-600 text-white"
-                  : "bg-[#053845] hover:bg-[#03252e] text-white"
-              }`}
-            >
-              {isSaving ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Saving Availability...</span>
-                </>
-              ) : saved ? (
-                <>
-                  <Check className="w-4 h-4" />
-                  <span>Availability Saved to Database</span>
-                </>
-              ) : (
-                <span>Save Availability to Database</span>
-              )}
-            </button>
-          </div>
+                {/* 3. Matching Area */}
+                <div className="py-2.5 flex items-center justify-between gap-3">
+                  <dt className="text-slate-600 font-medium inline-flex items-center gap-1.5">
+                    <MapPin className="w-3.5 h-3.5 text-[#317786]" />
+                    <span>Matching Area</span>
+                  </dt>
+                  <dd className="font-semibold text-[#053845] text-right truncate max-w-[180px]">
+                    {locationDisplay || "Not set"}
+                  </dd>
+                </div>
+
+                {/* 4. Distance Matching */}
+                <div className="py-2.5 flex items-center justify-between gap-3">
+                  <dt className="text-slate-600 font-medium inline-flex items-center gap-1.5">
+                    <Compass className="w-3.5 h-3.5 text-[#317786]" />
+                    <span>Distance Matching</span>
+                  </dt>
+                  <dd
+                    className={`font-semibold ${
+                      matchingContext?.hasGps ? "text-emerald-700" : "text-[#B94F30]"
+                    }`}
+                  >
+                    {matchingContext?.hasGps ? "GPS enabled" : "City-based only"}
+                  </dd>
+                </div>
+
+                {/* 5. Donation Eligibility */}
+                <div className="py-2.5 flex items-center justify-between gap-3">
+                  <dt className="text-slate-600 font-medium inline-flex items-center gap-1.5">
+                    <ShieldCheck className="w-3.5 h-3.5 text-[#317786]" />
+                    <span>Donation Eligibility</span>
+                  </dt>
+                  <dd
+                    className={`font-semibold ${
+                      matchingContext?.eligibilityIsEligible
+                        ? "text-emerald-700"
+                        : "text-[#A2363A]"
+                    }`}
+                  >
+                    {matchingContext?.eligibilityStatus || "Pending review"}
+                  </dd>
+                </div>
+
+                {/* 6. Availability */}
+                <div className="py-2.5 flex items-center justify-between gap-3">
+                  <dt className="text-slate-600 font-medium inline-flex items-center gap-1.5">
+                    <Activity className="w-3.5 h-3.5 text-[#317786]" />
+                    <span>Availability</span>
+                  </dt>
+                  <dd>
+                    <span
+                      className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold border ${
+                        savedAvailability === "Available"
+                          ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                          : "bg-rose-50 text-[#A2363A] border-rose-200"
+                      }`}
+                    >
+                      <span
+                        className={`w-1.5 h-1.5 rounded-full ${
+                          savedAvailability === "Available" ? "bg-emerald-500" : "bg-[#A2363A]"
+                        }`}
+                      />
+                      <span>{savedAvailability}</span>
+                    </span>
+                  </dd>
+                </div>
+              </dl>
+            </div>
+
+            <div className="pt-3 border-t border-[#F3E9D1]/70 flex flex-wrap items-center justify-between gap-2 text-xs">
+              <Link
+                href="/donor/profile"
+                className="inline-flex items-center gap-1 font-semibold text-[#317786] hover:text-[#053845] transition-colors"
+              >
+                <span>Update Location</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </Link>
+              <Link
+                href="/donor/notifications"
+                className="inline-flex items-center gap-1 font-semibold text-[#317786] hover:text-[#053845] transition-colors"
+              >
+                <Bell className="w-3.5 h-3.5" />
+                <span>Notifications</span>
+              </Link>
+            </div>
+          </section>
         </div>
-      </div>
+      )}
     </div>
   );
 }

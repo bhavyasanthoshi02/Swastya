@@ -90,8 +90,32 @@ export const getAuthToken = (): string | null => {
   return localStorage.getItem(TOKEN_KEY);
 };
 
+const clearScopedSessionStorage = (): void => {
+  if (typeof sessionStorage === "undefined") return;
+  const keysToRemove: string[] = [
+    "swastya_donor_profile",
+    "swastya_requester_profile",
+    "swastya_hospital_profile",
+    "swastya_bloodbank_profile",
+    "swastya_available_donors_state",
+  ];
+  for (let i = 0; i < sessionStorage.length; i++) {
+    const k = sessionStorage.key(i);
+    if (k && k.startsWith("swastya_")) {
+      keysToRemove.push(k);
+    }
+  }
+  for (const k of new Set(keysToRemove)) {
+    sessionStorage.removeItem(k);
+  }
+};
+
 export const setAuthToken = (token: string): void => {
   if (typeof window === "undefined") return;
+  const prev = localStorage.getItem(TOKEN_KEY);
+  if (prev && prev !== token) {
+    clearScopedSessionStorage();
+  }
   localStorage.setItem(TOKEN_KEY, token);
   window.dispatchEvent(new CustomEvent("swastya-auth-change", { detail: { reason: "session-change" } }));
 };
@@ -104,12 +128,7 @@ export const clearAuthToken = (): void => {
   localStorage.removeItem(REQUESTER_KEY);
   localStorage.removeItem(HOSPITAL_KEY);
   localStorage.removeItem(BLOOD_BANK_KEY);
-  if (typeof sessionStorage !== "undefined") {
-    sessionStorage.removeItem("swastya_donor_profile");
-    sessionStorage.removeItem("swastya_requester_profile");
-    sessionStorage.removeItem("swastya_hospital_profile");
-    sessionStorage.removeItem("swastya_bloodbank_profile");
-  }
+  clearScopedSessionStorage();
   window.dispatchEvent(new CustomEvent("swastya-auth-change", { detail: { reason: "session-change" } }));
 };
 

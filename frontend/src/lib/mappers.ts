@@ -37,6 +37,30 @@ export function mapDisplayToBloodGroup(group: string | null | undefined): string
   return DISPLAY_TO_BLOOD_GROUP[group.toUpperCase()] || group;
 }
 
+/**
+ * Mirrors backend clinical ABO/Rh donor-to-recipient compatibility rules
+ * (RBC / emergency whole blood compatibility from backend/src/utils/bloodCompatibility.ts).
+ */
+export function getCompatibleRecipientBloodGroups(
+  donorBloodGroup: string | null | undefined
+): string[] {
+  if (!donorBloodGroup) return [];
+  const normalized =
+    DISPLAY_TO_BLOOD_GROUP[donorBloodGroup.trim().toUpperCase()] ||
+    donorBloodGroup.trim().toUpperCase();
+  const map: Record<string, string[]> = {
+    O_NEGATIVE: ["O-", "O+", "A-", "A+", "B-", "B+", "AB-", "AB+"],
+    O_POSITIVE: ["O+", "A+", "B+", "AB+"],
+    A_NEGATIVE: ["A-", "A+", "AB-", "AB+"],
+    A_POSITIVE: ["A+", "AB+"],
+    B_NEGATIVE: ["B-", "B+", "AB-", "AB+"],
+    B_POSITIVE: ["B+", "AB+"],
+    AB_NEGATIVE: ["AB-", "AB+"],
+    AB_POSITIVE: ["AB+"],
+  };
+  return map[normalized] || [mapBloodGroupToDisplay(donorBloodGroup)];
+}
+
 export function mapAvailabilityToDisplay(status: string | null | undefined): "Available" | "Paused" {
   if (status === "AVAILABLE") return "Available";
   return "Paused";
@@ -89,44 +113,118 @@ export function formatDate(dateInput: string | Date | null | undefined): string 
   return date.toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" });
 }
 
+export function formatDateTimeDisplay(dateInput: string | Date | null | undefined): string | undefined {
+  if (!dateInput) return undefined;
+  const date = typeof dateInput === "string" ? new Date(dateInput) : dateInput;
+  if (isNaN(date.getTime())) return undefined;
+  return date.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+}
+
+function mapUrgencyLabel(urgency: string | null | undefined): string {
+  if (!urgency) return "Standard / Planned";
+  switch (urgency.toUpperCase()) {
+    case "CRITICAL":
+      return "Critical Emergency";
+    case "HIGH":
+      return "Urgent Requisition";
+    case "MEDIUM":
+      return "Priority Case";
+    case "LOW":
+      return "Standard / Planned";
+    default:
+      return urgency;
+  }
+}
+
 export function mapBackendRequestToPreview(req: any): RequestPreviewItem {
+  let noteFacility: string | null = null;
+  let wardOrRoom: string | undefined;
+  const extraNotes: string[] = [];
+
+  if (typeof req.notes === "string" && req.notes.trim()) {
+    const segments = req.notes
+      .split("|")
+      .map((s: string) => s.trim())
+      .filter(Boolean);
+
+    for (const seg of segments) {
+      if (seg.startsWith("Facility / Hospital:")) {
+        const val = seg.slice("Facility / Hospital:".length).trim();
+        if (val) noteFacility = val;
+      } else if (seg.startsWith("Selected Facility:")) {
+        const val = seg.slice("Selected Facility:".length).trim();
+        if (val) noteFacility = val;
+      } else if (seg.startsWith("Ward / Room:")) {
+        const val = seg.slice("Ward / Room:".length).trim();
+        if (val) wardOrRoom = val;
+      } else if (seg.startsWith("Clinical Instructions:")) {
+        const val = seg.slice("Clinical Instructions:".length).trim();
+        if (val) extraNotes.push(val);
+      } else {
+        extraNotes.push(seg);
+      }
+    }
+  }
+
   const hospitalName =
-    req.hospitals?.hospitalname ||
-    req.hospital?.name ||
-    req.bloodbank?.name ||
-    (req.patientname ? `Care Facility (${req.patientname})` : "Certified Regional Hospital");
+    req.hospitals?.hospitalname?.trim() ||
+    noteFacility ||
+    req.prescription?.hospitalname?.trim() ||
+    req.hospital?.name?.trim() ||
+    req.bloodbank?.name?.trim() ||
+    "Medical Facility Not Specified";
 
   const address = req.hospitals?.address || req.hospital?.address || req.bloodbank?.address || "";
-  const city = req.hospitals?.city || req.hospital?.city || req.bloodbank?.city || "";
-  const location = [address, city].filter(Boolean).join(", ") || "City Medical Center";
+  const city =
+    req.hospitals?.city ||
+    req.hospital?.city ||
+    req.bloodbank?.city ||
+    req.requesters?.city ||
+    "";
+  const state = req.hospitals?.state || req.requesters?.state || "";
+  const location = [address, city, state].filter(Boolean).join(", ") || "Location not specified";
+
+  const requiredByDateTime = formatDateTimeDisplay(req.requiredby || req.requireddate);
+  const patientSummaryParts = [
+    req.patientname ? `Patient: ${req.patientname}` : null,
+    req.patientage != null ? `${req.patientage} yrs` : null,
+    req.patientgender ? String(req.patientgender) : null,
+  ].filter(Boolean);
 
   return {
     id: req.requestid ? `REQ-${req.requestid.slice(0, 8).toUpperCase()}` : "REQ-UNKNOWN",
     rawId: req.requestid,
     hospitalName,
     bloodGroup: mapBloodGroupToDisplay(req.bloodgroup),
-    distance: req.distanceDisplay || (city ? `${city} Center` : "Local Area"),
+    bloodComponent: mapBloodComponentToDisplay(req.bloodcomponent),
+    distance: req.distanceDisplay || (city ? `${city}` : "Distance unavailable"),
     distanceKm: req.distanceKm != null ? req.distanceKm : null,
     locationMatch: req.locationMatch || "CITY_FALLBACK",
     searchradius: req.searchradius || 5,
     urgency: mapUrgencyToDisplay(req.urgencylevel),
+    urgencyLabel: mapUrgencyLabel(req.urgencylevel),
+    isEmergency: Boolean(req.isemergency),
     units: req.unitsrequired || 1,
     location,
+    wardOrRoom,
     postedTime: formatTimeAgo(req.createdat),
-    caseDetails:
-      req.notes ||
-      `Immediate voluntary whole blood requested for patient ${req.patientname || "in hospital care"}.`,
-    contactPerson: req.hospitals?.contactpersonname || req.contactperson || "Hospital Transfusion Coordinator",
-    contactPhone: req.hospitals?.contactpersonphone || req.contactphone || "+91 Regional Helpline",
-    requiredWithin: req.requiredby
-      ? `By ${formatDate(req.requiredby)}`
-      : req.requireddate
-      ? `By ${formatDate(req.requireddate)}`
-      : req.urgencylevel === "CRITICAL"
-      ? "Immediate Emergency"
-      : "Within 24 hours",
-    patientAgeGroup: req.patientname ? `Patient: ${req.patientname}` : "Clinical Care Requisition",
+    caseDetails: extraNotes.length > 0 ? extraNotes.join(" • ") : undefined,
+    contactPerson: req.hospitals?.contactpersonname || req.contactperson || undefined,
+    contactPhone: req.hospitals?.contactpersonphone || req.contactphone || undefined,
+    requiredWithin: requiredByDateTime ? `By ${requiredByDateTime}` : undefined,
+    requiredByDateTime,
+    patientAgeGroup: patientSummaryParts.length > 0 ? patientSummaryParts.join(" · ") : undefined,
+    prescriptionStatus: req.prescription?.status || undefined,
+    requestStatus: req.status || undefined,
     hasResponded: Boolean(req.hasResponded),
+    myCommitment: req.myCommitment || null,
   };
 }
 

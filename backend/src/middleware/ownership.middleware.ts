@@ -8,6 +8,9 @@ export const checkHospitalOwnership = async (
 ) => {
     try {
         const user = (req as any).user;
+        if (!user) {
+            return res.status(401).json({ success: false, message: "Authentication required" });
+        }
 
         // Admin can access everything
         if (user.role === "ADMIN") {
@@ -61,6 +64,9 @@ export const checkDonorOwnership = async (
 ) => {
     try {
         const user = (req as any).user;
+        if (!user) {
+            return res.status(401).json({ success: false, message: "Authentication required" });
+        }
 
         if (user.role === "ADMIN") {
             return next();
@@ -111,6 +117,9 @@ export const checkRequesterOwnership = async (
 ) => {
     try {
         const user = (req as any).user;
+        if (!user) {
+            return res.status(401).json({ success: false, message: "Authentication required" });
+        }
 
         if (user.role === "ADMIN") {
             return next();
@@ -163,6 +172,9 @@ export const checkBloodBankOwnership = async (
 ) => {
     try {
         const user = (req as any).user;
+        if (!user) {
+            return res.status(401).json({ success: false, message: "Authentication required" });
+        }
         const bloodBankId = (req.params.bloodBankId || req.params.id) as string;
 
         const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -218,7 +230,10 @@ export const requireApprovedHospital = async (
 ) => {
     try {
         const user = (req as any).user;
-        if (!user || user.role === "ADMIN" || user.role !== "HOSPITAL") {
+        if (!user) {
+            return res.status(401).json({ success: false, message: "Authentication required" });
+        }
+        if (user.role === "ADMIN" || user.role !== "HOSPITAL") {
             return next();
         }
 
@@ -260,7 +275,10 @@ export const requireApprovedBloodBank = async (
 ) => {
     try {
         const user = (req as any).user;
-        if (!user || user.role === "ADMIN" || user.role !== "BLOOD_BANK") {
+        if (!user) {
+            return res.status(401).json({ success: false, message: "Authentication required" });
+        }
+        if (user.role === "ADMIN" || user.role !== "BLOOD_BANK") {
             return next();
         }
 

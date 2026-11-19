@@ -2,14 +2,13 @@
 
 import React, { useState, useEffect, Suspense } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
+  ArrowRight,
   Users,
-  Droplet,
   Phone,
   Clock,
-  CheckCircle2,
   Building,
   MapPin,
   Search,
@@ -22,12 +21,7 @@ import {
 import { api, AvailableDonorItem, BloodRequestItem } from "@/lib/api";
 import { formatTimeAgo, mapBloodGroupToDisplay } from "@/lib/mappers";
 
-const STAGE_ORDER: Record<string, number> = {
-  DONOR_FOUND: 1,
-  STARTED: 2,
-  REACHED_LOCATION: 3,
-  COMPLETED: 4,
-};
+const DONORS_NAV_STATE_KEY = "swastya_available_donors_state";
 
 function getCurrentStageLabel(transitStatus?: string | null): string {
   switch (transitStatus) {
@@ -43,6 +37,7 @@ function getCurrentStageLabel(transitStatus?: string | null): string {
 }
 
 function RequesterAvailableDonorsContent() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const initialRequestId = searchParams?.get("requestId") || "all";
 
@@ -88,6 +83,50 @@ function RequesterAvailableDonorsContent() {
   useEffect(() => {
     loadData();
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const saved = sessionStorage.getItem(DONORS_NAV_STATE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (typeof parsed.searchTerm === "string") setSearchTerm(parsed.searchTerm);
+        if (typeof parsed.selectedRequestId === "string" && !searchParams?.get("requestId")) {
+          setSelectedRequestId(parsed.selectedRequestId);
+        }
+        if (typeof parsed.selectedBloodGroup === "string") setSelectedBloodGroup(parsed.selectedBloodGroup);
+        if (typeof parsed.selectedArrival === "string") setSelectedArrival(parsed.selectedArrival);
+        if (typeof parsed.selectedTransit === "string") setSelectedTransit(parsed.selectedTransit);
+        if (typeof parsed.scrollY === "number" && parsed.scrollY > 0) {
+          requestAnimationFrame(() => window.scrollTo(0, parsed.scrollY));
+        }
+        sessionStorage.removeItem(DONORS_NAV_STATE_KEY);
+      }
+    } catch {}
+  }, [searchParams]);
+
+  const handleOpenDonorDetails = (donor: AvailableDonorItem) => {
+    const commitmentId = donor.deliveryId || donor.notificationId;
+    if (!donor.requestId || !commitmentId) return;
+
+    if (typeof window !== "undefined") {
+      try {
+        sessionStorage.setItem(
+          DONORS_NAV_STATE_KEY,
+          JSON.stringify({
+            searchTerm,
+            selectedRequestId,
+            selectedBloodGroup,
+            selectedArrival,
+            selectedTransit,
+            scrollY: window.scrollY,
+          })
+        );
+      } catch {}
+    }
+
+    router.push(`/requester/requests/${donor.requestId}/donors/${commitmentId}?from=available-donors`);
+  };
 
   useEffect(() => {
     const q = searchParams?.get("requestId");
@@ -420,54 +459,50 @@ function RequesterAvailableDonorsContent() {
           {filteredDonors.map((donor) => {
             const bloodDisplay = mapBloodGroupToDisplay(donor.donorBloodGroup);
             const patientBloodDisplay = mapBloodGroupToDisplay(donor.requiredBloodGroup);
-            const currentStageNum =
-              STAGE_ORDER[donor.transitStatus || "DONOR_FOUND"] || 1;
-
-            const stages = [
-              {
-                num: 1,
-                label: "Donor Found",
-                sub: "Pledged",
-                icon: CheckCircle2,
-              },
-              {
-                num: 2,
-                label: "Started",
-                sub: donor.startedAt ? formatTimeAgo(donor.startedAt) : "En route",
-                icon: Car,
-              },
-              {
-                num: 3,
-                label: "Reached Location",
-                sub: donor.reachedAt ? formatTimeAgo(donor.reachedAt) : "Hospital desk",
-                icon: MapPin,
-              },
-              {
-                num: 4,
-                label: "Blood Received",
-                sub: donor.completedAt ? formatTimeAgo(donor.completedAt) : "Fulfilled",
-                icon: Droplet,
-              },
-            ];
+            const acceptance = (donor.acceptanceStatus || "PENDING").toUpperCase();
+            const isAccepted = acceptance === "ACCEPTED";
+            const isRejected = acceptance === "REJECTED";
+            const acceptanceBadge = isRejected
+              ? { label: "Rejected", cls: "bg-rose-50 text-[#A2363A] border-rose-200" }
+              : isAccepted
+              ? { label: "Accepted", cls: "bg-emerald-50 text-emerald-700 border-emerald-200" }
+              : { label: "Pending Review", cls: "bg-amber-50 text-amber-800 border-amber-200" };
 
             return (
               <article
-                key={donor.notificationId}
-                className="bg-white rounded-2xl border border-[#F3E9D1] p-4 sm:p-5 shadow-2xs hover:border-[#317786]/45 transition-colors space-y-3.5"
+                key={donor.deliveryId || donor.notificationId}
+                role="link"
+                tabIndex={0}
+                aria-label={`View details for donor ${donor.donorName}`}
+                onClick={() => handleOpenDonorDetails(donor)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    handleOpenDonorDetails(donor);
+                  }
+                }}
+                className="group bg-white rounded-2xl border border-[#F3E9D1] p-4 sm:p-5 shadow-2xs hover:border-[#317786] hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-[#317786]/50 transition-all space-y-3 cursor-pointer"
               >
-                {/* Top Row: Donor Identity, Blood Group, Location & Actions */}
+                {/* Top Row: Donor Identity, Blood Group, Location, Acceptance & Actions */}
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
                   <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-12 h-12 rounded-xl bg-[#317786]/10 border border-[#317786]/25 text-[#053845] font-serif font-bold text-lg flex items-center justify-center shrink-0">
+                    <div className="w-11 h-11 rounded-xl bg-[#317786]/10 border border-[#317786]/25 text-[#053845] font-serif font-bold text-base flex items-center justify-center shrink-0">
                       {bloodDisplay}
                     </div>
 
                     <div className="min-w-0 space-y-0.5">
-                      <h2 className="font-serif text-base sm:text-lg font-bold text-[#053845] truncate">
-                        {donor.donorName}
-                      </h2>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h2 className="font-serif text-base sm:text-lg font-bold text-[#053845] group-hover:text-[#317786] transition-colors truncate">
+                          {donor.donorName}
+                        </h2>
+                        <span
+                          className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border ${acceptanceBadge.cls}`}
+                        >
+                          {acceptanceBadge.label}
+                        </span>
+                      </div>
 
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+                      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-slate-500">
                         <span className="inline-flex items-center gap-1 text-slate-600">
                           <MapPin className="w-3.5 h-3.5 text-[#317786] shrink-0" />
                           <span>
@@ -486,6 +521,8 @@ function RequesterAvailableDonorsContent() {
                     {donor.donorPhone ? (
                       <a
                         href={`tel:${donor.donorPhone}`}
+                        onClick={(e) => e.stopPropagation()}
+                        onKeyDown={(e) => e.stopPropagation()}
                         className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold text-white bg-[#053845] hover:bg-[#317786] transition-colors shadow-2xs"
                         title="Call Donor Directly"
                       >
@@ -501,6 +538,8 @@ function RequesterAvailableDonorsContent() {
 
                     <Link
                       href={`/requester/requests/${donor.requestId}`}
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => e.stopPropagation()}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-[#B94F30] bg-[#FAF6EE] hover:bg-[#F3E9D1] border border-[#F3E9D1] transition-colors"
                     >
                       <ExternalLink className="w-3.5 h-3.5" />
@@ -509,8 +548,8 @@ function RequesterAvailableDonorsContent() {
                   </div>
                 </div>
 
-                {/* 5. Compact Associated Request & ETA Bar */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-3.5 py-2 rounded-xl bg-[#FAF6EE]/70 border border-[#F3E9D1] text-xs">
+                {/* Compact Summary Bar: Patient/Request Reference, Journey Status & ETA */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-3.5 py-2.5 rounded-xl bg-[#FAF6EE]/70 border border-[#F3E9D1] text-xs">
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1 min-w-0">
                     <span className="font-semibold text-[#053845]">
                       For {donor.patientName}
@@ -528,109 +567,24 @@ function RequesterAvailableDonorsContent() {
                     </span>
                   </div>
 
-                  {donor.estimatedArrival && (
-                    <span className="inline-flex items-center gap-1 text-slate-600 shrink-0">
-                      <Clock className="w-3.5 h-3.5 text-[#317786]" />
-                      <span>
-                        ETA:{" "}
-                        <strong className="text-[#053845]">{donor.estimatedArrival}</strong>
-                      </span>
-                    </span>
-                  )}
-                </div>
-
-                {/* 6. Compact 4-Stage Donor Journey Tracker */}
-                <div className="pt-1 space-y-2.5">
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <div className="flex flex-wrap items-center gap-3 shrink-0">
                     <span className="font-semibold text-[#053845]">
-                      Journey: {getCurrentStageLabel(donor.transitStatus)}
+                      {getCurrentStageLabel(donor.transitStatus)}
                     </span>
-
-                    <span
-                      className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${
-                        donor.transitStatus === "COMPLETED"
-                          ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                          : "bg-[#FAF6EE] text-slate-600 border-[#F3E9D1]"
-                      }`}
-                    >
-                      {donor.transitStatus === "COMPLETED" ? (
-                        <>
-                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                          <span>Blood Received</span>
-                        </>
-                      ) : (
-                        <>
-                          <Clock className="w-3 h-3 text-[#317786]" />
-                          <span>Awaiting Hospital Confirmation</span>
-                        </>
-                      )}
+                    {donor.estimatedArrival && (
+                      <span className="inline-flex items-center gap-1 text-slate-600">
+                        <Clock className="w-3.5 h-3.5 text-[#317786]" />
+                        <span>
+                          ETA: <strong className="text-[#053845]">{donor.estimatedArrival}</strong>
+                        </span>
+                      </span>
+                    )}
+                    <span className="inline-flex items-center gap-1 text-[#317786] font-semibold group-hover:translate-x-0.5 transition-transform">
+                      <span>Details</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
                     </span>
-                  </div>
-
-                  <div className="grid grid-cols-4 gap-1.5 sm:gap-2 text-center">
-                    {stages.map((stage, idx) => {
-                      const isCompleted = currentStageNum > stage.num;
-                      const isCurrent = currentStageNum === stage.num;
-                      const Icon = stage.icon;
-                      const leftActive = currentStageNum >= stage.num;
-                      const rightActive = currentStageNum > stage.num;
-
-                      const nodeClass = isCurrent
-                        ? stage.num === 3
-                          ? "bg-[#B94F30] text-white ring-2 ring-[#EFA27E]/50"
-                          : "bg-[#053845] text-white ring-2 ring-[#317786]/25"
-                        : isCompleted
-                        ? "bg-[#317786] text-white"
-                        : "bg-white border border-[#F3E9D1] text-slate-400";
-
-                      return (
-                        <div key={stage.num} className="space-y-1">
-                          <div className="flex items-center">
-                            <div
-                              className={`w-full h-1 rounded-l-full ${
-                                idx === 0
-                                  ? "bg-transparent"
-                                  : leftActive
-                                  ? "bg-[#317786]"
-                                  : "bg-[#F3E9D1]"
-                              }`}
-                            />
-                            <div
-                              className={`w-6 h-6 sm:w-7 sm:h-7 rounded-full flex items-center justify-center shrink-0 transition-colors ${nodeClass}`}
-                            >
-                              <Icon className="w-3.5 h-3.5" />
-                            </div>
-                            <div
-                              className={`w-full h-1 rounded-r-full ${
-                                idx === stages.length - 1
-                                  ? "bg-transparent"
-                                  : rightActive
-                                  ? "bg-[#317786]"
-                                  : "bg-[#F3E9D1]"
-                              }`}
-                            />
-                          </div>
-                          <span
-                            className={`block text-[11px] font-semibold leading-tight ${
-                              isCompleted || isCurrent ? "text-[#053845]" : "text-slate-400"
-                            }`}
-                          >
-                            {stage.num}. {stage.label}
-                          </span>
-                          <span className="hidden sm:block text-[10px] text-slate-500">
-                            {stage.sub}
-                          </span>
-                        </div>
-                      );
-                    })}
                   </div>
                 </div>
-
-                {donor.notes && (
-                  <p className="text-xs text-slate-500 pt-1 border-t border-[#F3E9D1]/60">
-                    Note: {donor.notes}
-                  </p>
-                )}
               </article>
             );
           })}

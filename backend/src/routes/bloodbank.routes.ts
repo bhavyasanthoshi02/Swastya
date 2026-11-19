@@ -21,13 +21,20 @@ const PUBLIC_BLOOD_BANK_SELECT = {
     createdat: true,
 };
 
-function extractOptionalUser(req: Request): { userid: string; role: string } | null {
+async function extractOptionalUser(req: Request): Promise<{ userid: string; role: string } | null> {
     try {
         const authHeader = req.headers.authorization;
         if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
         const token = authHeader.split(" ")[1];
         if (!token) return null;
-        return jwt.verify(token, getJwtSecret(), { algorithms: ["HS256"] }) as { userid: string; role: string };
+        const decoded = jwt.verify(token, getJwtSecret(), { algorithms: ["HS256"] }) as { userid?: string };
+        if (!decoded?.userid || !UUID_REGEX.test(decoded.userid)) return null;
+        const dbUser = await prisma.users.findUnique({
+            where: { userid: decoded.userid },
+            select: { userid: true, role: true, isactive: true },
+        });
+        if (!dbUser || !dbUser.isactive) return null;
+        return { userid: dbUser.userid, role: dbUser.role };
     } catch {
         return null;
     }
@@ -51,26 +58,24 @@ async function validateClinicalSignOffUsers(
         prisma.bloodbanks.findUnique({ where: { bloodbankid: bloodBankId }, select: { userid: true } }),
     ]);
 
-    if (!tester || !tester.isactive) {
-        return { ok: false, status: 400, message: "Clinical tester account does not exist or is inactive" };
-    }
-    if (!verifier || !verifier.isactive) {
-        return { ok: false, status: 400, message: "Clinical verifier account does not exist or is inactive" };
-    }
-
     const allowedRoles = new Set(["BLOOD_BANK", "ADMIN"]);
-    if (!allowedRoles.has(tester.role) || !allowedRoles.has(verifier.role)) {
-        return { ok: false, status: 403, message: "Both clinical sign-off users must hold BLOOD_BANK or ADMIN role" };
+    if (
+        !tester || !tester.isactive || !allowedRoles.has(tester.role) ||
+        !verifier || !verifier.isactive || !allowedRoles.has(verifier.role)
+    ) {
+        return { ok: false, status: 403, message: "Clinical sign-off accounts are invalid, inactive, or not authorized for this blood bank" };
     }
 
-    // If a non-ADMIN verifier is BLOOD_BANK, ensure they belong to this blood bank or are not an unrelated external facility
-    if (verifier.role === "BLOOD_BANK" && bloodBank && verifier.userid !== bloodBank.userid) {
-        const otherFacility = await prisma.bloodbanks.findUnique({
-            where: { userid: verifier.userid },
-            select: { bloodbankid: true },
-        });
-        if (otherFacility && otherFacility.bloodbankid !== bloodBankId) {
-            return { ok: false, status: 403, message: "Clinical verifier belongs to a different blood bank facility" };
+    // Both tester and verifier with BLOOD_BANK role must belong strictly to THIS blood bank (never another facility)
+    for (const actor of [tester, verifier]) {
+        if (actor.role === "BLOOD_BANK" && bloodBank && actor.userid !== bloodBank.userid) {
+            const otherFacility = await prisma.bloodbanks.findUnique({
+                where: { userid: actor.userid },
+                select: { bloodbankid: true },
+            });
+            if (!otherFacility || otherFacility.bloodbankid !== bloodBankId) {
+                return { ok: false, status: 403, message: "Clinical sign-off user is not authorized for this blood bank facility" };
+            }
         }
     }
 
@@ -113,6 +118,7 @@ const SAFE_USER_SELECT = {
 router.get("/", async (_req: Request, res: Response) => {
     try {
         const bloodbanks = await prisma.bloodbanks.findMany({
+            where: { approvalstatus: "APPROVED" },
             select: PUBLIC_BLOOD_BANK_SELECT,
             orderBy: { bloodbankname: "asc" },
         });
@@ -837,7 +843,7 @@ router.get("/:id", async (req: Request, res: Response) => {
             });
         }
 
-        const caller = extractOptionalUser(req);
+        const caller = await extractOptionalUser(req);
         const bloodbank = await prisma.bloodbanks.findUnique({
             where: {
                 bloodbankid: bloodBankId,
@@ -1096,6 +1102,12 @@ router.put(
                     });
                 }
                 if (cleanLicense !== bloodBank.licensenumber) {
+                    if (currentUser.role !== "ADMIN") {
+                        return res.status(403).json({
+                            success: false,
+                            message: "Only administrators can modify a verified blood bank license number",
+                        });
+                    }
                     const duplicate = await prisma.bloodbanks.findUnique({
                         where: { licensenumber: cleanLicense },
                     });
@@ -1329,6 +1341,7 @@ router.get(
     authenticate,
     authorize("BLOOD_BANK", "ADMIN"),
     checkBloodBankOwnership,
+    requireApprovedBloodBank,
     async (req: Request, res: Response) => {
         try {
             const bloodBankId = (Array.isArray(req.params.bloodBankId) ? req.params.bloodBankId[0] : req.params.bloodBankId) as string;
@@ -1383,6 +1396,7 @@ router.get(
     authenticate,
     authorize("BLOOD_BANK", "ADMIN"),
     checkBloodBankOwnership,
+    requireApprovedBloodBank,
     async (req: Request, res: Response) => {
         try {
             const currentUser = (req as any).user;
@@ -1400,8 +1414,8 @@ router.get(
                 select: {
                     userid: true,
                     name: true,
-                    email: true,
                     role: true,
+                    ...(currentUser.role === "ADMIN" ? { email: true } : {}),
                 },
                 orderBy: { name: "asc" },
             });
@@ -1551,6 +1565,7 @@ router.get(
     authenticate,
     authorize("BLOOD_BANK", "ADMIN"),
     checkBloodBankOwnership,
+    requireApprovedBloodBank,
     async (req: Request, res: Response) => {
         try {
             const bloodBankId = (Array.isArray(req.params.bloodBankId) ? req.params.bloodBankId[0] : req.params.bloodBankId) as string;
@@ -1604,6 +1619,7 @@ router.get(
     authenticate,
     authorize("BLOOD_BANK", "ADMIN"),
     checkBloodBankOwnership,
+    requireApprovedBloodBank,
     async (req: Request, res: Response) => {
         try {
             const bloodBankId = (Array.isArray(req.params.bloodBankId) ? req.params.bloodBankId[0] : req.params.bloodBankId) as string;
@@ -1720,12 +1736,23 @@ router.post(
             const { requestId, requestedUnits, specificUnitIds, assignmentId, assignmentid, requestedunitids, quantity } = req.body;
             let targetRequestId = requestId || req.body.requestid;
             if (!targetRequestId && (assignmentId || assignmentid)) {
-                const assignmentRecord = await prisma.requisitionassignments.findUnique({
-                    where: { assignmentid: assignmentId || assignmentid },
-                });
-                if (assignmentRecord) {
-                    targetRequestId = assignmentRecord.requestid;
+                const rawAssignId = String(assignmentId || assignmentid);
+                if (!UUID_REGEX.test(rawAssignId)) {
+                    return res.status(404).json({
+                        success: false,
+                        message: "Requisition assignment not found for this blood bank",
+                    });
                 }
+                const assignmentRecord = await prisma.requisitionassignments.findFirst({
+                    where: { assignmentid: rawAssignId, bloodbankid: bloodBankId },
+                });
+                if (!assignmentRecord) {
+                    return res.status(404).json({
+                        success: false,
+                        message: "Requisition assignment not found for this blood bank",
+                    });
+                }
+                targetRequestId = assignmentRecord.requestid;
             }
             const specificUnits = specificUnitIds || requestedunitids;
             const unitsCount = requestedUnits ?? quantity ?? (specificUnits ? specificUnits.length : 1);
@@ -1767,6 +1794,7 @@ router.get(
     authenticate,
     authorize("BLOOD_BANK", "ADMIN"),
     checkBloodBankOwnership,
+    requireApprovedBloodBank,
     async (req: Request, res: Response) => {
         try {
             const bloodBankId = (Array.isArray(req.params.bloodBankId) ? req.params.bloodBankId[0] : req.params.bloodBankId) as string;

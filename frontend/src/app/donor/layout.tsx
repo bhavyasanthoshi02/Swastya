@@ -109,8 +109,18 @@ export default function DonorLayout({
       verifyAndLoadProfile();
     };
 
+    const handleStorageChange = (event: StorageEvent) => {
+      if (event.key === null || event.key === "swastya_auth_token" || event.key === "swastya_auth_user") {
+        verifyAndLoadProfile();
+      }
+    };
+
     window.addEventListener("swastya-auth-change", handleAuthChange);
-    return () => window.removeEventListener("swastya-auth-change", handleAuthChange);
+    window.addEventListener("storage", handleStorageChange);
+    return () => {
+      window.removeEventListener("swastya-auth-change", handleAuthChange);
+      window.removeEventListener("storage", handleStorageChange);
+    };
   }, [verifyAndLoadProfile]);
 
   if (isVerifying) {

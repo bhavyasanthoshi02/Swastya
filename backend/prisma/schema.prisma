@@ -278,10 +278,21 @@ model broadcastdeliveries {
   transitstatus       String?              @db.VarChar(50)
   transitnotes        String?
   estimatedarrival    String?              @db.VarChar(100)
-  startedat           DateTime?            @db.Timestamp(6)
-  reachedat           DateTime?            @db.Timestamp(6)
-  completedat         DateTime?            @db.Timestamp(6)
-  createdat           DateTime?            @default(now()) @db.Timestamp(6)
+  startedat                DateTime?            @db.Timestamp(6)
+  reachedat                DateTime?            @db.Timestamp(6)
+  completedat              DateTime?            @db.Timestamp(6)
+  acceptancestatus         String?              @default("PENDING") @db.VarChar(30)
+  acceptedat               DateTime?            @db.Timestamp(6)
+  acceptedbyuserid         String?              @db.Uuid
+  rejectedat               DateTime?            @db.Timestamp(6)
+  rejectedbyuserid         String?              @db.Uuid
+  receiptconfirmedat       DateTime?            @db.Timestamp(6)
+  receiptconfirmedbyuserid String?              @db.Uuid
+  receiptfileurl           String?
+  receiptfilename          String?              @db.VarChar(255)
+  receiptmimetype          String?              @db.VarChar(100)
+  receiptfilesize          Int?
+  createdat                DateTime?            @default(now()) @db.Timestamp(6)
   updatedat           DateTime?            @default(now()) @db.Timestamp(6)
   emergencybroadcasts emergencybroadcasts  @relation(fields: [broadcastid], references: [broadcastid], onDelete: Cascade, onUpdate: NoAction, map: "fk_delivery_broadcast")
   bloodrequests       bloodrequests        @relation(fields: [requestid], references: [requestid], onDelete: Cascade, onUpdate: NoAction, map: "fk_delivery_request")

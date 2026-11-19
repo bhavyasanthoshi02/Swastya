@@ -455,35 +455,46 @@ router.get("/me/dashboard", authenticate, authorize("DONOR", "ADMIN"), async (re
             // Active requests (filtered by component-aware compatibility & eligibility below)
             canMatch
                 ? prisma.bloodrequests.findMany({
-                      where: {
-                          status: { in: ACTIVE_REQUEST_STATUSES },
-                      },
-                      include: {
-                          hospitals: {
-                              select: {
-                                  hospitalid: true,
-                                  hospitalname: true,
-                                  city: true,
-                                  address: true,
-                                  contactpersonname: true,
-                                  contactpersonphone: true,
-                              },
-                          },
-                          requesters: {
-                              select: {
-                                  requesterid: true,
-                                  city: true,
-                                  state: true,
-                              },
-                          },
-                      },
-                      orderBy: [
-                          { isemergency: "desc" },
-                          { urgencylevel: "desc" },
-                          { createdat: "desc" },
-                      ],
-                      take: 50,
-                  })
+                    where: {
+                        status: { in: ACTIVE_REQUEST_STATUSES },
+                    },
+                    include: {
+                        hospitals: {
+                            select: {
+                                hospitalid: true,
+                                hospitalname: true,
+                                city: true,
+                                state: true,
+                                address: true,
+                                contactpersonname: true,
+                                contactpersonphone: true,
+                                latitude: true,
+                                longitude: true,
+                            },
+                        },
+                        requesters: {
+                            select: {
+                                requesterid: true,
+                                city: true,
+                                state: true,
+                                latitude: true,
+                                longitude: true,
+                            },
+                        },
+                        prescription: {
+                            select: {
+                                status: true,
+                                hospitalname: true,
+                            },
+                        },
+                    },
+                    orderBy: [
+                        { isemergency: "desc" },
+                        { urgencylevel: "desc" },
+                        { createdat: "desc" },
+                    ],
+                    take: 50,
+                })
                 : Promise.resolve([]),
 
             // Unread notifications count
@@ -536,14 +547,25 @@ router.get("/me/dashboard", authenticate, authorize("DONOR", "ADMIN"), async (re
 
         // Check which matching requests the donor has already volunteered for (from durable broadcastdeliveries and legacy notifications)
         const matchingIds = matchingRequests.map((r) => r.requestid);
-        const [myDeliveries, myVolunteeredNotifications] = await Promise.all([
+        const [myDeliveries, myVolunteeredNotifications, myAllDeliveries] = await Promise.all([
             prisma.broadcastdeliveries.findMany({
                 where: {
                     donoruserid: user.userid,
                     requestid: { in: matchingIds },
                     response: "ACCEPTED",
                 },
-                select: { requestid: true },
+                select: {
+                    requestid: true,
+                    deliveryid: true,
+                    acceptancestatus: true,
+                    acceptedat: true,
+                    rejectedat: true,
+                    transitstatus: true,
+                    startedat: true,
+                    reachedat: true,
+                    completedat: true,
+                    receiptconfirmedat: true,
+                },
             }),
             prisma.notification.findMany({
                 where: {
@@ -554,15 +576,145 @@ router.get("/me/dashboard", authenticate, authorize("DONOR", "ADMIN"), async (re
                 },
                 select: { requestid: true },
             }),
+            prisma.broadcastdeliveries.findMany({
+                where: {
+                    donoruserid: user.userid,
+                    response: "ACCEPTED",
+                },
+                orderBy: { respondedat: "desc" },
+                take: 25,
+                include: {
+                    bloodrequests: {
+                        include: {
+                            hospitals: {
+                                select: {
+                                    hospitalid: true,
+                                    hospitalname: true,
+                                    address: true,
+                                    city: true,
+                                    state: true,
+                                    pincode: true,
+                                    contactpersonname: true,
+                                    contactpersonphone: true,
+                                    latitude: true,
+                                    longitude: true,
+                                },
+                            },
+                            requesters: {
+                                select: {
+                                    requesterid: true,
+                                    city: true,
+                                    state: true,
+                                    pincode: true,
+                                    latitude: true,
+                                    longitude: true,
+                                },
+                            },
+                        },
+                    },
+                },
+            }),
         ]);
+        const myDeliveryByRequest = new Map(myDeliveries.map((d) => [d.requestid, d]));
         const myRespondedSet = new Set([
             ...myDeliveries.map((d) => d.requestid),
             ...myVolunteeredNotifications.map((v) => v.requestid),
         ]);
 
-        const sanitizedMatchingRequests = matchingRequests.map((r) =>
-            sanitizeRequestForDonor(r, myRespondedSet.has(r.requestid))
-        );
+        const donorLat = donor.latitude != null ? Number(donor.latitude) : null;
+        const donorLng = donor.longitude != null ? Number(donor.longitude) : null;
+
+        const sanitizedMatchingRequests = matchingRequests.map((r) => {
+            const sanitized = sanitizeRequestForDonor(r, myRespondedSet.has(r.requestid));
+            const reqLat = r.latitude != null
+                ? Number(r.latitude)
+                : (r.hospitals?.latitude != null
+                    ? Number(r.hospitals.latitude)
+                    : (r.requesters?.latitude != null ? Number(r.requesters.latitude) : null));
+            const reqLng = r.longitude != null
+                ? Number(r.longitude)
+                : (r.hospitals?.longitude != null
+                    ? Number(r.hospitals.longitude)
+                    : (r.requesters?.longitude != null ? Number(r.requesters.longitude) : null));
+
+            let distanceKm: number | null = null;
+            let distanceDisplay = "Distance unavailable";
+            let locationMatch: "COORDINATES" | "CITY_FALLBACK" | "NONE" = "NONE";
+
+            if (donorLat !== null && donorLng !== null && reqLat !== null && reqLng !== null) {
+                const locEval = evaluateLocationDistance(donorLat, donorLng, reqLat, reqLng, r.searchradius || 15);
+                distanceKm = locEval.distanceKm;
+                distanceDisplay = locEval.distanceDisplay;
+                locationMatch = "COORDINATES";
+            } else if (r.hospitals?.city || r.requesters?.city) {
+                distanceDisplay = "Distance unavailable - City match";
+                locationMatch = "CITY_FALLBACK";
+            }
+
+            delete (sanitized as any).latitude;
+            delete (sanitized as any).longitude;
+            if (sanitized.hospitals) {
+                delete (sanitized.hospitals as any).latitude;
+                delete (sanitized.hospitals as any).longitude;
+            }
+            if (sanitized.requesters) {
+                delete (sanitized.requesters as any).latitude;
+                delete (sanitized.requesters as any).longitude;
+            }
+
+            const delivery = myDeliveryByRequest.get(r.requestid);
+            return {
+                ...sanitized,
+                distanceKm,
+                distanceDisplay,
+                locationMatch,
+                myCommitment: delivery
+                    ? {
+                        deliveryId: delivery.deliveryid,
+                        acceptanceStatus: delivery.acceptancestatus || "PENDING",
+                        acceptedAt: delivery.acceptedat,
+                        rejectedAt: delivery.rejectedat,
+                        transitStatus: delivery.transitstatus || "DONOR_FOUND",
+                        startedAt: delivery.startedat,
+                        reachedAt: delivery.reachedat,
+                        completedAt: delivery.completedat,
+                        receiptConfirmedAt: delivery.receiptconfirmedat,
+                    }
+                    : null,
+            };
+        });
+
+        const myCommitments = myAllDeliveries
+            .filter((d) => Boolean(d.bloodrequests))
+            .map((d) => {
+                const reqObj = d.bloodrequests;
+                const sanitized = sanitizeRequestForDonor(reqObj, true);
+                delete (sanitized as any).latitude;
+                delete (sanitized as any).longitude;
+                if (sanitized.hospitals) {
+                    delete (sanitized.hospitals as any).latitude;
+                    delete (sanitized.hospitals as any).longitude;
+                }
+                if (sanitized.requesters) {
+                    delete (sanitized.requesters as any).latitude;
+                    delete (sanitized.requesters as any).longitude;
+                }
+                return {
+                    ...sanitized,
+                    myCommitment: {
+                        deliveryId: d.deliveryid,
+                        acceptanceStatus: d.acceptancestatus || "PENDING",
+                        acceptedAt: d.acceptedat,
+                        rejectedAt: d.rejectedat,
+                        transitStatus: d.transitstatus || "DONOR_FOUND",
+                        startedAt: d.startedat,
+                        reachedAt: d.reachedat,
+                        completedAt: d.completedat,
+                        receiptConfirmedAt: d.receiptconfirmedat,
+                        respondedAt: d.respondedat,
+                    },
+                };
+            });
 
         return res.status(200).json({
             success: true,
@@ -576,6 +728,7 @@ router.get("/me/dashboard", authenticate, authorize("DONOR", "ADMIN"), async (re
             },
             eligibility,
             matchingRequests: sanitizedMatchingRequests,
+            myCommitments,
             lastDonation,
             recentActivities,
         });
@@ -688,6 +841,12 @@ router.get("/me/matching-requests", authenticate, authorize("DONOR", "ADMIN"), a
                         longitude: true,
                     },
                 },
+                prescription: {
+                    select: {
+                        status: true,
+                        hospitalname: true,
+                    },
+                },
             },
         });
 
@@ -794,14 +953,25 @@ router.get("/me/matching-requests", authenticate, authorize("DONOR", "ADMIN"), a
 
         // Check which requests the current donor has already volunteered for (from durable broadcastdeliveries and legacy notifications)
         const requestIds = paginated.map((item) => item.request.requestid);
-        const [myDeliveries, myVolunteeredNotifications] = await Promise.all([
+        const [myDeliveries, myVolunteeredNotifications, myAllDeliveries] = await Promise.all([
             prisma.broadcastdeliveries.findMany({
                 where: {
                     donoruserid: user.userid,
                     requestid: { in: requestIds },
                     response: "ACCEPTED",
                 },
-                select: { requestid: true },
+                select: {
+                    requestid: true,
+                    deliveryid: true,
+                    acceptancestatus: true,
+                    acceptedat: true,
+                    rejectedat: true,
+                    transitstatus: true,
+                    startedat: true,
+                    reachedat: true,
+                    completedat: true,
+                    receiptconfirmedat: true,
+                },
             }),
             prisma.notification.findMany({
                 where: {
@@ -812,7 +982,42 @@ router.get("/me/matching-requests", authenticate, authorize("DONOR", "ADMIN"), a
                 },
                 select: { requestid: true },
             }),
+            prisma.broadcastdeliveries.findMany({
+                where: {
+                    donoruserid: user.userid,
+                    response: "ACCEPTED",
+                },
+                orderBy: { respondedat: "desc" },
+                take: 50,
+                include: {
+                    bloodrequests: {
+                        include: {
+                            hospitals: {
+                                select: {
+                                    hospitalid: true,
+                                    hospitalname: true,
+                                    address: true,
+                                    city: true,
+                                    state: true,
+                                    pincode: true,
+                                    contactpersonname: true,
+                                    contactpersonphone: true,
+                                },
+                            },
+                            requesters: {
+                                select: {
+                                    requesterid: true,
+                                    city: true,
+                                    state: true,
+                                    pincode: true,
+                                },
+                            },
+                        },
+                    },
+                },
+            }),
         ]);
+        const myDeliveryByRequest = new Map(myDeliveries.map((d) => [d.requestid, d]));
         const myRespondedSet = new Set([
             ...myDeliveries.map((d) => d.requestid),
             ...myVolunteeredNotifications.map((v) => v.requestid),
@@ -833,14 +1038,59 @@ router.get("/me/matching-requests", authenticate, authorize("DONOR", "ADMIN"), a
                 delete (sanitized.requesters as any).longitude;
             }
 
+            const delivery = myDeliveryByRequest.get(item.request.requestid);
             return {
                 ...sanitized,
                 distanceKm: item.distanceKm,
                 distanceDisplay: item.distanceDisplay,
                 locationMatch: item.locationMatch,
                 searchradius: item.request.searchradius || 5,
+                myCommitment: delivery
+                    ? {
+                        deliveryId: delivery.deliveryid,
+                        acceptanceStatus: delivery.acceptancestatus || "PENDING",
+                        acceptedAt: delivery.acceptedat,
+                        rejectedAt: delivery.rejectedat,
+                        transitStatus: delivery.transitstatus || "DONOR_FOUND",
+                        startedAt: delivery.startedat,
+                        reachedAt: delivery.reachedat,
+                        completedAt: delivery.completedat,
+                        receiptConfirmedAt: delivery.receiptconfirmedat,
+                    }
+                    : null,
             };
         });
+
+        const myCommitments = myAllDeliveries
+            .filter((d) => Boolean(d.bloodrequests))
+            .map((d) => {
+                const sanitized = sanitizeRequestForDonor(d.bloodrequests, true);
+                delete (sanitized as any).latitude;
+                delete (sanitized as any).longitude;
+                if (sanitized.hospitals) {
+                    delete (sanitized.hospitals as any).latitude;
+                    delete (sanitized.hospitals as any).longitude;
+                }
+                if (sanitized.requesters) {
+                    delete (sanitized.requesters as any).latitude;
+                    delete (sanitized.requesters as any).longitude;
+                }
+                return {
+                    ...sanitized,
+                    myCommitment: {
+                        deliveryId: d.deliveryid,
+                        acceptanceStatus: d.acceptancestatus || "PENDING",
+                        acceptedAt: d.acceptedat,
+                        rejectedAt: d.rejectedat,
+                        transitStatus: d.transitstatus || "DONOR_FOUND",
+                        startedAt: d.startedat,
+                        reachedAt: d.reachedat,
+                        completedAt: d.completedat,
+                        receiptConfirmedAt: d.receiptconfirmedat,
+                        respondedAt: d.respondedat,
+                    },
+                };
+            });
 
         return res.status(200).json({
             success: true,
@@ -857,6 +1107,7 @@ router.get("/me/matching-requests", authenticate, authorize("DONOR", "ADMIN"), a
             page,
             limit,
             requests: sanitizedRequests,
+            myCommitments,
         });
     } catch (error) {
         console.error("Error fetching matching blood requests:", error);
@@ -1072,28 +1323,30 @@ router.get(
                 prisma.donationhistory.findMany({
                     where: { donorid: donor.donorid },
                     include: {
-                        hospitals: true,
-                        bloodbanks: true,
-                        bloodrequests: true,
+                        hospitals: { select: { hospitalid: true, hospitalname: true, city: true, state: true } },
+                        bloodbanks: { select: { bloodbankid: true, bloodbankname: true, city: true, state: true } },
+                        bloodrequests: { select: { requestid: true, patientname: true, bloodgroup: true, bloodcomponent: true, unitsrequired: true } },
                     },
                     orderBy: { donationdate: "desc" },
                     take: 5,
                 }),
-                prisma.bloodrequests.findMany({
-                    where: {
-                        bloodgroup: { in: compatibleGroups },
-                        status: { in: ACTIVE_REQUEST_STATUSES },
-                    },
-                    include: {
-                        hospitals: true,
-                        requesters: true,
-                    },
-                    orderBy: [
-                        { isemergency: "desc" },
-                        { urgencylevel: "desc" },
-                    ],
-                    take: 5,
-                }),
+                donor.availabilitystatus === "AVAILABLE" && donor.iseligible !== false && eligibility.isEligible
+                    ? prisma.bloodrequests.findMany({
+                        where: {
+                            bloodgroup: { in: compatibleGroups },
+                            status: { in: ACTIVE_REQUEST_STATUSES },
+                        },
+                        include: {
+                            hospitals: { select: { hospitalid: true, hospitalname: true, address: true, city: true, state: true, pincode: true } },
+                            requesters: { select: { requesterid: true, city: true, state: true } },
+                        },
+                        orderBy: [
+                            { isemergency: "desc" },
+                            { urgencylevel: "desc" },
+                        ],
+                        take: 5,
+                    })
+                    : Promise.resolve([]),
                 prisma.bloodrequests.count({
                     where: {
                         bloodgroup: { in: compatibleGroups },
@@ -1122,7 +1375,12 @@ router.get(
                     unreadNotificationsCount,
                 },
                 eligibility,
-                matchingRequests: matchingRequests.map((r) => sanitizeRequestForDonor(r, false)),
+                matchingRequests: matchingRequests.map((r) => {
+                    const sanitized = sanitizeRequestForDonor(r, false);
+                    delete (sanitized as any).latitude;
+                    delete (sanitized as any).longitude;
+                    return sanitized;
+                }),
                 lastDonation: donationHistory[0] || null,
             });
         } catch (error) {
@@ -1160,28 +1418,38 @@ router.get(
             }
 
             const targetGroups = RECIPIENT_COMPATIBILITY_MAP[donor.bloodgroup] || [donor.bloodgroup];
+            const eligibility = computeEligibility(donor);
+            const canMatch = donor.availabilitystatus === "AVAILABLE" && donor.iseligible !== false && eligibility.isEligible;
 
-            const requests = await prisma.bloodrequests.findMany({
-                where: {
-                    bloodgroup: { in: targetGroups },
-                    status: { in: ACTIVE_REQUEST_STATUSES },
-                },
-                include: {
-                    hospitals: true,
-                    requesters: true,
-                },
-                orderBy: [
-                    { isemergency: "desc" },
-                    { urgencylevel: "desc" },
-                ],
-            });
+            const requests = canMatch
+                ? await prisma.bloodrequests.findMany({
+                    where: {
+                        bloodgroup: { in: targetGroups },
+                        status: { in: ACTIVE_REQUEST_STATUSES },
+                    },
+                    include: {
+                        hospitals: { select: { hospitalid: true, hospitalname: true, address: true, city: true, state: true, pincode: true } },
+                        requesters: { select: { requesterid: true, city: true, state: true } },
+                    },
+                    orderBy: [
+                        { isemergency: "desc" },
+                        { urgencylevel: "desc" },
+                    ],
+                    take: 25,
+                })
+                : [];
 
             return res.status(200).json({
                 success: true,
                 donorBloodGroup: donor.bloodgroup,
                 compatibleGroups: targetGroups,
                 total: requests.length,
-                requests: requests.map((r) => sanitizeRequestForDonor(r, false)),
+                requests: requests.map((r) => {
+                    const sanitized = sanitizeRequestForDonor(r, false);
+                    delete (sanitized as any).latitude;
+                    delete (sanitized as any).longitude;
+                    return sanitized;
+                }),
             });
         } catch (error) {
             console.error("Error fetching matching requests:", error);
@@ -1209,9 +1477,9 @@ router.get(
             const history = await prisma.donationhistory.findMany({
                 where: { donorid: donorId },
                 include: {
-                    hospitals: true,
-                    bloodbanks: true,
-                    bloodrequests: true,
+                    hospitals: { select: { hospitalid: true, hospitalname: true, city: true, state: true } },
+                    bloodbanks: { select: { bloodbankid: true, bloodbankname: true, city: true, state: true } },
+                    bloodrequests: { select: { requestid: true, patientname: true, bloodgroup: true, bloodcomponent: true, unitsrequired: true } },
                 },
                 orderBy: { donationdate: "desc" },
             });
@@ -1265,9 +1533,9 @@ router.get(
                 prisma.donationhistory.findFirst({
                     where: { donorid: donorId },
                     include: {
-                        hospitals: true,
-                        bloodbanks: true,
-                        bloodrequests: true,
+                        hospitals: { select: { hospitalid: true, hospitalname: true, city: true, state: true } },
+                        bloodbanks: { select: { bloodbankid: true, bloodbankname: true, city: true, state: true } },
+                        bloodrequests: { select: { requestid: true, patientname: true, bloodgroup: true, bloodcomponent: true, unitsrequired: true } },
                     },
                     orderBy: { donationdate: "desc" },
                 }),
@@ -1340,41 +1608,41 @@ router.get(
     authorize("DONOR", "ADMIN"),
     checkDonorOwnership,
     async (req: Request, res: Response) => {
-    try {
-        const donorId = (Array.isArray(req.params.donorId) ? req.params.donorId[0] : req.params.donorId) as string;
+        try {
+            const donorId = (Array.isArray(req.params.donorId) ? req.params.donorId[0] : req.params.donorId) as string;
 
-        const donor = await prisma.donors.findUnique({
-            where: { donorid: donorId },
-            include: {
-                users: {
-                    select: {
-                        userid: true,
-                        name: true,
-                        email: true,
-                        phonenumber: true,
-                        role: true,
-                        isactive: true,
+            const donor = await prisma.donors.findUnique({
+                where: { donorid: donorId },
+                include: {
+                    users: {
+                        select: {
+                            userid: true,
+                            name: true,
+                            email: true,
+                            phonenumber: true,
+                            role: true,
+                            isactive: true,
+                        },
                     },
                 },
-            },
-        });
+            });
 
-        if (!donor) {
-            return res.status(404).json({
+            if (!donor) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Donor not found",
+                });
+            }
+
+            return res.status(200).json(donor);
+        } catch (error) {
+            console.error("Error fetching donor:", error);
+            return res.status(500).json({
                 success: false,
-                message: "Donor not found",
+                message: "Failed to fetch donor",
             });
         }
-
-        return res.status(200).json(donor);
-    } catch (error) {
-        console.error("Error fetching donor:", error);
-        return res.status(500).json({
-            success: false,
-            message: "Failed to fetch donor",
-        });
-    }
-});
+    });
 
 /*
  * CREATE DONOR PROFILE
@@ -1588,8 +1856,7 @@ router.put(
 router.delete(
     "/:donorId",
     authenticate,
-    authorize("DONOR", "ADMIN"),
-    checkDonorOwnership,
+    authorize("ADMIN"),
     async (req: Request, res: Response) => {
         try {
             const donorId = (Array.isArray(req.params.donorId) ? req.params.donorId[0] : req.params.donorId) as string;

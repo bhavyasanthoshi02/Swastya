@@ -8,36 +8,26 @@ import {
   Heart,
   Compass,
   ArrowRight,
-  Sparkles,
-  Info,
   Loader2,
   AlertCircle,
   RefreshCw,
 } from "lucide-react";
 import { MatchingRequestsPreview } from "@/components/donor/MatchingRequestsPreview";
-import { MyLastDonationCard } from "@/components/donor/MyLastDonationCard";
 import { DonorProfileSummary } from "@/components/donor/DonorProfileSummary";
-import { RecentActivityPreview } from "@/components/donor/RecentActivityPreview";
 import {
   DonorProfile,
   RequestPreviewItem,
-  RecentActivityItem,
-  LastDonationRecord,
 } from "@/components/donor/DonorTypes";
 import { api } from "@/lib/api";
 import {
   mapBackendDonorToProfile,
   mapBackendRequestToPreview,
-  mapBackendHistoryToRecord,
-  formatTimeAgo,
-  cleanNotificationMessage,
 } from "@/lib/mappers";
 
 export default function DonorDashboardOverviewPage() {
   const [profile, setProfile] = useState<DonorProfile | null>(null);
   const [matchingRequests, setMatchingRequests] = useState<RequestPreviewItem[]>([]);
-  const [lastDonation, setLastDonation] = useState<LastDonationRecord | null>(null);
-  const [recentActivities, setRecentActivities] = useState<RecentActivityItem[]>([]);
+  const [transitUpdatingId, setTransitUpdatingId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -48,53 +38,43 @@ export default function DonorDashboardOverviewPage() {
       const res = await api.donor.getDashboard();
 
       if (res.success) {
+        const donorRecord = res.donor as unknown as {
+          users?: {
+            userid?: string;
+            name?: string;
+            email?: string;
+            phonenumber?: string | null;
+          };
+        };
+
         const mappedProfile = mapBackendDonorToProfile(
           res.donor,
-          (res.donor as any)?.users,
+          donorRecord?.users,
           res.stats,
           res.eligibility
         );
         setProfile(mappedProfile);
 
-        const mappedRequests = (res.matchingRequests || []).map(mapBackendRequestToPreview);
-        setMatchingRequests(mappedRequests);
-
-        const mappedLast = res.lastDonation ? mapBackendHistoryToRecord(res.lastDonation) : null;
-        setLastDonation(mappedLast);
-
-        if (res.recentActivities && res.recentActivities.length > 0) {
-          const mappedActs: RecentActivityItem[] = res.recentActivities.map((act: any) => ({
-            id: act.id || `ACT-${Math.random().toString(36).substring(2, 7)}`,
-            title: act.title || "Clinical Coordination Update",
-            description: cleanNotificationMessage(act.description),
-            timeAgo: formatTimeAgo(act.timestamp),
-            type: act.type === "alert" || act.type === "donation" ? act.type : "availability",
-          }));
-          setRecentActivities(mappedActs);
-        } else {
-          // Standard clinical initial records
-          setRecentActivities([
-            {
-              id: "act-initial-1",
-              title: "Voluntary Profile Active",
-              description: `Registered with ${mappedProfile.bloodGroup} voluntary coordination network.`,
-              timeAgo: "Recently",
-              type: "availability",
-            },
-            {
-              id: "act-initial-2",
-              title: "Clinical Readiness Confirmed",
-              description: "Emergency requisition perimeter monitoring online.",
-              timeAgo: "Active",
-              type: "alert",
-            },
-          ]);
+        const mappedCommitments = (res.myCommitments || []).map(mapBackendRequestToPreview);
+        const mappedMatches = (res.matchingRequests || []).map(mapBackendRequestToPreview);
+        const byRawId = new Map<string, RequestPreviewItem>();
+        for (const c of mappedCommitments) {
+          byRawId.set(c.rawId || c.id, c);
         }
+        for (const m of mappedMatches) {
+          const key = m.rawId || m.id;
+          if (!byRawId.has(key)) byRawId.set(key, m);
+        }
+        setMatchingRequests(Array.from(byRawId.values()));
       } else {
         setError("Failed to load dashboard data.");
       }
-    } catch (err: any) {
-      setError(err?.message || "Failed to connect to Swastya backend server.");
+    } catch (err: unknown) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to connect to Swastya backend server."
+      );
     } finally {
       setIsLoading(false);
     }
@@ -104,22 +84,36 @@ export default function DonorDashboardOverviewPage() {
     fetchDashboardData();
   }, []);
 
+  const handleUpdateTransit = async (
+    requestId: string,
+    status: "STARTED" | "REACHED_LOCATION",
+    deliveryId?: string
+  ) => {
+    try {
+      setTransitUpdatingId(requestId);
+      await api.bloodRequests.updateTransitStatus(requestId, status, { deliveryId });
+      await fetchDashboardData();
+    } catch (err) {
+      console.error("Failed to update donor journey status:", err);
+    } finally {
+      setTransitUpdatingId(null);
+    }
+  };
+
   const handleAvailabilityToggle = async (newStatus: "Available" | "Paused") => {
     if (!profile) return;
     const previousStatus = profile.availability;
 
-    // Optimistic UI update
     setProfile((prev) => (prev ? { ...prev, availability: newStatus } : null));
 
     try {
-      const backendStatus = newStatus === "Available" ? "AVAILABLE" : "TEMPORARILY_UNAVAILABLE";
+      const backendStatus =
+        newStatus === "Available" ? "AVAILABLE" : "TEMPORARILY_UNAVAILABLE";
       await api.donor.updateAvailability(backendStatus);
-      // Trigger global event so top navigation updates immediately
       if (typeof window !== "undefined") {
         window.dispatchEvent(new Event("swastya-auth-change"));
       }
     } catch {
-      // Revert if API fails
       setProfile((prev) => (prev ? { ...prev, availability: previousStatus } : null));
     }
   };
@@ -127,26 +121,30 @@ export default function DonorDashboardOverviewPage() {
   if (isLoading) {
     return (
       <div className="py-24 flex flex-col items-center justify-center gap-3">
-        <Loader2 className="w-8 h-8 text-[#317786] animate-spin" />
-        <p className="text-xs text-slate-500 font-medium">Loading clinical donor overview...</p>
+        <Loader2 className="w-7 h-7 text-[#317786] animate-spin" />
+        <p className="text-xs text-slate-500 font-medium">Loading your donor dashboard...</p>
       </div>
     );
   }
 
   if (error || !profile) {
     return (
-      <div className="p-8 max-w-lg mx-auto bg-white rounded-3xl border border-[#F3E9D1] text-center space-y-4 shadow-sm my-12">
-        <div className="w-12 h-12 rounded-2xl bg-[#fdf2f2] text-[#A2363A] flex items-center justify-center mx-auto">
-          <AlertCircle className="w-6 h-6" />
+      <div className="p-8 max-w-lg mx-auto bg-white rounded-2xl border border-[#F3E9D1] text-center space-y-4 shadow-2xs my-12">
+        <div className="w-11 h-11 rounded-xl bg-[#fdf2f2] text-[#A2363A] flex items-center justify-center mx-auto">
+          <AlertCircle className="w-5 h-5" />
         </div>
         <div className="space-y-1">
-          <h2 className="font-serif text-lg font-bold text-[#053845]">Dashboard Unavailable</h2>
-          <p className="text-xs text-slate-600">{error || "Could not retrieve donor information."}</p>
+          <h2 className="font-serif text-lg font-bold text-[#053845]">
+            Dashboard Unavailable
+          </h2>
+          <p className="text-xs text-slate-600">
+            {error || "Could not retrieve donor information."}
+          </p>
         </div>
         <button
           type="button"
           onClick={fetchDashboardData}
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold text-white bg-[#317786] hover:bg-[#245964] transition-all cursor-pointer shadow-xs"
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold text-white bg-[#317786] hover:bg-[#245964] transition-colors cursor-pointer"
         >
           <RefreshCw className="w-3.5 h-3.5" />
           <span>Retry Loading</span>
@@ -156,172 +154,124 @@ export default function DonorDashboardOverviewPage() {
   }
 
   return (
-    <div className="space-y-6 sm:space-y-8">
-      {/* Hero Welcome & Readiness Bar */}
-      <section className="bg-gradient-to-br from-[#053845] via-[#0b4d5e] to-[#053845] rounded-3xl p-6 sm:p-8 text-white shadow-xl relative overflow-hidden">
-        {/* Decorative background blur */}
-        <div className="absolute -right-10 -bottom-10 w-64 h-64 bg-[#EFA27E]/10 rounded-full blur-2xl pointer-events-none" />
-        <div className="absolute right-1/3 -top-10 w-48 h-48 bg-[#317786]/20 rounded-full blur-2xl pointer-events-none" />
-
-        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
-          <div className="space-y-2 max-w-xl">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 backdrop-blur-md border border-white/15 text-xs font-semibold text-[#EFA27E]">
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>Verified Voluntary Blood Donor</span>
-            </div>
-
-            <h1 className="font-serif text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight text-white leading-tight">
-              Welcome back, {profile.name}
-            </h1>
-
-            <p className="text-xs sm:text-sm text-slate-200 leading-relaxed">
-              Your registered blood group is{" "}
-              <strong className="text-[#EFA27E] font-bold">{profile.bloodGroup}</strong>. There{" "}
-              {matchingRequests.length === 1 ? "is currently" : "are currently"}{" "}
-              <strong className="text-white font-bold">
-                {matchingRequests.length} {matchingRequests.length === 1 ? "urgent requisition" : "urgent requisitions"}
-              </strong>{" "}
-              matching your blood group and coverage area.
-            </p>
+    <div className="space-y-5">
+      {/* 1. Compact Welcome Section directly on cream page background */}
+      <section className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-[#317786]/15">
+        <div className="flex items-start sm:items-center gap-3.5 min-w-0">
+          <div className="w-11 h-11 rounded-2xl bg-[#317786]/10 border border-[#317786]/20 text-[#317786] flex items-center justify-center shrink-0">
+            <Droplet className="w-5 h-5" />
           </div>
-
-          <div className="flex flex-wrap md:flex-col items-start md:items-end gap-3 shrink-0">
-            <Link
-              href="/donor/requests"
-              className="inline-flex items-center gap-2 px-5 py-3 rounded-2xl bg-[#EFA27E] hover:bg-[#EFA27E]/90 text-[#053845] font-bold text-xs sm:text-sm shadow-md transition-all hover:scale-[1.02] cursor-pointer"
-            >
-              <span>View Matching Requests</span>
-              <ArrowRight className="w-4 h-4" />
-            </Link>
-
-            <span className="text-[11px] text-slate-300 flex items-center gap-1.5 self-center md:self-auto">
-              <span className={`w-2 h-2 rounded-full ${profile.availability === "Available" ? "bg-emerald-400 animate-pulse" : "bg-slate-400"}`} />
-              <span>Status: {profile.availability}</span>
-            </span>
+          <div className="space-y-0.5 min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="font-serif text-2xl sm:text-3xl font-bold text-[#053845] tracking-tight">
+                Welcome back, {profile.name}
+              </h1>
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-[#317786]/10 border border-[#317786]/20 text-[#053845]">
+                {profile.bloodGroup}
+              </span>
+              <span
+                className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${
+                  profile.availability === "Available"
+                    ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                    : "bg-slate-100 text-slate-600 border-slate-200"
+                }`}
+              >
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${
+                    profile.availability === "Available" ? "bg-emerald-500" : "bg-slate-400"
+                  }`}
+                />
+                <span>{profile.availability}</span>
+              </span>
+            </div>
+            <p className="text-sm text-slate-600">
+              {matchingRequests.length === 0
+                ? "No active blood requests currently match your group and area."
+                : `${matchingRequests.length} ${
+                    matchingRequests.length === 1 ? "active request matches" : "active requests match"
+                  } your ${profile.bloodGroup} blood group in your coverage area.`}
+            </p>
           </div>
         </div>
 
-        {/* 4 Quick Vital Stats */}
-        <div className="relative z-10 mt-6 pt-6 border-t border-white/15 grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="space-y-0.5">
-            <span className="text-[10px] uppercase font-bold text-slate-300 tracking-wider flex items-center gap-1">
-              <ShieldCheck className="w-3 h-3 text-emerald-400" />
-              Clinical Status
-            </span>
-            <div className="font-serif text-lg sm:text-xl font-bold text-emerald-300">
+        <Link
+          href="/donor/requests"
+          className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-[#B94F30] hover:bg-[#a14023] text-white text-xs font-semibold shadow-2xs transition-colors shrink-0 self-start md:self-center"
+        >
+          <span>View Matching Requests</span>
+          <ArrowRight className="w-3.5 h-3.5" />
+        </Link>
+      </section>
+
+      {/* 2. Compact Vital Stats Strip */}
+      <section className="grid grid-cols-2 lg:grid-cols-4 gap-3.5" aria-label="Donor summary">
+        <div className="bg-white rounded-2xl border border-[#F3E9D1] p-3.5 sm:p-4 shadow-2xs flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 flex items-center justify-center shrink-0">
+            <ShieldCheck className="w-4 h-4" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-slate-500 truncate">Clinical Status</p>
+            <p className="font-serif text-lg sm:text-xl font-bold text-[#053845] leading-tight truncate">
               {profile.eligibility}
-            </div>
-            <p className="text-[11px] text-slate-300">Est. cooldown (on-site screening req.)</p>
+            </p>
           </div>
+        </div>
 
-          <div className="space-y-0.5">
-            <span className="text-[10px] uppercase font-bold text-slate-300 tracking-wider flex items-center gap-1">
-              <Droplet className="w-3 h-3 text-[#EFA27E]" />
-              Active Matches
-            </span>
-            <div className="font-serif text-lg sm:text-xl font-bold text-white">
-              {matchingRequests.length} {matchingRequests.length === 1 ? "Requisition" : "Requisitions"}
-            </div>
-            <p className="text-[11px] text-slate-300">Compatible red-cell units</p>
+        <div className="bg-white rounded-2xl border border-[#F3E9D1] p-3.5 sm:p-4 shadow-2xs flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-[#317786]/10 border border-[#317786]/20 text-[#317786] flex items-center justify-center shrink-0">
+            <Droplet className="w-4 h-4" />
           </div>
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-slate-500 truncate">Active Matches</p>
+            <p className="font-serif text-lg sm:text-xl font-bold text-[#053845] leading-tight">
+              {matchingRequests.length}
+            </p>
+          </div>
+        </div>
 
-          <div className="space-y-0.5">
-            <span className="text-[10px] uppercase font-bold text-slate-300 tracking-wider flex items-center gap-1">
-              <Heart className="w-3 h-3 text-rose-300" />
-              Total Impact
-            </span>
-            <div className="font-serif text-lg sm:text-xl font-bold text-white">
+        <div className="bg-white rounded-2xl border border-[#F3E9D1] p-3.5 sm:p-4 shadow-2xs flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-[#EFA27E]/20 border border-[#EFA27E]/40 text-[#B94F30] flex items-center justify-center shrink-0">
+            <Heart className="w-4 h-4" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-slate-500 truncate">Total Impact</p>
+            <p className="font-serif text-lg sm:text-xl font-bold text-[#053845] leading-tight">
               {profile.totalDonations} {profile.totalDonations === 1 ? "Donation" : "Donations"}
-            </div>
-            <p className="text-[11px] text-slate-300">~{profile.livesSaved} lives supported</p>
+            </p>
           </div>
+        </div>
 
-          <div className="space-y-0.5">
-            <span className="text-[10px] uppercase font-bold text-slate-300 tracking-wider flex items-center gap-1">
-              <Compass className="w-3 h-3 text-[#317786]" />
-              Location Area
-            </span>
-            <div className="font-serif text-lg sm:text-xl font-bold text-white truncate">
+        <div className="bg-white rounded-2xl border border-[#F3E9D1] p-3.5 sm:p-4 shadow-2xs flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-[#317786]/10 border border-[#317786]/20 text-[#317786] flex items-center justify-center shrink-0">
+            <Compass className="w-4 h-4" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-slate-500 truncate">Location Area</p>
+            <p className="font-serif text-lg sm:text-xl font-bold text-[#053845] leading-tight truncate">
               {profile.city}
-            </div>
-            <p className="text-[11px] text-slate-300 truncate">{profile.location}</p>
+            </p>
           </div>
         </div>
       </section>
 
-      {/* Main Dashboard Layout Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-start">
-        {/* Left Column: Priority Requisitions & Verification Record (7 cols) */}
-        <div className="lg:col-span-7 space-y-6 lg:space-y-8">
-          {/* Blood Requests for You */}
+      {/* 3. Balanced Two-Column Dashboard Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+        {/* Main Column: Blood Requests For You */}
+        <div className="lg:col-span-7">
           <MatchingRequestsPreview
             previews={matchingRequests}
             donorBloodGroup={profile.bloodGroup}
-          />
-
-          {/* My Last Donation Record */}
-          <MyLastDonationCard
-            record={lastDonation}
-            donorName={profile.name}
+            transitUpdatingId={transitUpdatingId}
+            onUpdateTransit={handleUpdateTransit}
           />
         </div>
 
-        {/* Right Column: Profile Coordination & Practical Guidance (5 cols) */}
-        <div className="lg:col-span-5 space-y-6 lg:space-y-8">
-          {/* Donor Profile Coordination Widget */}
+        {/* Side Column: Donor Coordination Profile */}
+        <div className="lg:col-span-5">
           <DonorProfileSummary
             profile={profile}
             onAvailabilityToggle={handleAvailabilityToggle}
           />
-
-          {/* Pre-Donation Donor Tips & Health Advisory */}
-          <div className="bg-white rounded-3xl border border-[#F3E9D1] p-5 sm:p-6 shadow-xs space-y-3.5">
-            <div className="flex items-center gap-2 pb-3 border-b border-[#F3E9D1]/70">
-              <div className="w-8 h-8 rounded-xl bg-[#FAF6EE] text-[#053845] flex items-center justify-center border border-[#F3E9D1]">
-                <Info className="w-4 h-4 text-[#317786]" />
-              </div>
-              <div>
-                <h3 className="font-serif text-base font-bold text-[#053845]">
-                  Donor Health &amp; Safety Guide
-                </h3>
-                <p className="text-[11px] text-slate-500">
-                  Best practices recommended before whole blood donation
-                </p>
-              </div>
-            </div>
-
-            <div className="space-y-2.5 text-xs text-slate-600">
-              <div className="flex items-start gap-2.5 p-2.5 rounded-xl bg-[#FAF6EE]/40 border border-[#F3E9D1]/50">
-                <span className="w-5 h-5 rounded-full bg-[#317786]/10 text-[#317786] font-bold text-[10px] flex items-center justify-center shrink-0 mt-0.5">
-                  1
-                </span>
-                <p>
-                  <strong>Hydration is key:</strong> Drink at least 500 ml of water or fruit juice within 2 hours prior to donation.
-                </p>
-              </div>
-
-              <div className="flex items-start gap-2.5 p-2.5 rounded-xl bg-[#FAF6EE]/40 border border-[#F3E9D1]/50">
-                <span className="w-5 h-5 rounded-full bg-[#317786]/10 text-[#317786] font-bold text-[10px] flex items-center justify-center shrink-0 mt-0.5">
-                  2
-                </span>
-                <p>
-                  <strong>Eat a wholesome meal:</strong> Avoid fatty meals before donating; a light, iron-rich meal is optimal.
-                </p>
-              </div>
-
-              <div className="flex items-start gap-2.5 p-2.5 rounded-xl bg-[#FAF6EE]/40 border border-[#F3E9D1]/50">
-                <span className="w-5 h-5 rounded-full bg-[#317786]/10 text-[#317786] font-bold text-[10px] flex items-center justify-center shrink-0 mt-0.5">
-                  3
-                </span>
-                <p>
-                  <strong>Mandatory interval:</strong> A standard 90-day cooldown between whole blood donations protects your hemoglobin levels.
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Recent Activity Timeline */}
-          <RecentActivityPreview activities={recentActivities} />
         </div>
       </div>
     </div>

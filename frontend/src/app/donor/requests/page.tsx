@@ -12,13 +12,16 @@ import {
   Filter,
   Search,
   Eye,
-  ShieldCheck,
   Loader2,
   AlertCircle,
   RefreshCw,
+  Building2,
+  Calendar,
+  X,
 } from "lucide-react";
 import { RequestPreviewItem } from "@/components/donor/DonorTypes";
 import { RequestDetailModal } from "@/components/donor/RequestDetailModal";
+import { DonorCommitmentActions } from "@/components/donor/DonorCommitmentActions";
 import { api } from "@/lib/api";
 import { mapBackendRequestToPreview, mapBloodGroupToDisplay } from "@/lib/mappers";
 
@@ -32,6 +35,7 @@ export default function DonorBloodRequestsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionSuccessMessage, setActionSuccessMessage] = useState<string | null>(null);
+  const [transitUpdatingId, setTransitUpdatingId] = useState<string | null>(null);
 
   const fetchMatchingRequests = async () => {
     try {
@@ -41,19 +45,30 @@ export default function DonorBloodRequestsPage() {
 
       if (res.success) {
         setDonorBloodGroup(mapBloodGroupToDisplay(res.donorBloodGroup));
-        const mapped = (res.requests || []).map(mapBackendRequestToPreview);
-        setRequests(mapped);
+        const rawList = res.requests || [];
+        const rawCommitments = res.myCommitments || [];
+        const mappedCommitments = rawCommitments.map(mapBackendRequestToPreview);
+        const mappedMatches = rawList.map(mapBackendRequestToPreview);
 
-        // Pre-populate responded IDs from genuine backend persistence
-        const alreadyResponded = (res.requests || [])
-          .filter((r: any) => r.hasResponded)
-          .map((r: any) => `REQ-${r.requestid.slice(0, 8).toUpperCase()}`);
+        const byRawId = new Map<string, RequestPreviewItem>();
+        for (const c of mappedCommitments) {
+          byRawId.set(c.rawId || c.id, c);
+        }
+        for (const m of mappedMatches) {
+          const key = m.rawId || m.id;
+          if (!byRawId.has(key)) byRawId.set(key, m);
+        }
+        setRequests(Array.from(byRawId.values()));
+
+        const alreadyResponded = [...rawList, ...rawCommitments]
+          .filter((r: { hasResponded?: boolean; requestid?: string }) => r.hasResponded && r.requestid)
+          .map((r: { requestid: string }) => `REQ-${r.requestid.slice(0, 8).toUpperCase()}`);
         setRespondedIds((prev) => Array.from(new Set([...prev, ...alreadyResponded])));
       } else {
         setError("Failed to load blood requests.");
       }
-    } catch (err: any) {
-      setError(err?.message || "Failed to connect to Swastya backend.");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to connect to Swastya backend.");
     } finally {
       setIsLoading(false);
     }
@@ -62,6 +77,28 @@ export default function DonorBloodRequestsPage() {
   useEffect(() => {
     fetchMatchingRequests();
   }, []);
+
+  const handleUpdateTransit = async (
+    requestId: string,
+    status: "STARTED" | "REACHED_LOCATION",
+    deliveryId?: string
+  ) => {
+    try {
+      setTransitUpdatingId(requestId);
+      const res = await api.bloodRequests.updateTransitStatus(requestId, status, { deliveryId });
+      setActionSuccessMessage(
+        res.message ||
+          (status === "STARTED"
+            ? "Journey started! The requester has been notified."
+            : "Arrival at hospital recorded! Awaiting blood receipt confirmation.")
+      );
+      await fetchMatchingRequests();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to update journey status.");
+    } finally {
+      setTransitUpdatingId(null);
+    }
+  };
 
   const handleRespond = async (id: string) => {
     const target = requests.find((r) => r.id === id);
@@ -73,19 +110,24 @@ export default function DonorBloodRequestsPage() {
         if (!respondedIds.includes(id)) {
           setRespondedIds((prev) => [...prev, id]);
         }
-        setActionSuccessMessage(res.message || "Your willingness to donate was recorded successfully.");
+        setActionSuccessMessage(
+          res.message || "Your willingness to donate was recorded successfully."
+        );
         setTimeout(() => setActionSuccessMessage(null), 4000);
       }
-    } catch (err: any) {
-      alert(err?.message || "Failed to submit response. Please try again.");
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "Failed to submit response. Please try again.");
     }
   };
 
   const filteredRequests = requests.filter((req) => {
+    const q = searchTerm.toLowerCase().trim();
     const matchesSearch =
-      req.hospitalName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      req.location.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      req.id.toLowerCase().includes(searchTerm.toLowerCase());
+      !q ||
+      req.hospitalName.toLowerCase().includes(q) ||
+      req.location.toLowerCase().includes(q) ||
+      (req.wardOrRoom && req.wardOrRoom.toLowerCase().includes(q)) ||
+      req.id.toLowerCase().includes(q);
 
     const matchesUrgency =
       urgencyFilter === "all" ||
@@ -96,10 +138,17 @@ export default function DonorBloodRequestsPage() {
     return matchesSearch && matchesUrgency;
   });
 
+  const hasActiveFilters = Boolean(searchTerm.trim()) || urgencyFilter !== "all";
+
+  const resetFilters = () => {
+    setSearchTerm("");
+    setUrgencyFilter("all");
+  };
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5 pb-12">
       {/* Top Breadcrumb Navigation */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <Link
           href="/donor/dashboard"
           className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#053845] hover:text-[#317786] transition-colors"
@@ -108,243 +157,308 @@ export default function DonorBloodRequestsPage() {
           <span>Back to Donor Dashboard</span>
         </Link>
 
-        {!isLoading && (
+        {!isLoading && !error && (
           <span className="text-xs text-slate-500">
-            Showing {filteredRequests.length} verified requisitions
+            Showing {filteredRequests.length} of {requests.length} verified{" "}
+            {requests.length === 1 ? "requisition" : "requisitions"}
           </span>
         )}
       </div>
 
       {actionSuccessMessage && (
-        <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold flex items-center gap-2 animate-in fade-in">
+        <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold flex items-center gap-2">
           <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
           <span>{actionSuccessMessage}</span>
         </div>
       )}
 
-      {/* Main Container */}
-      <div className="bg-white rounded-3xl border border-[#F3E9D1] shadow-xs overflow-hidden">
-        {/* Page Header */}
-        <div className="p-6 sm:p-8 border-b border-[#F3E9D1] bg-gradient-to-r from-white via-[#FAF6EE]/40 to-white">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2 mb-1">
-                <span className="w-2 h-2 rounded-full bg-[#A2363A] animate-pulse" />
-                <span className="text-xs font-bold text-[#A2363A] uppercase tracking-wider">
-                  Live Emergency Requisition Feed
-                </span>
-              </div>
-              <h1 className="font-serif text-2xl sm:text-3xl font-bold text-[#053845]">
-                Matching Blood Requests
-              </h1>
-              <p className="text-xs sm:text-sm text-slate-500 mt-1 max-w-xl">
-                Verified requisitions from certified hospitals matching your{" "}
-                <strong className="text-[#053845]">{donorBloodGroup}</strong> blood group compatibility.
-              </p>
-            </div>
-
-            {/* Quick Summary Pill */}
-            <div className="flex items-center gap-2 p-3 rounded-2xl bg-[#FAF6EE] border border-[#F3E9D1] self-start md:self-center">
-              <ShieldCheck className="w-5 h-5 text-[#317786]" />
-              <div className="text-xs">
-                <span className="font-bold text-[#053845] block">Direct Coordination</span>
-                <span className="text-slate-500">Zero middlemen • Hospital-direct</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Search & Filter Bar */}
-          <div className="mt-6 pt-6 border-t border-[#F3E9D1]/70 flex flex-col sm:flex-row items-center justify-between gap-3">
-            {/* Search Input */}
-            <div className="relative w-full sm:w-80">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                placeholder="Search by hospital name or area..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 text-xs rounded-xl border border-[#F3E9D1] bg-white focus:outline-none focus:border-[#317786] transition-colors"
-              />
-            </div>
-
-            {/* Filter Buttons */}
-            <div className="flex items-center gap-1.5 w-full sm:w-auto overflow-x-auto pb-1 sm:pb-0">
-              <Filter className="w-3.5 h-3.5 text-slate-400 mr-1 hidden sm:inline" />
-              <button
-                type="button"
-                onClick={() => setUrgencyFilter("all")}
-                className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
-                  urgencyFilter === "all"
-                    ? "bg-[#053845] text-white shadow-2xs"
-                    : "bg-[#FAF6EE] text-slate-600 hover:text-[#053845] border border-[#F3E9D1]"
-                }`}
-              >
-                All Urgencies ({requests.length})
-              </button>
-              <button
-                type="button"
-                onClick={() => setUrgencyFilter("critical")}
-                className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
-                  urgencyFilter === "critical"
-                    ? "bg-[#A2363A] text-white shadow-2xs"
-                    : "bg-[#FAF6EE] text-slate-600 hover:text-[#A2363A] border border-[#F3E9D1]"
-                }`}
-              >
-                Critical Emergency
-              </button>
-              <button
-                type="button"
-                onClick={() => setUrgencyFilter("urgent")}
-                className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
-                  urgencyFilter === "urgent"
-                    ? "bg-[#B94F30] text-white shadow-2xs"
-                    : "bg-[#FAF6EE] text-slate-600 hover:text-[#B94F30] border border-[#F3E9D1]"
-                }`}
-              >
-                Urgent
-              </button>
-            </div>
-          </div>
+      {/* 1. Compact Page Header directly on cream background */}
+      <header className="flex items-center gap-3.5 pb-4 border-b border-[#317786]/15">
+        <div className="w-11 h-11 rounded-2xl bg-[#317786]/10 border border-[#317786]/20 text-[#317786] flex items-center justify-center shrink-0">
+          <Droplet className="w-5 h-5" />
         </div>
-
-        {/* Requests List */}
-        {isLoading ? (
-          <div className="p-16 text-center space-y-3">
-            <Loader2 className="w-8 h-8 text-[#317786] animate-spin mx-auto" />
-            <p className="text-xs text-slate-500">Checking active compatible requisitions...</p>
+        <div className="space-y-0.5 min-w-0">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <h1 className="font-serif text-2xl sm:text-3xl font-bold text-[#053845] tracking-tight">
+              Matching Blood Requests
+            </h1>
+            {!isLoading && !error && (
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-[#317786]/10 border border-[#317786]/20 text-[#317786]">
+                {requests.length} Verified
+              </span>
+            )}
           </div>
-        ) : error ? (
-          <div className="p-12 text-center space-y-3">
-            <AlertCircle className="w-8 h-8 text-[#A2363A] mx-auto" />
-            <h3 className="font-serif text-base font-bold text-[#053845]">Failed to Load Requests</h3>
-            <p className="text-xs text-slate-500">{error}</p>
+          <p className="text-sm text-slate-600">
+            Verified requisitions matching your{" "}
+            <strong className="text-[#053845]">{donorBloodGroup}</strong> blood group compatibility.
+          </p>
+        </div>
+      </header>
+
+      {/* 2. Compact Search & Filter Toolbar directly on cream background */}
+      <section
+        aria-label="Search and filter matching blood requests"
+        className="flex flex-col lg:flex-row lg:items-center justify-between gap-3"
+      >
+        <div className="relative w-full lg:w-80">
+          <Search className="w-4 h-4 text-[#317786] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <input
+            type="text"
+            placeholder="Search by hospital name or area..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full pl-10 pr-8 py-2 text-xs rounded-xl border border-[#F3E9D1] bg-white shadow-2xs focus:outline-none focus:border-[#317786] transition-colors text-[#053845]"
+          />
+          {searchTerm && (
             <button
               type="button"
-              onClick={fetchMatchingRequests}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold text-white bg-[#317786] hover:bg-[#245964] transition-all cursor-pointer"
+              onClick={() => setSearchTerm("")}
+              aria-label="Clear search"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
             >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span>Retry</span>
+              <X className="w-3.5 h-3.5" />
             </button>
+          )}
+        </div>
+
+        <div className="flex items-center gap-1.5 w-full lg:w-auto overflow-x-auto pb-1 lg:pb-0">
+          <Filter className="w-3.5 h-3.5 text-[#317786] mr-1 hidden sm:inline shrink-0" />
+          <button
+            type="button"
+            onClick={() => setUrgencyFilter("all")}
+            className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
+              urgencyFilter === "all"
+                ? "bg-[#053845] text-white shadow-2xs"
+                : "bg-white text-slate-600 hover:text-[#053845] border border-[#F3E9D1]"
+            }`}
+          >
+            All Urgencies ({requests.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setUrgencyFilter("critical")}
+            className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
+              urgencyFilter === "critical"
+                ? "bg-[#A2363A] text-white shadow-2xs"
+                : "bg-white text-slate-600 hover:text-[#A2363A] border border-[#F3E9D1]"
+            }`}
+          >
+            Critical Emergency
+          </button>
+          <button
+            type="button"
+            onClick={() => setUrgencyFilter("urgent")}
+            className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
+              urgencyFilter === "urgent"
+                ? "bg-[#B94F30] text-white shadow-2xs"
+                : "bg-white text-slate-600 hover:text-[#B94F30] border border-[#F3E9D1]"
+            }`}
+          >
+            Urgent
+          </button>
+        </div>
+      </section>
+
+      {/* 3. Loading, Error, Empty States & Individual Blood Request Cards */}
+      {isLoading ? (
+        <div className="bg-white rounded-2xl border border-[#F3E9D1] p-12 text-center space-y-3 shadow-2xs">
+          <Loader2 className="w-7 h-7 text-[#317786] animate-spin mx-auto" />
+          <p className="text-xs text-slate-500 font-medium">
+            Checking active compatible requisitions...
+          </p>
+        </div>
+      ) : error ? (
+        <div className="bg-white rounded-2xl border border-[#F3E9D1] p-10 text-center space-y-3 shadow-2xs">
+          <div className="w-10 h-10 rounded-xl bg-[#fdf2f2] text-[#A2363A] flex items-center justify-center mx-auto">
+            <AlertCircle className="w-5 h-5" />
           </div>
-        ) : filteredRequests.length === 0 ? (
-          <div className="p-16 text-center space-y-2">
-            <Droplet className="w-8 h-8 text-slate-300 mx-auto" />
-            <h3 className="font-serif text-base font-bold text-[#053845]">
-              No Active Requisitions at this Time
-            </h3>
-            <p className="text-xs text-slate-500 max-w-sm mx-auto leading-relaxed">
-              There are currently no open blood requests matching your criteria. When a hospital logs an emergency requirement for your blood group, it will appear here immediately.
+          <h2 className="font-serif text-base font-bold text-[#053845]">
+            Failed to Load Requests
+          </h2>
+          <p className="text-xs text-slate-500">{error}</p>
+          <button
+            type="button"
+            onClick={fetchMatchingRequests}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold text-white bg-[#317786] hover:bg-[#245964] transition-colors cursor-pointer"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>Retry</span>
+          </button>
+        </div>
+      ) : requests.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-[#F3E9D1] p-8 text-center space-y-2 shadow-2xs">
+          <div className="w-10 h-10 rounded-xl bg-[#FAF6EE] border border-[#F3E9D1] text-[#317786] flex items-center justify-center mx-auto">
+            <Droplet className="w-5 h-5" />
+          </div>
+          <h2 className="font-serif text-base sm:text-lg font-bold text-[#053845]">
+            No matching blood requests right now
+          </h2>
+          <p className="text-xs sm:text-sm text-slate-500 max-w-md mx-auto">
+            Open blood requests compatible with your {donorBloodGroup} blood group and coverage area will appear here.
+          </p>
+        </div>
+      ) : filteredRequests.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-[#F3E9D1] p-8 text-center space-y-3 shadow-2xs">
+          <div className="w-10 h-10 rounded-xl bg-[#FAF6EE] border border-[#F3E9D1] text-[#317786] flex items-center justify-center mx-auto">
+            <Search className="w-5 h-5" />
+          </div>
+          <div className="space-y-1">
+            <h2 className="font-serif text-base font-bold text-[#053845]">
+              No requests match your filters
+            </h2>
+            <p className="text-xs text-slate-500 max-w-sm mx-auto">
+              Try clearing your search or resetting the selected urgency filter.
             </p>
           </div>
-        ) : (
-          <div className="divide-y divide-slate-100">
-            {filteredRequests.map((req) => {
-              const hasResponded = respondedIds.includes(req.id);
+          {hasActiveFilters && (
+            <button
+              type="button"
+              onClick={resetFilters}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold text-[#053845] bg-[#FAF6EE] hover:bg-[#F3E9D1] border border-[#F3E9D1] transition-colors cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+              <span>Reset Filters</span>
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {filteredRequests.map((req) => {
+            const hasResponded = respondedIds.includes(req.id) || Boolean(req.hasResponded);
+            const isUrgentCard =
+              Boolean(req.isEmergency) ||
+              req.urgency === "Critical Emergency" ||
+              req.urgency === "Urgent";
+            const urgencyBadgeClass =
+              req.urgency === "Critical Emergency"
+                ? "bg-[#fdf2f2] text-[#A2363A] border-[#A2363A]/25"
+                : req.urgency === "Urgent"
+                ? "bg-[#EFA27E]/20 text-[#B94F30] border-[#EFA27E]/45"
+                : "bg-[#317786]/10 text-[#317786] border-[#317786]/25";
+            const hasRealLocation =
+              Boolean(req.location) && req.location !== "Location not specified";
+            const hasRealDistance =
+              typeof req.distanceKm === "number" || req.locationMatch === "COORDINATES";
 
-              return (
-                <div
-                  key={req.id}
-                  className="p-5 sm:p-7 hover:bg-[#FAF6EE]/40 transition-colors flex flex-col md:flex-row md:items-center justify-between gap-5"
-                >
-                  <div className="flex items-start gap-4 sm:gap-5 min-w-0">
-                    <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-[#053845] text-white font-serif font-bold text-lg sm:text-xl flex flex-col items-center justify-center shrink-0 shadow-xs">
-                      <span className="text-[9px] uppercase opacity-70 leading-none">
-                        NEED
-                      </span>
-                      <span className="mt-0.5">{req.bloodGroup}</span>
-                    </div>
+            return (
+              <article
+                key={req.id}
+                className={`bg-white rounded-2xl border border-[#F3E9D1] p-4 sm:p-5 shadow-2xs hover:border-[#317786]/45 transition-colors space-y-2.5 ${
+                  isUrgentCard ? "border-l-4 border-l-[#EFA27E]" : ""
+                }`}
+              >
+                {/* Request Identification Header */}
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-2 min-w-0">
+                    <span className="px-2.5 py-1 rounded-lg bg-[#317786]/10 border border-[#317786]/25 font-serif text-sm font-bold text-[#053845] leading-none shrink-0">
+                      {req.bloodGroup}
+                    </span>
 
-                    <div className="space-y-1.5 min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-xs font-mono font-bold text-slate-400">
-                          {req.id}
-                        </span>
+                    <span className="text-xs font-mono font-semibold text-slate-400 shrink-0">
+                      {req.id}
+                    </span>
 
-                        <span
-                          className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider ${
-                            req.urgency === "Critical Emergency"
-                              ? "bg-[#A2363A]/10 text-[#A2363A] border border-[#A2363A]/20"
-                              : "bg-[#B94F30]/10 text-[#B94F30] border border-[#B94F30]/20"
-                          }`}
-                        >
-                          {req.urgency}
-                        </span>
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[11px] font-semibold border shrink-0 ${urgencyBadgeClass}`}
+                    >
+                      {req.urgencyLabel || req.urgency}
+                    </span>
 
-                        <span className="text-xs font-semibold text-slate-700">
-                          • {req.units} {req.units > 1 ? "Units" : "Unit"} Required
-                        </span>
-
-                        {req.requiredWithin && (
-                          <span className="text-[11px] font-medium text-[#317786] bg-[#317786]/10 px-2 py-0.5 rounded flex items-center gap-1">
-                            <Clock className="w-3 h-3" />
-                            <span>{req.requiredWithin}</span>
-                          </span>
-                        )}
-                      </div>
-
-                      <h2 className="font-serif text-lg sm:text-xl font-bold text-[#053845] truncate">
-                        {req.hospitalName}
-                      </h2>
-
-                      <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                        <span className="flex items-center gap-1 text-[#317786] font-semibold">
-                          <MapPin className="w-3.5 h-3.5 text-[#B94F30] shrink-0" />
-                          <span>{req.distance}</span>
-                        </span>
-                        <span>•</span>
-                        <span className="truncate">{req.location}</span>
-                        <span>•</span>
-                        <span className="text-slate-400">{req.postedTime}</span>
-                      </div>
-
-                      {req.caseDetails && (
-                        <p className="text-xs text-slate-600 line-clamp-2 max-w-2xl pt-1">
-                          {req.caseDetails}
-                        </p>
-                      )}
-                    </div>
+                    <span className="text-xs font-semibold text-[#053845]">
+                      {req.units} {req.units > 1 ? "units" : "unit"} &middot;{" "}
+                      {req.bloodComponent || "Whole Blood"}
+                    </span>
                   </div>
 
-                  {/* Actions */}
-                  <div className="flex items-center gap-2.5 self-start md:self-center shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => setSelectedRequest(req)}
-                      className="px-3.5 py-2 rounded-xl text-xs font-semibold text-[#053845] bg-[#FAF6EE] hover:bg-[#F3E9D1] border border-[#F3E9D1] transition-all cursor-pointer flex items-center gap-1.5"
-                    >
-                      <Eye className="w-3.5 h-3.5 text-[#317786]" />
-                      <span>View Details</span>
-                    </button>
+                  <span className="text-[11px] text-slate-400 inline-flex items-center gap-1 shrink-0">
+                    <Clock className="w-3 h-3" />
+                    <span>{req.postedTime}</span>
+                  </span>
+                </div>
 
-                    {hasResponded ? (
-                      <div className="px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                        <span>Response Sent</span>
-                      </div>
-                    ) : (
-                      <Link
-                        href={`/donor/requests/${req.rawId || req.id.replace(/^REQ-/, "")}/donate`}
-                        className="px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer transition-all flex items-center gap-1.5 bg-[#317786] hover:bg-[#245964] text-white shadow-2xs"
-                      >
-                        <Heart className="w-3.5 h-3.5 fill-current" />
-                        <span>I Can Donate</span>
-                      </Link>
+                {/* Request Information */}
+                <div className="space-y-1.5 min-w-0">
+                  <div>
+                    <h2 className="font-serif text-base sm:text-lg font-bold text-[#053845] leading-snug break-words">
+                      {req.hospitalName}
+                    </h2>
+                    {req.patientAgeGroup && (
+                      <p className="text-xs text-slate-500 mt-0.5">{req.patientAgeGroup}</p>
                     )}
                   </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
 
-      {/* Modal */}
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-slate-600">
+                    {req.wardOrRoom && (
+                      <span className="inline-flex items-center gap-1.5 min-w-0">
+                        <Building2 className="w-3.5 h-3.5 text-[#317786] shrink-0" />
+                        <span className="break-words">{req.wardOrRoom}</span>
+                      </span>
+                    )}
+
+                    {hasRealLocation && (
+                      <span className="inline-flex items-center gap-1.5 min-w-0">
+                        <MapPin className="w-3.5 h-3.5 text-[#317786] shrink-0" />
+                        <span className="break-words">{req.location}</span>
+                      </span>
+                    )}
+
+                    {hasRealDistance && (
+                      <span className="inline-flex items-center gap-1 font-medium text-[#317786] shrink-0">
+                        <span>{req.distance}</span>
+                      </span>
+                    )}
+
+                    {(req.requiredByDateTime || req.requiredWithin) && (
+                      <span className="inline-flex items-center gap-1.5 text-slate-600 shrink-0">
+                        <Calendar className="w-3.5 h-3.5 text-[#317786] shrink-0" />
+                        <span>
+                          {req.requiredByDateTime
+                            ? `Required ${req.requiredByDateTime}`
+                            : req.requiredWithin}
+                        </span>
+                      </span>
+                    )}
+                  </div>
+
+                  {req.caseDetails && (
+                    <p className="text-xs text-slate-600 line-clamp-2 pt-0.5">
+                      {req.caseDetails}
+                    </p>
+                  )}
+                </div>
+
+                {/* Actions */}
+                <div className="pt-2.5 border-t border-[#F3E9D1]/70 grid grid-cols-2 sm:flex sm:items-center sm:justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedRequest(req)}
+                    className="inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold text-[#053845] bg-[#FAF6EE] hover:bg-[#F3E9D1] border border-[#F3E9D1] transition-colors cursor-pointer"
+                  >
+                    <Eye className="w-3.5 h-3.5 text-[#317786]" />
+                    <span>Details</span>
+                  </button>
+
+                  <DonorCommitmentActions
+                    item={req}
+                    hasResponded={hasResponded}
+                    isUpdating={transitUpdatingId === (req.rawId || req.id)}
+                    onUpdateTransit={handleUpdateTransit}
+                  />
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Details Modal */}
       <RequestDetailModal
         request={selectedRequest}
         onClose={() => setSelectedRequest(null)}
         onConfirmDonation={handleRespond}
         hasResponded={selectedRequest ? respondedIds.includes(selectedRequest.id) : false}
+        transitUpdatingId={transitUpdatingId}
+        onUpdateTransit={handleUpdateTransit}
       />
     </div>
   );

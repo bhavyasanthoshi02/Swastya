@@ -512,6 +512,26 @@ export class UnitTraceabilityService {
                 err.statusCode = 404;
                 throw err;
             }
+            if (["FULFILLED", "CANCELLED", "EXPIRED"].includes(request.status || "")) {
+                const err: any = new Error(`Cannot assign a blood request in ${request.status} status`);
+                err.statusCode = 400;
+                throw err;
+            }
+
+            const targetBloodBank = await tx.bloodbanks.findUnique({
+                where: { bloodbankid: bloodBankId },
+                select: { bloodbankid: true, approvalstatus: true },
+            });
+            if (!targetBloodBank) {
+                const err: any = new Error("Target blood bank not found");
+                err.statusCode = 404;
+                throw err;
+            }
+            if (targetBloodBank.approvalstatus !== "APPROVED") {
+                const err: any = new Error(`Target blood bank is ${targetBloodBank.approvalstatus}. Only APPROVED blood banks can be assigned requisitions.`);
+                err.statusCode = 403;
+                throw err;
+            }
 
             // Expire or cancel any previous active pending assignment
             await tx.requisitionassignments.updateMany({
@@ -639,9 +659,41 @@ export class UnitTraceabilityService {
                 err.statusCode = 404;
                 throw err;
             }
+            if (["FULFILLED", "CANCELLED", "EXPIRED"].includes(request.status || "")) {
+                const err: any = new Error(`Cannot assign a blood request in ${request.status} status`);
+                err.statusCode = 400;
+                throw err;
+            }
 
-            // Determine compatible blood groups (strict iso-group for whole blood!)
-            const compatibleGroups = getSafeCompatibleDonorGroups(request.bloodcomponent, request.bloodgroup);
+            const targetBloodBank = await tx.bloodbanks.findUnique({
+                where: { bloodbankid: bloodBankId },
+                select: { bloodbankid: true, approvalstatus: true },
+            });
+            if (!targetBloodBank) {
+                const err: any = new Error("Target blood bank not found");
+                err.statusCode = 404;
+                throw err;
+            }
+            if (targetBloodBank.approvalstatus !== "APPROVED") {
+                const err: any = new Error(`Target blood bank is ${targetBloodBank.approvalstatus}. Only APPROVED blood banks can be assigned requisitions.`);
+                err.statusCode = 403;
+                throw err;
+            }
+
+            // Determine compatible blood groups (strict iso-group for whole blood!) and map Prisma enum keys -> PostgreSQL enum labels
+            const PRISMA_TO_DB_BLOOD_GROUP: Record<string, string> = {
+                A_POSITIVE: "A+",
+                A_NEGATIVE: "A-",
+                B_POSITIVE: "B+",
+                B_NEGATIVE: "B-",
+                AB_POSITIVE: "AB+",
+                AB_NEGATIVE: "AB-",
+                O_POSITIVE: "O+",
+                O_NEGATIVE: "O-",
+            };
+            const compatibleGroups = getSafeCompatibleDonorGroups(request.bloodcomponent, request.bloodgroup).map(
+                (bg) => PRISMA_TO_DB_BLOOD_GROUP[bg] || bg
+            );
 
             // Fetch candidate available units
             let candidateUnits: any[] = [];
@@ -652,15 +704,20 @@ export class UnitTraceabilityService {
                      JOIN inventory inv ON u.inventoryid = inv.inventoryid 
                      WHERE u.unitid = ANY($1::uuid[]) 
                        AND u.bloodbankid = $2 
+                       AND u.bloodcomponent = $3::blood_component
+                       AND u.bloodgroup = ANY($4::blood_group[])
                        AND u.status = 'AVAILABLE' 
                        AND u.ttiscreeningstatus = 'PASSED'
+                       AND u.expirydate > CURRENT_TIMESTAMP
                      ORDER BY u.expirydate ASC, u.unitid ASC
                      FOR UPDATE OF u`,
                     specificUnitIds,
-                    bloodBankId
+                    bloodBankId,
+                    request.bloodcomponent,
+                    compatibleGroups
                 );
                 if (candidateUnits.length < requestedUnits) {
-                    const err: any = new Error(`Only ${candidateUnits.length} of ${requestedUnits} specified units are available and cleared`);
+                    const err: any = new Error(`Only ${candidateUnits.length} of ${requestedUnits} specified units are clinically compatible, unexpired, available, and cleared`);
                     err.statusCode = 409;
                     throw err;
                 }
@@ -674,6 +731,7 @@ export class UnitTraceabilityService {
                        AND u.bloodgroup = ANY($3::blood_group[]) 
                        AND u.status = 'AVAILABLE' 
                        AND u.ttiscreeningstatus = 'PASSED'
+                       AND u.expirydate > CURRENT_TIMESTAMP
                        AND inv.islegacyreconciled = true
                      ORDER BY u.expirydate ASC, u.unitid ASC 
                      LIMIT $4 
@@ -1183,8 +1241,12 @@ export class UnitTraceabilityService {
         const requestHash = computeRequestHash({ reservationId, itemsInput, idempotencyKey });
 
         if (idempotencyKey) {
+            const scopedPrefix = `receipt:${reservationId}:${idempotencyKey}:`;
             const existingReplay = await prisma.inventoryledger.findFirst({
-                where: { idempotencykey: { startsWith: `${idempotencyKey}:` } },
+                where: {
+                    operationtype: "TRANSIT_EXCURSION_RETURN",
+                    idempotencykey: { startsWith: scopedPrefix },
+                },
             });
             if (existingReplay) {
                 return { success: true, idempotentReplay: true, message: "Receipt confirmation already processed" };
@@ -1289,7 +1351,7 @@ export class UnitTraceabilityService {
 
                     // Return to vault quarantine and record TRANSIT_EXCURSION_RETURN in ledger
                     const lockedLots: any[] = await tx.$queryRawUnsafe(
-                        `SELECT inventoryid, unitsquarantined FROM inventory WHERE inventoryid = $1 FOR UPDATE`,
+                        `SELECT inventoryid, unitsavailable, unitsreserved, unitsquarantined FROM inventory WHERE inventoryid = $1 FOR UPDATE`,
                         item.unit.inventoryid
                     );
                     const lot = lockedLots[0];
@@ -1312,7 +1374,7 @@ export class UnitTraceabilityService {
                                 previousreserved: lot.unitsreserved,
                                 newreserved: lot.unitsreserved,
                                 reason: `Transit temperature excursion return (${receipt.tempReading || "N/A"}°C)`,
-                                idempotencykey: `${idempotencyKey}:lot:${lot.inventoryid}:return:${item.itemid}`,
+                                idempotencykey: `receipt:${reservationId}:${idempotencyKey}:lot:${lot.inventoryid}:return:${item.itemid}`,
                                 requesthash: requestHash,
                                 responsecode: 200,
                                 responsebody: {
@@ -1364,8 +1426,12 @@ export class UnitTraceabilityService {
         const requestHash = computeRequestHash({ reservationId, reason, idempotencyKey });
 
         if (idempotencyKey) {
+            const scopedPrefix = `cancel:${reservationId}:${idempotencyKey}:lot:`;
             const existingReplay = await prisma.inventoryledger.findFirst({
-                where: { idempotencykey: { startsWith: `${idempotencyKey}:lot:` } },
+                where: {
+                    operationtype: "RESERVATION_CANCEL",
+                    idempotencykey: { startsWith: scopedPrefix },
+                },
             });
             if (existingReplay) {
                 return { success: true, idempotentReplay: true, message: "Reservation cancellation already processed" };
@@ -1483,7 +1549,7 @@ export class UnitTraceabilityService {
                 }
 
                 // Ledger entry: RESERVATION_CANCEL with quantitydelta = 0
-                const ledgerSubKey = `${idempotencyKey}:lot:${lotId}:RESERVATION_CANCEL`;
+                const ledgerSubKey = `cancel:${reservationId}:${idempotencyKey}:lot:${lotId}:RESERVATION_CANCEL`;
                 await tx.inventoryledger.create({
                     data: {
                         inventoryid: lotId,

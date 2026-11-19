@@ -36,16 +36,16 @@ export interface BloodRequestItem {
   searchradius: number | null;
   requiredby: string;
   status:
-    | "CREATED"
-    | "VERIFIED"
-    | "HOSPITAL_REVIEW"
-    | "BLOOD_BANK_CHECK"
-    | "DONOR_MATCHING"
-    | "BLOOD_ARRANGED"
-    | "FULFILLED"
-    | "CANCELLED"
-    | "EXPIRED"
-    | string;
+  | "CREATED"
+  | "VERIFIED"
+  | "HOSPITAL_REVIEW"
+  | "BLOOD_BANK_CHECK"
+  | "DONOR_MATCHING"
+  | "BLOOD_ARRANGED"
+  | "FULFILLED"
+  | "CANCELLED"
+  | "EXPIRED"
+  | string;
   notes: string | null;
   createdat: string;
   updatedat: string;
@@ -100,6 +100,7 @@ export interface PrescriptionHistoryItem {
 export interface VolunteerDonorResponse {
   notificationid: string;
   donorId?: string;
+  donorUserId?: string;
   donorName: string;
   donorBloodGroup: string;
   donorCity?: string;
@@ -107,6 +108,14 @@ export interface VolunteerDonorResponse {
   donorPhone?: string;
   donorEmail?: string;
   respondedAt: string;
+  deliveryId?: string;
+  acceptanceStatus?: "PENDING" | "ACCEPTED" | "REJECTED" | string;
+  acceptedAt?: string | null;
+  acceptedByUserId?: string | null;
+  rejectedAt?: string | null;
+  rejectedByUserId?: string | null;
+  receiptConfirmedAt?: string | null;
+  receiptConfirmedByUserId?: string | null;
   status: string;
   transitStatus?: "DONOR_FOUND" | "STARTED" | "REACHED_LOCATION" | "COMPLETED" | string;
   startedAt?: string | null;
@@ -130,6 +139,12 @@ export interface VolunteerDonorResponse {
     eligibilityStatus?: string;
   };
   isEligible?: boolean;
+  receiptDocument?: {
+    fileName?: string | null;
+    mimeType?: string | null;
+    fileSize?: number | null;
+    downloadUrl: string;
+  } | null;
 }
 
 export interface AvailableDonorItem {
@@ -146,6 +161,14 @@ export interface AvailableDonorItem {
   donorWeight?: number | null;
   lastDonationDate?: string | null;
   respondedAt: string;
+  deliveryId?: string;
+  acceptanceStatus?: "PENDING" | "ACCEPTED" | "REJECTED" | string;
+  acceptedAt?: string | null;
+  acceptedByUserId?: string | null;
+  rejectedAt?: string | null;
+  rejectedByUserId?: string | null;
+  receiptConfirmedAt?: string | null;
+  receiptConfirmedByUserId?: string | null;
   status: string;
   transitStatus?: "DONOR_FOUND" | "STARTED" | "REACHED_LOCATION" | "COMPLETED" | string;
   startedAt?: string | null;
@@ -756,8 +779,15 @@ export const api = {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
       });
+      if (res.status === 401) {
+        clearAuthToken();
+        if (typeof window !== "undefined" && !window.location.pathname.startsWith("/signin")) {
+          window.location.href = "/signin?session=expired";
+        }
+        throw new ApiError("Your session has expired. Please sign in again.", 401);
+      }
       if (!res.ok) {
-        throw new Error(`Failed to download template (HTTP ${res.status})`);
+        throw new ApiError(`Failed to download template (HTTP ${res.status})`, res.status);
       }
       return await res.blob();
     },
@@ -924,6 +954,121 @@ export const api = {
         message: string;
         broadcast: any;
       }>(`/bloodrequests/${id}/broadcast`, data),
+
+    updateTransitStatus: (
+      requestId: string,
+      status: "DONOR_FOUND" | "STARTED" | "REACHED_LOCATION" | "COMPLETED" | string,
+      options?: { donorUserId?: string; deliveryId?: string }
+    ) =>
+      api.patch<{
+        success: boolean;
+        message: string;
+        transitStatus: string;
+        deliveryId?: string;
+        donorUserId?: string;
+        completedUnits?: number;
+        unitsRequired?: number;
+        bloodArranged?: boolean;
+        meta: any;
+      }>(`/bloodrequests/${requestId}/transit-status`, {
+        status,
+        ...(options?.donorUserId ? { donorUserId: options.donorUserId } : {}),
+        ...(options?.deliveryId ? { deliveryId: options.deliveryId } : {}),
+      }),
+
+    decideVolunteer: (
+      requestId: string,
+      deliveryId: string,
+      decision: "ACCEPTED" | "REJECTED",
+      reason?: string
+    ) =>
+      api.post<{
+        success: boolean;
+        message: string;
+        alreadyDecided?: boolean;
+        deliveryId: string;
+        donorUserId: string;
+        acceptanceStatus: "ACCEPTED" | "REJECTED" | string;
+        acceptedAt?: string | null;
+        rejectedAt?: string | null;
+      }>(`/bloodrequests/${requestId}/volunteers/${deliveryId}/decision`, {
+        decision,
+        ...(reason ? { reason } : {}),
+      }),
+
+    confirmBloodReceipt: (requestId: string, deliveryId: string) =>
+      api.post<{
+        success: boolean;
+        message: string;
+        transitStatus: string;
+        deliveryId: string;
+        donorUserId: string;
+        completedUnits?: number;
+        unitsRequired?: number;
+        bloodArranged?: boolean;
+        meta: any;
+      }>(`/bloodrequests/${requestId}/volunteers/${deliveryId}/confirm-receipt`, {}),
+
+    getVolunteerDetail: (requestId: string, deliveryId: string) =>
+      api.get<{
+        success: boolean;
+        request: {
+          requestid: string;
+          patientname: string;
+          bloodgroup: string;
+          bloodcomponent: string;
+          unitsrequired: number;
+          urgencylevel: string;
+          status: string;
+          hospitalname: string | null;
+          hospitalcity: string | null;
+          createdat: string;
+        };
+        volunteer: VolunteerDonorResponse;
+      }>(`/bloodrequests/${requestId}/volunteers/${deliveryId}`),
+
+    uploadDonationReceipt: (requestId: string, deliveryId: string, file: File) => {
+      const formData = new FormData();
+      formData.append("receipt", file);
+      return api.post<{
+        success: boolean;
+        message: string;
+        receiptDocument: {
+          fileName: string;
+          mimeType: string;
+          fileSize: number;
+          downloadUrl: string;
+        };
+      }>(`/bloodrequests/${requestId}/volunteers/${deliveryId}/receipt-document`, formData);
+    },
+
+    fetchDonationReceiptBlob: async (requestId: string, deliveryId: string) => {
+      const token = getAuthToken();
+      const response = await fetch(
+        `${API_BASE_URL}/bloodrequests/${requestId}/volunteers/${deliveryId}/receipt-document/file`,
+        {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        }
+      );
+      if (response.status === 401) {
+        clearAuthToken();
+        if (typeof window !== "undefined" && !window.location.pathname.startsWith("/signin")) {
+          window.location.href = "/signin?session=expired";
+        }
+        throw new ApiError("Your session has expired. Please sign in again.", 401);
+      }
+      if (!response.ok) {
+        let message = "Failed to retrieve donation receipt document.";
+        try {
+          const errJson = await response.json();
+          if (errJson?.message) message = errJson.message;
+        } catch {}
+        throw new ApiError(message, response.status);
+      }
+      const blob = await response.blob();
+      const contentType = response.headers.get("content-type") || "application/octet-stream";
+      return { blob, contentType };
+    },
   },
 
   hospitals: {
@@ -951,6 +1096,7 @@ export const api = {
           message: string;
         };
         matchingRequests: any[];
+        myCommitments?: any[];
         lastDonation: any | null;
         recentActivities: any[];
       }>("/donors/me/dashboard"),
@@ -987,6 +1133,7 @@ export const api = {
         page: number;
         limit: number;
         requests: any[];
+        myCommitments?: any[];
       }>("/donors/me/matching-requests", { params }),
 
     getHistory: (params?: { page?: number; limit?: number }) =>
@@ -1046,13 +1193,120 @@ export const api = {
         patientName?: string;
       }>(`/bloodrequests/${requestId}/respond`, payload || {}),
 
-    updateTransitStatus: (requestId: string, status: "DONOR_FOUND" | "STARTED" | "REACHED_LOCATION" | "COMPLETED" | string) =>
+    updateTransitStatus: (
+      requestId: string,
+      status: "DONOR_FOUND" | "STARTED" | "REACHED_LOCATION" | "COMPLETED" | string,
+      options?: { donorUserId?: string; deliveryId?: string }
+    ) =>
       api.patch<{
         success: boolean;
         message: string;
         transitStatus: string;
+        deliveryId?: string;
+        donorUserId?: string;
+        completedUnits?: number;
+        unitsRequired?: number;
+        bloodArranged?: boolean;
         meta: any;
-      }>(`/bloodrequests/${requestId}/transit-status`, { status }),
+      }>(`/bloodrequests/${requestId}/transit-status`, {
+        status,
+        ...(options?.donorUserId ? { donorUserId: options.donorUserId } : {}),
+        ...(options?.deliveryId ? { deliveryId: options.deliveryId } : {}),
+      }),
+
+    decideVolunteer: (
+      requestId: string,
+      deliveryId: string,
+      decision: "ACCEPTED" | "REJECTED",
+      reason?: string
+    ) =>
+      api.post<{
+        success: boolean;
+        message: string;
+        alreadyDecided?: boolean;
+        deliveryId: string;
+        donorUserId: string;
+        acceptanceStatus: "ACCEPTED" | "REJECTED" | string;
+        acceptedAt?: string | null;
+        rejectedAt?: string | null;
+      }>(`/bloodrequests/${requestId}/volunteers/${deliveryId}/decision`, {
+        decision,
+        ...(reason ? { reason } : {}),
+      }),
+
+    confirmBloodReceipt: (requestId: string, deliveryId: string) =>
+      api.post<{
+        success: boolean;
+        message: string;
+        transitStatus: string;
+        deliveryId: string;
+        donorUserId: string;
+        completedUnits?: number;
+        unitsRequired?: number;
+        bloodArranged?: boolean;
+        meta: any;
+      }>(`/bloodrequests/${requestId}/volunteers/${deliveryId}/confirm-receipt`, {}),
+
+    getVolunteerDetail: (requestId: string, deliveryId: string) =>
+      api.get<{
+        success: boolean;
+        request: {
+          requestid: string;
+          patientname: string;
+          bloodgroup: string;
+          bloodcomponent: string;
+          unitsrequired: number;
+          urgencylevel: string;
+          status: string;
+          hospitalname: string | null;
+          hospitalcity: string | null;
+          createdat: string;
+        };
+        volunteer: VolunteerDonorResponse;
+      }>(`/bloodrequests/${requestId}/volunteers/${deliveryId}`),
+
+    uploadDonationReceipt: (requestId: string, deliveryId: string, file: File) => {
+      const formData = new FormData();
+      formData.append("receipt", file);
+      return api.post<{
+        success: boolean;
+        message: string;
+        receiptDocument: {
+          fileName: string;
+          mimeType: string;
+          fileSize: number;
+          downloadUrl: string;
+        };
+      }>(`/bloodrequests/${requestId}/volunteers/${deliveryId}/receipt-document`, formData);
+    },
+
+    fetchDonationReceiptBlob: async (requestId: string, deliveryId: string) => {
+      const token = getAuthToken();
+      const response = await fetch(
+        `${API_BASE_URL}/bloodrequests/${requestId}/volunteers/${deliveryId}/receipt-document/file`,
+        {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        }
+      );
+      if (response.status === 401) {
+        clearAuthToken();
+        if (typeof window !== "undefined" && !window.location.pathname.startsWith("/signin")) {
+          window.location.href = "/signin?session=expired";
+        }
+        throw new ApiError("Your session has expired. Please sign in again.", 401);
+      }
+      if (!response.ok) {
+        let message = "Failed to retrieve donation receipt document.";
+        try {
+          const errJson = await response.json();
+          if (errJson?.message) message = errJson.message;
+        } catch {}
+        throw new ApiError(message, response.status);
+      }
+      const blob = await response.blob();
+      const contentType = response.headers.get("content-type") || "application/octet-stream";
+      return { blob, contentType };
+    },
   },
 
   notifications: {

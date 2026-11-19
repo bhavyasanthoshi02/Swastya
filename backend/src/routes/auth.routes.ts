@@ -576,9 +576,9 @@ router.post("/register", async (req: Request, res: Response) => {
  */
 router.post("/login", async (req: Request, res: Response) => {
     try {
-        const { email, password } = req.body;
+        const { email, password } = req.body || {};
 
-        if (!email || !password) {
+        if (!email || !password || typeof email !== "string" || typeof password !== "string") {
             return res.status(400).json({
                 success: false,
                 message: "Email and password are required",
@@ -604,11 +604,11 @@ router.post("/login", async (req: Request, res: Response) => {
             });
         }
 
-        if (user.isactive === false) {
+        if (!user.isactive) {
             return res.status(403).json({
                 success: false,
-                message: "Account pending activation. Please use the secure activation link sent to you to establish your password.",
-                pendingActivation: true,
+                message: "Account is inactive or pending activation.",
+                pendingActivation: user.emailverified === false,
             });
         }
 
@@ -675,6 +675,7 @@ router.get("/verify-activation-token", async (req: Request, res: Response) => {
                         phonenumber: true,
                         role: true,
                         isactive: true,
+                        emailverified: true,
                     },
                 },
             },
@@ -684,6 +685,17 @@ router.get("/verify-activation-token", async (req: Request, res: Response) => {
             return res.status(400).json({
                 success: false,
                 message: "Invalid or already used activation token.",
+            });
+        }
+
+        if (
+            tokenRecord.users.role !== "DONOR" ||
+            tokenRecord.users.isactive !== false ||
+            tokenRecord.users.emailverified === true
+        ) {
+            return res.status(400).json({
+                success: false,
+                message: "Activation token is no longer valid for this account.",
             });
         }
 
@@ -747,10 +759,28 @@ router.post("/activate-donor", async (req: Request, res: Response) => {
                     tokenhash: tokenHash,
                     usedat: null,
                 },
+                include: {
+                    users: {
+                        select: {
+                            userid: true,
+                            role: true,
+                            isactive: true,
+                            emailverified: true,
+                        },
+                    },
+                },
             });
 
             if (!tokenRecord) {
                 throw Object.assign(new Error("Invalid or already used activation token."), { statusCode: 400 });
+            }
+
+            if (
+                tokenRecord.users.role !== "DONOR" ||
+                tokenRecord.users.isactive !== false ||
+                tokenRecord.users.emailverified === true
+            ) {
+                throw Object.assign(new Error("Activation token is no longer valid for this account."), { statusCode: 400 });
             }
 
             if (new Date() > new Date(tokenRecord.expiresat)) {
@@ -760,17 +790,27 @@ router.post("/activate-donor", async (req: Request, res: Response) => {
                 );
             }
 
+            const now = new Date();
             const consumed = await tx.donoractivationtokens.updateMany({
                 where: {
                     tokenid: tokenRecord.tokenid,
                     usedat: null,
                 },
-                data: { usedat: new Date() },
+                data: { usedat: now },
             });
 
             if (consumed.count !== 1) {
                 throw Object.assign(new Error("Invalid or already used activation token."), { statusCode: 400 });
             }
+
+            // Revoke any sibling unused activation tokens for this donor
+            await tx.donoractivationtokens.updateMany({
+                where: {
+                    userid: tokenRecord.userid,
+                    usedat: null,
+                },
+                data: { usedat: now },
+            });
 
             const user = await tx.users.update({
                 where: { userid: tokenRecord.userid },
