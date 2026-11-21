@@ -231,6 +231,35 @@ export default function SignUpPage() {
         setErrorMessage("Area PIN code is required");
         return;
       }
+    } else if (role === "bloodbank") {
+      if (!orgName.trim()) {
+        setErrorMessage("Blood bank / Center name is required");
+        return;
+      }
+      if (!fullName.trim()) {
+        setErrorMessage("In-charge / Officer name is required");
+        return;
+      }
+      if (!regNumber.trim()) {
+        setErrorMessage("Blood bank license number is required");
+        return;
+      }
+      if (!address.trim()) {
+        setErrorMessage("Facility address is required");
+        return;
+      }
+      if (!instCity.trim()) {
+        setErrorMessage("City is required");
+        return;
+      }
+      if (!instState.trim()) {
+        setErrorMessage("State is required");
+        return;
+      }
+      if (!instPincode.trim()) {
+        setErrorMessage("Area PIN code is required");
+        return;
+      }
     }
 
     const roleMap: Record<RoleType, string> = {
@@ -273,10 +302,15 @@ export default function SignUpPage() {
       payload.state = instState.trim();
       payload.pincode = instPincode.trim();
     } else if (role === "bloodbank") {
-      payload.address = address.trim() || undefined;
-      payload.city = instCity.trim() || undefined;
-      payload.state = instState.trim() || undefined;
-      payload.pincode = instPincode.trim() || undefined;
+      payload.bloodbankname = orgName.trim();
+      payload.licensenumber = regNumber.trim();
+      payload.contactpersonname = fullName.trim();
+      payload.contactpersonphone = phone.trim();
+      payload.designation = designation.trim() || undefined;
+      payload.address = address.trim();
+      payload.city = instCity.trim();
+      payload.state = instState.trim();
+      payload.pincode = instPincode.trim();
     } else if (role === "patient") {
       payload.city = patientCity.trim() || undefined;
     }
