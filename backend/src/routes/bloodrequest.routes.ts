@@ -778,6 +778,8 @@ router.post("/", authenticate, authorize("REQUESTER", "PATIENT", "HOSPITAL", "AD
                 if (savedFilePath) await fs.promises.unlink(savedFilePath).catch(() => {});
                 return res.status(400).json({ success: false, message: "The specified hospital does not exist" });
             }
+            // TEMPORARY BYPASS: Allow assigning non-APPROVED hospital
+            /*
             if (hospitalRecord.approvalstatus !== "APPROVED") {
                 if (savedFilePath) await fs.promises.unlink(savedFilePath).catch(() => {});
                 return res.status(400).json({
@@ -785,6 +787,7 @@ router.post("/", authenticate, authorize("REQUESTER", "PATIENT", "HOSPITAL", "AD
                     message: "The assigned hospital is not approved to coordinate blood requisitions",
                 });
             }
+            */
         }
 
         // Coordinate validation and safe inheritance
@@ -825,9 +828,10 @@ router.post("/", authenticate, authorize("REQUESTER", "PATIENT", "HOSPITAL", "AD
                     hospitalId
                 );
                 const lockedHosp = hospRows?.[0];
-                if (!lockedHosp || lockedHosp.approvalstatus !== "APPROVED") {
+                // TEMPORARY BYPASS: Allow non-APPROVED hospitals to coordinate requisitions
+                if (!lockedHosp) {
                     throw Object.assign(
-                        new Error("The assigned hospital is not approved to coordinate blood requisitions"),
+                        new Error("The assigned hospital does not exist"),
                         { statusCode: 400 }
                     );
                 }
@@ -1015,6 +1019,8 @@ router.put("/:id", authenticate, requireApprovedHospital, async (req: Request, r
                     message: "Access denied: no hospital profile linked to this account",
                 });
             }
+            // TEMPORARY BYPASS: Allow non-APPROVED hospitals to perform clinical operations
+            /*
             if (hospitalRecord.approvalstatus !== "APPROVED") {
                 return res.status(403).json({
                     success: false,
@@ -1022,6 +1028,7 @@ router.put("/:id", authenticate, requireApprovedHospital, async (req: Request, r
                     approvalstatus: hospitalRecord.approvalstatus,
                 });
             }
+            */
             if (existing.hospitalid && existing.hospitalid === hospitalRecord.hospitalid) {
                 isAssignedHospital = true;
             } else {
@@ -1147,9 +1154,10 @@ router.put("/:id", authenticate, requireApprovedHospital, async (req: Request, r
                     lockedRequest.hospitalid
                 );
                 const assignedHospital = hospRows?.[0];
-                if (!assignedHospital || assignedHospital.approvalstatus !== "APPROVED") {
+                // TEMPORARY BYPASS: Allow non-APPROVED hospitals to update clinical operations
+                if (!assignedHospital) {
                     throw Object.assign(
-                        new Error("Assigned hospital is not approved for clinical operations"),
+                        new Error("Assigned hospital does not exist"),
                         { statusCode: 403 }
                     );
                 }
@@ -1246,12 +1254,15 @@ router.put("/:id", authenticate, requireApprovedHospital, async (req: Request, r
                     if (!targetHosp) {
                         throw Object.assign(new Error("The specified hospital does not exist"), { statusCode: 400 });
                     }
+                    // TEMPORARY BYPASS: Allow assigning non-APPROVED hospital
+                    /*
                     if (targetHosp.approvalstatus !== "APPROVED") {
                         throw Object.assign(
                             new Error("The assigned hospital is not approved to coordinate blood requisitions"),
                             { statusCode: 400 }
                         );
                     }
+                    */
                     updateData.hospitalid = targetHosp.hospitalid;
                 }
             }
@@ -1804,7 +1815,8 @@ router.get("/:id/prescription/file", authenticate, requireApprovedHospital, asyn
         let isAssignedHospital = false;
         if (user.role === "HOSPITAL") {
             const hospital = await prisma.hospitals.findUnique({ where: { userid: user.userid } });
-            if (hospital && hospital.approvalstatus === "APPROVED" && bloodRequest.hospitalid === hospital.hospitalid) {
+            // TEMPORARY BYPASS: Allow non-APPROVED hospital to access prescription file
+            if (hospital && bloodRequest.hospitalid === hospital.hospitalid) {
                 isAssignedHospital = true;
             }
         }
@@ -1955,9 +1967,10 @@ router.post("/:id/prescription/verify", authenticate, requireApprovedHospital, a
                 lockedRequest.hospitalid
             );
             const hosp = hospRows?.[0];
-            if (!hosp || hosp.approvalstatus !== "APPROVED") {
+            // TEMPORARY BYPASS: Allow non-APPROVED hospitals to verify prescriptions
+            if (!hosp) {
                 throw Object.assign(
-                    new Error("Assigned hospital is not approved to verify prescriptions"),
+                    new Error("Assigned hospital does not exist"),
                     { statusCode: 403 }
                 );
             }
@@ -2172,10 +2185,11 @@ const authorizePrescriptionReplacementPreUpload = async (req: Request, res: Resp
         }
 
         if (bloodRequest.hospitalid) {
-            if (!bloodRequest.hospitals || bloodRequest.hospitals.approvalstatus !== "APPROVED") {
+            // TEMPORARY BYPASS: Allow prescription upload for non-APPROVED hospital
+            if (!bloodRequest.hospitals) {
                 return res.status(403).json({
                     success: false,
-                    message: "Assigned hospital is not approved to coordinate blood requisitions",
+                    message: "Assigned hospital does not exist",
                 });
             }
         }
@@ -2277,9 +2291,10 @@ router.post(
                         lockedRequest.hospitalid
                     );
                     const hosp = hospRows?.[0];
-                    if (!hosp || hosp.approvalstatus !== "APPROVED") {
+                    // TEMPORARY BYPASS: Allow prescription replacement for non-APPROVED hospital
+                    if (!hosp) {
                         throw Object.assign(
-                            new Error("Assigned hospital is not approved to coordinate blood requisitions"),
+                            new Error("Assigned hospital does not exist"),
                             { statusCode: 403 }
                         );
                     }
@@ -3528,7 +3543,8 @@ router.post("/:id/volunteers/:deliveryId/decision", authenticate, requireApprove
         let isAssignedHospital = false;
         if (user.role === "HOSPITAL") {
             const hosp = await prisma.hospitals.findUnique({ where: { userid: user.userid } });
-            if (hosp && hosp.approvalstatus === "APPROVED" && request.hospitalid === hosp.hospitalid) {
+            // TEMPORARY BYPASS: Allow non-APPROVED hospital volunteer decision
+            if (hosp && request.hospitalid === hosp.hospitalid) {
                 isAssignedHospital = true;
             }
         }
@@ -3743,7 +3759,8 @@ router.patch("/:id/transit-status", authenticate, requireApprovedHospital, async
         let isAssignedHospital = false;
         if (user.role === "HOSPITAL") {
             const hosp = await prisma.hospitals.findUnique({ where: { userid: user.userid } });
-            if (hosp && hosp.approvalstatus === "APPROVED" && request.hospitalid === hosp.hospitalid) {
+            // TEMPORARY BYPASS: Allow non-APPROVED hospital volunteer decision
+            if (hosp && request.hospitalid === hosp.hospitalid) {
                 isAssignedHospital = true;
             }
         }

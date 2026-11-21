@@ -62,8 +62,9 @@ const extractOptionalUser = async (req: Request): Promise<{ userid: string; role
  */
 router.get("/", async (_req: Request, res: Response) => {
     try {
+        // TEMPORARY BYPASS: Allow all hospitals in public directory during verification bypass
         const hospitals = await prisma.hospitals.findMany({
-            where: { approvalstatus: "APPROVED" },
+            // where: { approvalstatus: "APPROVED" },
             select: {
                 hospitalid: true,
                 hospitalname: true,
@@ -619,9 +620,10 @@ async function createHospitalBloodRequestCore(hospital: any, user: any, body: an
             hospital.hospitalid
         );
         const lockedHosp = hospRows?.[0];
-        if (!lockedHosp || lockedHosp.approvalstatus !== "APPROVED") {
+        // TEMPORARY BYPASS: Allow non-APPROVED hospitals to create requisitions
+        if (!lockedHosp) {
             throw Object.assign(
-                new Error("The specified hospital is not approved to coordinate blood requisitions"),
+                new Error("The specified hospital does not exist"),
                 { statusCode: 400 }
             );
         }
@@ -736,6 +738,8 @@ router.post("/me/bloodrequests", authenticate, authorize("HOSPITAL", "ADMIN"), r
             });
         }
 
+        // TEMPORARY BYPASS: Allow non-APPROVED hospitals to create requisitions
+        /*
         if (hospital.approvalstatus !== "APPROVED") {
             return res.status(403).json({
                 success: false,
@@ -743,6 +747,7 @@ router.post("/me/bloodrequests", authenticate, authorize("HOSPITAL", "ADMIN"), r
                 approvalstatus: hospital.approvalstatus,
             });
         }
+        */
 
         return await createHospitalBloodRequestCore(hospital, user, req.body, res);
     } catch (error) {
@@ -846,12 +851,15 @@ router.post(
                 });
             }
 
+            // TEMPORARY BYPASS: Allow non-APPROVED hospitals to coordinate requisitions
+            /*
             if (hospital.approvalstatus !== "APPROVED") {
                 return res.status(400).json({
                     success: false,
                     message: "The specified hospital is not approved to coordinate blood requisitions",
                 });
             }
+            */
 
             return await createHospitalBloodRequestCore(hospital, user, req.body, res);
         } catch (error) {
@@ -986,7 +994,8 @@ router.post("/", authenticate, authorize("ADMIN"), async (req: Request, res: Res
                 pincode: String(pincode).trim(),
                 latitude: latitude !== undefined ? latitude : null,
                 longitude: longitude !== undefined ? longitude : null,
-                approvalstatus: approvalstatus || approval_status.PENDING,
+                // TEMPORARY BYPASS: Auto-approve new hospitals
+                approvalstatus: approvalstatus || approval_status.APPROVED,
             },
         });
 

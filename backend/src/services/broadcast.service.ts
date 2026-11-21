@@ -84,16 +84,17 @@ export async function triggerEmergencyBroadcast(options: TriggerBroadcastOptions
             }
         }
 
-        // Clinical Governance: If request has an assigned hospital, require approvalstatus APPROVED
+        // Clinical Governance: If request has an assigned hospital, verify existence
+        // TEMPORARY BYPASS: Allow broadcasting for requests with assigned hospital regardless of approvalstatus
         if (request.hospitalid) {
             const hospRows: any[] = await tx.$queryRawUnsafe(
                 `SELECT hospitalid, approvalstatus FROM hospitals WHERE hospitalid = $1::uuid`,
                 request.hospitalid
             );
-            if (!hospRows || hospRows.length === 0 || hospRows[0].approvalstatus !== "APPROVED") {
+            if (!hospRows || hospRows.length === 0) {
                 return {
                     success: false,
-                    message: "Assigned hospital is not approved to coordinate blood requisitions.",
+                    message: "Assigned hospital was not found.",
                     totalMatched: 0,
                     totalNotified: 0,
                 };

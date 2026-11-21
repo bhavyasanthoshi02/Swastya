@@ -249,6 +249,8 @@ export const requireApprovedHospital = async (
             });
         }
 
+        // TEMPORARY BYPASS: Allow existing PENDING and REJECTED hospitals to perform clinical operations
+        /*
         if (hospital.approvalstatus !== "APPROVED") {
             return res.status(403).json({
                 success: false,
@@ -256,6 +258,7 @@ export const requireApprovedHospital = async (
                 approvalstatus: hospital.approvalstatus,
             });
         }
+        */
 
         (req as any).hospital = hospital;
         return next();

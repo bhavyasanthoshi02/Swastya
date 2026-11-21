@@ -1101,6 +1101,8 @@ export class UnitTraceabilityService {
                     err.statusCode = 403;
                     throw err;
                 }
+                // TEMPORARY BYPASS: Allow non-APPROVED hospitals to perform clinical operations
+                /*
                 if (actorHospital.approvalstatus !== "APPROVED") {
                     const err: any = new Error(
                         `Hospital facility is ${actorHospital.approvalstatus}. Only APPROVED facilities may perform clinical operations.`
@@ -1108,6 +1110,7 @@ export class UnitTraceabilityService {
                     err.statusCode = 403;
                     throw err;
                 }
+                */
                 if (hospitalId && hospitalId !== actorHospital.hospitalid) {
                     const err: any = new Error("Access denied: you can only assign blood requests belonging to your hospital");
                     err.statusCode = 403;
@@ -1187,9 +1190,10 @@ export class UnitTraceabilityService {
                 request.hospitalid
             );
             const assignedHosp = assignedHospRows?.[0];
-            if (!assignedHosp || assignedHosp.approvalstatus !== "APPROVED") {
+            // TEMPORARY BYPASS: Allow non-APPROVED hospitals to coordinate requisition assignments
+            if (!assignedHosp) {
                 const err: any = new Error(
-                    `Assigned hospital is ${assignedHosp?.approvalstatus || "NOT_FOUND"}. Only APPROVED hospitals can coordinate requisition assignments.`
+                    `Assigned hospital not found. Hospital required to coordinate requisition assignments.`
                 );
                 err.statusCode = 403;
                 throw err;
@@ -1422,9 +1426,10 @@ export class UnitTraceabilityService {
                 request.hospitalid
             );
             const assignedHosp = assignedHospRows?.[0];
-            if (!assignedHosp || assignedHosp.approvalstatus !== "APPROVED") {
+            // TEMPORARY BYPASS: Allow non-APPROVED hospitals to coordinate requisition assignments
+            if (!assignedHosp) {
                 const err: any = new Error(
-                    `Assigned hospital is ${assignedHosp?.approvalstatus || "NOT_FOUND"}. Only APPROVED hospitals can coordinate requisition assignments.`
+                    `Assigned hospital not found. Hospital required to coordinate requisition assignments.`
                 );
                 err.statusCode = 403;
                 throw err;
@@ -2379,6 +2384,8 @@ export class UnitTraceabilityService {
                     err.statusCode = 403;
                     throw err;
                 }
+                // TEMPORARY BYPASS: Allow non-APPROVED hospitals to perform clinical operations
+                /*
                 if (actorHospital.approvalstatus !== "APPROVED") {
                     const err: any = new Error(
                         `Hospital facility is ${actorHospital.approvalstatus}. Only APPROVED facilities may perform clinical operations.`
@@ -2386,6 +2393,7 @@ export class UnitTraceabilityService {
                     err.statusCode = 403;
                     throw err;
                 }
+                */
                 if (hospitalId && hospitalId !== actorHospital.hospitalid) {
                     const err: any = new Error("Forbidden: You do not have ownership of the requesting hospital facility");
                     err.statusCode = 403;

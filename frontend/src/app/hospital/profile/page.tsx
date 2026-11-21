@@ -154,11 +154,11 @@ export default function HospitalProfilePage() {
           Hospital Facility Profile
         </h1>
         <p className="text-xs sm:text-sm text-slate-500 mt-1">
-          Manage clinical facility contact information and view platform accreditation status
+          Manage clinical facility contact information and institutional details
         </p>
       </div>
 
-      {/* Accreditation Status Card */}
+      {/* Facility Identification Card */}
       <div className="bg-white rounded-3xl border border-[#F3E9D1] p-6 sm:p-7 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-[#FAF6EE] border border-[#F3E9D1] flex items-center justify-center text-[#053845] shrink-0">
@@ -166,26 +166,12 @@ export default function HospitalProfilePage() {
           </div>
           <div>
             <h3 className="text-sm font-bold text-[#053845]">
-              Accreditation & Approval Status
+              Facility Identification
             </h3>
             <p className="text-xs text-slate-500">
               Registration Number: <strong className="font-mono text-slate-800">{hospital?.registrationnumber || "Pending"}</strong>
             </p>
           </div>
-        </div>
-
-        <div className="shrink-0">
-          {hospital?.approvalstatus === "VERIFIED" ? (
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold text-emerald-800 bg-emerald-50 border border-emerald-200">
-              <ShieldCheck className="w-4 h-4 text-emerald-600" />
-              <span>Verified Care Facility</span>
-            </span>
-          ) : (
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold text-amber-800 bg-amber-50 border border-amber-200">
-              <Clock className="w-4 h-4 text-amber-600" />
-              <span>Verification In Progress</span>
-            </span>
-          )}
         </div>
       </div>
 

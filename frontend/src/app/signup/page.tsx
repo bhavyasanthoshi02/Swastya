@@ -809,13 +809,6 @@ export default function SignUpPage() {
                         />
                       </div>
                     </div>
-
-                    <div className="p-2.5 rounded-lg bg-[#FAF6EE] border border-[#F3E9D1] text-[11px] text-slate-600 flex items-start gap-2">
-                      <Building2 className="w-3.5 h-3.5 text-[#317786] flex-shrink-0 mt-0.5" />
-                      <p className="leading-snug">
-                        <span className="font-semibold text-[#053845]">Verification Note:</span> Hospital accounts undergo administrative verification before accessing inter-facility coordination channels.
-                      </p>
-                    </div>
                   </>
                 )}
 

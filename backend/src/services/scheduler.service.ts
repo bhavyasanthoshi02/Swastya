@@ -415,23 +415,24 @@ export async function executeFollowUpJob(job: ClaimedSchedulerJob): Promise<{
         return { status: "CANCELLED", details: "Prescription rejected by hospital; follow-up escalation cancelled." };
     }
 
-    // 3b. Validate assigned hospital approval: if hospital is unapproved, cancel follow-up execution
+    // 3b. Validate assigned hospital: if hospital is missing, cancel follow-up execution
+    // TEMPORARY BYPASS: Allow non-APPROVED hospitals to execute follow-up scheduler jobs
     if (request.hospitalid) {
         const hosp = await prisma.hospitals.findUnique({
             where: { hospitalid: request.hospitalid },
             select: { approvalstatus: true },
         });
-        if (!hosp || hosp.approvalstatus !== "APPROVED") {
+        if (!hosp) {
             await updateJobIfProcessing(job.jobid, {
                 status: "CANCELLED",
-                lasterror: "HOSPITAL_NOT_APPROVED",
+                lasterror: "HOSPITAL_NOT_FOUND",
                 lockeduntil: null,
                 lockedby: null,
                 updatedat: new Date(),
             });
             return {
                 status: "CANCELLED",
-                details: "Assigned hospital is not approved; follow-up escalation cancelled.",
+                details: "Assigned hospital not found; follow-up escalation cancelled.",
             };
         }
     }

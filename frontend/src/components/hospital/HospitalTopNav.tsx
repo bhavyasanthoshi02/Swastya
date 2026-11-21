@@ -236,35 +236,8 @@ export function HospitalTopNav({
           </nav>
         </div>
 
-        {/* Right: Live Status Pill, Create Request, Notifications, Profile, Mobile Menu */}
+        {/* Right: Create Request, Notifications, Profile, Mobile Menu */}
         <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-          {/* Live Facility Verification Chip */}
-          <div
-            className={`hidden lg:inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border transition-all ${
-              approvalStatus === "VERIFIED"
-                ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                : approvalStatus === "REJECTED"
-                ? "bg-rose-50 text-rose-700 border-rose-200"
-                : "bg-amber-50 text-amber-700 border-amber-200"
-            }`}
-            title={`Clinical Approval Status: ${approvalStatus}`}
-          >
-            <span
-              className={`w-2 h-2 rounded-full ${
-                approvalStatus === "VERIFIED"
-                  ? "bg-emerald-500 animate-pulse"
-                  : approvalStatus === "REJECTED"
-                  ? "bg-rose-500"
-                  : "bg-amber-500"
-              }`}
-            />
-            <span className="truncate max-w-[170px]">
-              {approvalStatus === "VERIFIED"
-                ? `Verified • ${city}`
-                : "Verification Pending"}
-            </span>
-          </div>
-
           {/* Quick Action: Create Request */}
           <Link
             href="/hospital/requests/new"
@@ -461,7 +434,7 @@ export function HospitalTopNav({
               {hospitalName}
             </span>
             <span className="block text-[11px] text-slate-500">
-              {city} &bull; {approvalStatus === "VERIFIED" ? "Verified Facility" : "Pending Verification"}
+              {city}
             </span>
           </div>
 

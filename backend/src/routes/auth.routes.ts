@@ -456,7 +456,8 @@ router.post("/register", async (req: Request, res: Response) => {
                         pincode: rawPincodeHosp,
                         latitude: validatedCoords.latitude ?? null,
                         longitude: validatedCoords.longitude ?? null,
-                        approvalstatus: approval_status.PENDING,
+                        // TEMPORARY BYPASS: Auto-approve newly registered hospitals
+                        approvalstatus: approval_status.APPROVED,
                     },
                 });
 
