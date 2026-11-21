@@ -15,12 +15,12 @@ import {
   AlertCircle,
   RefreshCw,
   Droplets,
-  Clock,
-  ShieldAlert,
 } from "lucide-react";
 import { api, BloodRequestItem } from "@/lib/api";
 import { AuthHospital } from "@/lib/auth";
 import { formatDate, mapBloodGroupToDisplay } from "@/lib/mappers";
+
+type FilterTab = "ALL" | "ACTIVE" | "EMERGENCY" | "FULFILLED";
 
 const ACTIVE_COORDINATION_STATUSES = new Set([
   "CREATED",
@@ -67,6 +67,7 @@ function getStatusBadgeClass(status?: string | null): string {
 export default function HospitalDashboardPage() {
   const [hospital, setHospital] = useState<AuthHospital | null>(null);
   const [requests, setRequests] = useState<BloodRequestItem[]>([]);
+  const [activeFilter, setActiveFilter] = useState<FilterTab>("ALL");
   const [kpiCounts, setKpiCounts] = useState({
     total: 0,
     emergency: 0,
@@ -92,7 +93,7 @@ export default function HospitalDashboardPage() {
         setHospital(profileRes.value.hospital);
       }
 
-      // 2. Resolve Blood Requests (contains full prescription details)
+      // 2. Resolve Blood Requests
       let loadedRequests: BloodRequestItem[] = [];
       if (reqsRes.status === "fulfilled" && Array.isArray(reqsRes.value)) {
         loadedRequests = reqsRes.value;
@@ -154,17 +155,39 @@ export default function HospitalDashboardPage() {
     fetchDashboardData();
   }, [fetchDashboardData]);
 
-  // Filter pending prescription verifications requiring action from hospital staff
-  const pendingVerifications = useMemo(() => {
-    return requests.filter(
-      (r) => r.prescription && r.prescription.status === "PENDING"
-    );
-  }, [requests]);
+  // Dynamic counts for tab filters
+  const activeCount = useMemo(
+    () => requests.filter((r) => ACTIVE_COORDINATION_STATUSES.has(r.status || "CREATED")).length,
+    [requests]
+  );
 
-  // Display top 5 recent blood requests
-  const recentRequests = useMemo(() => {
-    return requests.slice(0, 5);
-  }, [requests]);
+  const emergencyCount = useMemo(
+    () =>
+      requests.filter(
+        (r) => r.isemergency || r.urgencylevel === "CRITICAL" || r.urgencylevel === "HIGH"
+      ).length,
+    [requests]
+  );
+
+  const fulfilledCount = useMemo(
+    () => requests.filter((r) => r.status === "FULFILLED").length,
+    [requests]
+  );
+
+  // Filtered list of requests (max 8 for compact, balanced presentation)
+  const filteredRequests = useMemo(() => {
+    let list = requests;
+    if (activeFilter === "ACTIVE") {
+      list = requests.filter((r) => ACTIVE_COORDINATION_STATUSES.has(r.status || "CREATED"));
+    } else if (activeFilter === "EMERGENCY") {
+      list = requests.filter(
+        (r) => r.isemergency || r.urgencylevel === "CRITICAL" || r.urgencylevel === "HIGH"
+      );
+    } else if (activeFilter === "FULFILLED") {
+      list = requests.filter((r) => r.status === "FULFILLED");
+    }
+    return list.slice(0, 8);
+  }, [requests, activeFilter]);
 
   // Loading state
   if (isLoading) {
@@ -203,44 +226,34 @@ export default function HospitalDashboardPage() {
 
   return (
     <div className="space-y-6">
-      {/* A. Welcome Section */}
-      <section className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#317786]/15">
-        <div className="flex items-center gap-3.5 min-w-0">
-          <div className="w-11 h-11 rounded-2xl bg-[#317786]/10 border border-[#317786]/20 text-[#317786] flex items-center justify-center shrink-0">
-            <Building2 className="w-5 h-5" />
-          </div>
-          <div className="space-y-0.5 min-w-0">
-            <h1 className="font-serif text-2xl sm:text-3xl font-bold text-[#053845] tracking-tight truncate">
-              Welcome back{hospital?.hospitalname ? `, ${hospital.hospitalname}` : ""}
-            </h1>
-            <p className="text-sm text-slate-600">
-              Here&apos;s an overview of your hospital&apos;s blood coordination activities.
-            </p>
-          </div>
+      {/* 1. Welcome Section (Create button removed, clean alignment matching Requester) */}
+      <section className="flex items-center gap-3.5 pb-4 border-b border-[#317786]/15">
+        <div className="w-11 h-11 rounded-2xl bg-[#317786]/10 border border-[#317786]/20 text-[#317786] flex items-center justify-center shrink-0">
+          <Building2 className="w-5 h-5" />
         </div>
-
-        <Link
-          href="/hospital/requests/new"
-          className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-[#053845] hover:bg-[#317786] text-white text-xs sm:text-sm font-semibold shadow-2xs transition-colors shrink-0 self-start sm:self-center"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Create Blood Request</span>
-        </Link>
+        <div className="space-y-0.5 min-w-0">
+          <h1 className="font-serif text-2xl sm:text-3xl font-bold text-[#053845] tracking-tight truncate">
+            Welcome back{hospital?.hospitalname ? `, ${hospital.hospitalname}` : ""}
+          </h1>
+          <p className="text-sm text-slate-600">
+            Here&apos;s an overview of your hospital&apos;s blood coordination activities.
+          </p>
+        </div>
       </section>
 
-      {/* B. Four Individual KPI Cards */}
+      {/* 2. Four Individual KPI Cards (Clean, balanced, unified dimensions) */}
       <section
         className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"
         aria-label="Hospital summary"
       >
         {/* 1. Total Assigned */}
-        <div className="bg-white rounded-2xl border border-[#F3E9D1] p-4 shadow-2xs flex items-center gap-3.5">
-          <div className="w-10 h-10 rounded-xl bg-[#317786]/10 border border-[#317786]/20 text-[#317786] flex items-center justify-center shrink-0">
-            <FileText className="w-4 h-4" />
+        <div className="bg-white rounded-2xl border border-[#F3E9D1] p-4.5 shadow-2xs flex items-center gap-3.5">
+          <div className="w-11 h-11 rounded-xl bg-[#317786]/10 border border-[#317786]/20 text-[#317786] flex items-center justify-center shrink-0">
+            <FileText className="w-5 h-5" />
           </div>
           <div className="min-w-0">
             <p className="text-xs font-medium text-slate-500 truncate">Total Assigned</p>
-            <p className="font-serif text-2xl font-bold text-[#053845] leading-tight">
+            <p className="font-serif text-2xl font-bold text-[#053845] leading-tight my-0.5">
               {kpiCounts.total}
             </p>
             <p className="text-[11px] text-slate-400 truncate">All assigned requisitions</p>
@@ -248,13 +261,13 @@ export default function HospitalDashboardPage() {
         </div>
 
         {/* 2. Emergency Requisitions */}
-        <div className="bg-white rounded-2xl border border-[#F3E9D1] p-4 shadow-2xs flex items-center gap-3.5">
-          <div className="w-10 h-10 rounded-xl bg-[#EFA27E]/20 border border-[#EFA27E]/40 text-[#B94F30] flex items-center justify-center shrink-0">
-            <AlertTriangle className="w-4 h-4" />
+        <div className="bg-white rounded-2xl border border-[#F3E9D1] p-4.5 shadow-2xs flex items-center gap-3.5">
+          <div className="w-11 h-11 rounded-xl bg-[#EFA27E]/20 border border-[#EFA27E]/40 text-[#B94F30] flex items-center justify-center shrink-0">
+            <AlertTriangle className="w-5 h-5" />
           </div>
           <div className="min-w-0">
             <p className="text-xs font-medium text-slate-500 truncate">Emergency Requisitions</p>
-            <p className="font-serif text-2xl font-bold text-[#053845] leading-tight">
+            <p className="font-serif text-2xl font-bold text-[#053845] leading-tight my-0.5">
               {kpiCounts.emergency}
             </p>
             <p className="text-[11px] text-slate-400 truncate">High or Critical priority</p>
@@ -262,13 +275,13 @@ export default function HospitalDashboardPage() {
         </div>
 
         {/* 3. In Coordination */}
-        <div className="bg-white rounded-2xl border border-[#F3E9D1] p-4 shadow-2xs flex items-center gap-3.5">
-          <div className="w-10 h-10 rounded-xl bg-[#FAF6EE] border border-[#F3E9D1] text-[#053845] flex items-center justify-center shrink-0">
-            <Activity className="w-4 h-4 text-[#317786]" />
+        <div className="bg-white rounded-2xl border border-[#F3E9D1] p-4.5 shadow-2xs flex items-center gap-3.5">
+          <div className="w-11 h-11 rounded-xl bg-[#FAF6EE] border border-[#F3E9D1] text-[#317786] flex items-center justify-center shrink-0">
+            <Activity className="w-5 h-5 text-[#317786]" />
           </div>
           <div className="min-w-0">
             <p className="text-xs font-medium text-slate-500 truncate">In Coordination</p>
-            <p className="font-serif text-2xl font-bold text-[#053845] leading-tight">
+            <p className="font-serif text-2xl font-bold text-[#053845] leading-tight my-0.5">
               {kpiCounts.inCoordination}
             </p>
             <p className="text-[11px] text-slate-400 truncate">Review, matching, or arranged</p>
@@ -276,13 +289,13 @@ export default function HospitalDashboardPage() {
         </div>
 
         {/* 4. Fulfilled */}
-        <div className="bg-white rounded-2xl border border-[#F3E9D1] p-4 shadow-2xs flex items-center gap-3.5">
-          <div className="w-10 h-10 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 flex items-center justify-center shrink-0">
-            <CheckCircle2 className="w-4 h-4" />
+        <div className="bg-white rounded-2xl border border-[#F3E9D1] p-4.5 shadow-2xs flex items-center gap-3.5">
+          <div className="w-11 h-11 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 flex items-center justify-center shrink-0">
+            <CheckCircle2 className="w-5 h-5" />
           </div>
           <div className="min-w-0">
             <p className="text-xs font-medium text-slate-500 truncate">Fulfilled</p>
-            <p className="font-serif text-2xl font-bold text-[#053845] leading-tight">
+            <p className="font-serif text-2xl font-bold text-[#053845] leading-tight my-0.5">
               {kpiCounts.fulfilled}
             </p>
             <p className="text-[11px] text-slate-400 truncate">Completed &amp; verified</p>
@@ -290,23 +303,53 @@ export default function HospitalDashboardPage() {
         </div>
       </section>
 
-      {/* Main Two-Column Layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* C. Left Column (2 Cols): Recent Blood Requests */}
-        <section className="lg:col-span-2 space-y-4" aria-label="Recent blood requests">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5">
-              <h2 className="font-serif text-xl font-bold text-[#053845]">
-                Recent Blood Requests
-              </h2>
-              {requests.length > 0 && (
-                <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-[#317786]/10 border border-[#317786]/20 text-[#317786]">
-                  {requests.length}
-                </span>
-              )}
-            </div>
+      {/* 3. Recent Blood Requests (Full width, balanced layout inspired by Requester Dashboard) */}
+      <section className="space-y-4" aria-label="Recent blood requests">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <h2 className="font-serif text-xl font-bold text-[#053845]">
+              Recent Blood Requests
+            </h2>
+            <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-[#317786]/10 border border-[#317786]/20 text-[#317786]">
+              {requests.length}
+            </span>
+          </div>
 
-            {requests.length > 0 && (
+          {requests.length > 0 && (
+            <div className="flex flex-wrap items-center gap-3 self-start sm:self-auto">
+              <div
+                className="inline-flex items-center gap-1 p-1 rounded-xl bg-white border border-[#F3E9D1]"
+                role="tablist"
+                aria-label="Filter blood requests"
+              >
+                {(
+                  [
+                    { key: "ALL", label: "All", count: requests.length },
+                    { key: "ACTIVE", label: "Active", count: activeCount },
+                    { key: "EMERGENCY", label: "Emergency", count: emergencyCount },
+                    { key: "FULFILLED", label: "Fulfilled", count: fulfilledCount },
+                  ] as const
+                ).map((tab) => {
+                  const isActive = activeFilter === tab.key;
+                  return (
+                    <button
+                      key={tab.key}
+                      type="button"
+                      role="tab"
+                      aria-selected={isActive}
+                      onClick={() => setActiveFilter(tab.key)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                        isActive
+                          ? "bg-[#317786] text-white shadow-2xs"
+                          : "text-slate-600 hover:text-[#053845] hover:bg-[#317786]/10"
+                      }`}
+                    >
+                      {tab.label} ({tab.count})
+                    </button>
+                  );
+                })}
+              </div>
+
               <Link
                 href="/hospital/requests"
                 className="inline-flex items-center gap-1 text-xs font-semibold text-[#317786] hover:text-[#053845] transition-colors"
@@ -314,207 +357,138 @@ export default function HospitalDashboardPage() {
                 <span>View All</span>
                 <ArrowRight className="w-3.5 h-3.5" />
               </Link>
-            )}
-          </div>
-
-          {recentRequests.length === 0 ? (
-            /* Compact Empty State */
-            <div className="bg-white rounded-2xl border border-[#F3E9D1] p-8 text-center shadow-2xs space-y-3">
-              <div className="w-11 h-11 rounded-2xl bg-[#317786]/10 border border-[#317786]/20 text-[#317786] flex items-center justify-center mx-auto">
-                <Droplets className="w-5 h-5" />
-              </div>
-              <div className="space-y-1">
-                <h3 className="font-serif text-base font-bold text-[#053845]">
-                  No blood requests assigned yet
-                </h3>
-                <p className="text-xs text-slate-600 max-w-sm mx-auto">
-                  Requisitions assigned to this facility or created by your team will appear here for coordination.
-                </p>
-              </div>
-              <div>
-                <Link
-                  href="/hospital/requests/new"
-                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold text-white bg-[#053845] hover:bg-[#317786] transition-colors shadow-2xs"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Create Blood Request</span>
-                </Link>
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {recentRequests.map((req) => {
-                const reqCode = `REQ-${req.requestid.slice(0, 8).toUpperCase()}`;
-                const bloodDisplay = mapBloodGroupToDisplay(req.bloodgroup);
-                const componentDisplay = formatComponentLabel(req.bloodcomponent);
-                const isUrgent =
-                  req.isemergency ||
-                  req.urgencylevel === "CRITICAL" ||
-                  req.urgencylevel === "HIGH";
-
-                return (
-                  <article
-                    key={req.requestid}
-                    className="bg-white rounded-2xl border border-[#F3E9D1] px-4 py-3 sm:px-5 sm:py-3.5 shadow-2xs hover:border-[#317786]/45 transition-colors space-y-2"
-                  >
-                    {/* Top row: Patient name, Request reference, Priority badge, & Status */}
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
-                        <h3 className="font-serif text-base font-bold text-[#053845] truncate">
-                          {req.patientname}
-                        </h3>
-                        <span className="text-xs font-medium text-slate-400 shrink-0">
-                          {reqCode}
-                        </span>
-                        {isUrgent ? (
-                          <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-[#EFA27E]/25 text-[#B94F30] border border-[#EFA27E]/50 shrink-0 flex items-center gap-1">
-                            <AlertTriangle className="w-3 h-3" />
-                            <span>{req.urgencylevel === "CRITICAL" || req.isemergency ? "Emergency" : "High Priority"}</span>
-                          </span>
-                        ) : req.urgencylevel ? (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-600 border border-slate-200 shrink-0">
-                            {req.urgencylevel}
-                          </span>
-                        ) : null}
-                      </div>
-
-                      <span
-                        className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold border shrink-0 ${getStatusBadgeClass(
-                          req.status
-                        )}`}
-                      >
-                        {formatStatusLabel(req.status)}
-                      </span>
-                    </div>
-
-                    {/* Compact information row */}
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-2 border-t border-[#F3E9D1]/60">
-                      <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1.5 min-w-0">
-                        <div className="inline-flex flex-col items-center justify-center px-2.5 py-1 rounded-lg bg-[#317786]/10 border border-[#317786]/20 shrink-0">
-                          <span className="font-serif text-sm font-bold text-[#053845] leading-none">
-                            {bloodDisplay}
-                          </span>
-                          <span className="text-[10px] font-medium text-[#317786] mt-0.5 leading-tight whitespace-nowrap">
-                            {componentDisplay}
-                          </span>
-                        </div>
-
-                        <span className="text-xs sm:text-sm text-slate-700 shrink-0">
-                          <span className="font-serif text-base font-bold text-[#053845]">
-                            {req.unitsrequired}
-                          </span>{" "}
-                          {req.unitsrequired === 1 ? "unit" : "units"}
-                        </span>
-
-                        {(req.requiredby || req.createdat) && (
-                          <span className="inline-flex items-center gap-1.5 text-xs text-slate-500 shrink-0">
-                            <Calendar className="w-3.5 h-3.5 text-[#317786] shrink-0" />
-                            <span>
-                              {req.requiredby
-                                ? `Needed: ${formatDate(req.requiredby)}`
-                                : formatDate(req.createdat)}
-                            </span>
-                          </span>
-                        )}
-                      </div>
-
-                      <Link
-                        href={`/hospital/requests/${req.requestid}`}
-                        className="inline-flex items-center gap-1 text-xs sm:text-sm font-semibold text-[#B94F30] hover:text-[#053845] transition-colors shrink-0 self-end sm:self-center"
-                      >
-                        <span>Manage</span>
-                        <ArrowRight className="w-3.5 h-3.5" />
-                      </Link>
-                    </div>
-                  </article>
-                );
-              })}
             </div>
           )}
-        </section>
+        </div>
 
-        {/* D. Right Column (1 Col): Pending Verifications */}
-        <section className="space-y-4" aria-label="Pending verifications">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <h2 className="font-serif text-xl font-bold text-[#053845]">
-                Pending Verifications
-              </h2>
-              {pendingVerifications.length > 0 && (
-                <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-300">
-                  {pendingVerifications.length}
-                </span>
-              )}
+        {requests.length === 0 ? (
+          /* Empty State */
+          <div className="bg-white rounded-2xl border border-[#F3E9D1] p-8 text-center shadow-2xs space-y-3">
+            <div className="w-11 h-11 rounded-2xl bg-[#317786]/10 border border-[#317786]/20 text-[#317786] flex items-center justify-center mx-auto">
+              <Droplets className="w-5 h-5" />
             </div>
-          </div>
-
-          {pendingVerifications.length === 0 ? (
-            /* Compact Empty State */
-            <div className="bg-white rounded-2xl border border-[#F3E9D1] p-6 text-center shadow-2xs space-y-2">
-              <div className="w-10 h-10 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 flex items-center justify-center mx-auto mb-1">
-                <CheckCircle2 className="w-5 h-5" />
-              </div>
-              <h3 className="font-serif text-sm font-bold text-[#053845]">
-                No pending verifications
+            <div className="space-y-1">
+              <h3 className="font-serif text-base font-bold text-[#053845]">
+                No blood requests assigned yet
               </h3>
-              <p className="text-xs text-slate-500 leading-relaxed max-w-xs mx-auto">
-                All prescription documents assigned to this facility have been reviewed.
+              <p className="text-xs text-slate-600 max-w-sm mx-auto">
+                Requisitions assigned to this facility or created by your team will appear here for coordination.
               </p>
             </div>
-          ) : (
-            <div className="space-y-3">
-              {pendingVerifications.map((req) => {
-                const reqCode = `REQ-${req.requestid.slice(0, 8).toUpperCase()}`;
-                const bloodDisplay = mapBloodGroupToDisplay(req.bloodgroup);
-                const submissionDate = req.prescription?.uploadedat || req.createdat;
+            <div>
+              <Link
+                href="/hospital/requests/new"
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold text-white bg-[#053845] hover:bg-[#317786] transition-colors shadow-2xs"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Create Blood Request</span>
+              </Link>
+            </div>
+          </div>
+        ) : filteredRequests.length === 0 ? (
+          <div className="bg-white rounded-2xl border border-[#F3E9D1] p-6 text-center text-sm text-slate-500">
+            No {activeFilter.toLowerCase()} blood requests found.
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {filteredRequests.map((req) => {
+              const reqCode = `REQ-${req.requestid.slice(0, 8).toUpperCase()}`;
+              const bloodDisplay = mapBloodGroupToDisplay(req.bloodgroup);
+              const componentDisplay = formatComponentLabel(req.bloodcomponent);
+              const isUrgent =
+                req.isemergency ||
+                req.urgencylevel === "CRITICAL" ||
+                req.urgencylevel === "HIGH";
 
-                return (
-                  <article
-                    key={req.requestid}
-                    className="bg-white rounded-2xl border border-[#F3E9D1] p-4 shadow-2xs hover:border-[#317786]/45 transition-colors space-y-3"
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <h4 className="font-serif text-sm font-bold text-[#053845] truncate">
-                          {req.patientname}
-                        </h4>
-                        <p className="text-[11px] font-mono text-slate-400 mt-0.5">
-                          {reqCode}
-                        </p>
-                      </div>
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200 shrink-0">
-                        Pending
+              return (
+                <article
+                  key={req.requestid}
+                  className="bg-white rounded-2xl border border-[#F3E9D1] px-4 py-3.5 sm:px-5 sm:py-4 shadow-2xs hover:border-[#317786]/45 transition-all space-y-3"
+                >
+                  {/* Top row: Patient name, Request reference, Priority badge, & Status */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 min-w-0">
+                      <h3
+                        className="font-serif text-base sm:text-lg font-bold text-[#053845] truncate max-w-[260px] sm:max-w-md"
+                        title={req.patientname}
+                      >
+                        {req.patientname}
+                      </h3>
+                      <span className="font-mono text-xs font-medium text-slate-400 bg-[#FAF6EE] px-2 py-0.5 rounded-md border border-[#F3E9D1] shrink-0">
+                        {reqCode}
                       </span>
+                      {isUrgent ? (
+                        <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-[#EFA27E]/25 text-[#B94F30] border border-[#EFA27E]/50 shrink-0 flex items-center gap-1">
+                          <AlertTriangle className="w-3 h-3 text-[#B94F30]" />
+                          <span>
+                            {req.urgencylevel === "CRITICAL" || req.isemergency
+                              ? "Emergency"
+                              : "High Priority"}
+                          </span>
+                        </span>
+                      ) : req.urgencylevel && req.urgencylevel !== "LOW" ? (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-600 border border-slate-200 shrink-0">
+                          {req.urgencylevel}
+                        </span>
+                      ) : null}
                     </div>
 
-                    <div className="flex items-center justify-between gap-2 pt-2 border-t border-[#F3E9D1]/60 text-xs">
-                      <div className="flex items-center gap-2">
-                        <span className="font-serif text-xs font-bold text-[#053845] bg-[#317786]/10 px-2 py-0.5 rounded border border-[#317786]/20">
+                    <span
+                      className={`px-3 py-1 rounded-full text-xs font-semibold border shrink-0 self-start sm:self-auto ${getStatusBadgeClass(
+                        req.status
+                      )}`}
+                    >
+                      {formatStatusLabel(req.status)}
+                    </span>
+                  </div>
+
+                  {/* Compact information row */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2.5 border-t border-[#F3E9D1]/70">
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs sm:text-sm text-slate-600 min-w-0">
+                      <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#317786]/10 border border-[#317786]/20 shrink-0">
+                        <Droplets className="w-3.5 h-3.5 text-[#317786]" />
+                        <span className="font-serif font-bold text-[#053845]">
                           {bloodDisplay}
                         </span>
-                        {submissionDate && (
-                          <span className="inline-flex items-center gap-1 text-[11px] text-slate-500">
-                            <Clock className="w-3 h-3 text-[#317786]" />
-                            <span>{formatDate(submissionDate)}</span>
-                          </span>
-                        )}
+                        <span className="text-slate-400 text-xs">•</span>
+                        <span className="text-[11px] font-medium text-[#317786] whitespace-nowrap">
+                          {componentDisplay}
+                        </span>
                       </div>
 
-                      <Link
-                        href={`/hospital/requests/${req.requestid}`}
-                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-[#053845] hover:bg-[#317786] text-white text-xs font-semibold shadow-2xs transition-colors shrink-0"
-                      >
-                        <span>Review</span>
-                        <ArrowRight className="w-3 h-3" />
-                      </Link>
+                      <span className="shrink-0 text-slate-700">
+                        <span className="font-serif font-bold text-[#053845] text-sm sm:text-base">
+                          {req.unitsrequired}
+                        </span>{" "}
+                        {req.unitsrequired === 1 ? "unit" : "units"}
+                      </span>
+
+                      {(req.requiredby || req.createdat) && (
+                        <span className="inline-flex items-center gap-1.5 text-xs text-slate-500 shrink-0">
+                          <Calendar className="w-3.5 h-3.5 text-[#317786]" />
+                          <span>
+                            {req.requiredby
+                              ? `Needed: ${formatDate(req.requiredby)}`
+                              : formatDate(req.createdat)}
+                          </span>
+                        </span>
+                      )}
                     </div>
-                  </article>
-                );
-              })}
-            </div>
-          )}
-        </section>
-      </div>
+
+                    <Link
+                      href={`/hospital/requests/${req.requestid}`}
+                      className="inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-semibold text-[#053845] bg-[#FAF6EE] hover:bg-[#053845] hover:text-white border border-[#F3E9D1] hover:border-[#053845] transition-all shadow-2xs shrink-0 self-start sm:self-center"
+                    >
+                      <span>Manage</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </Link>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
     </div>
   );
 }

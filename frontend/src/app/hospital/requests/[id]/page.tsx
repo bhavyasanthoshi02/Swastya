@@ -2,15 +2,12 @@
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import {
-  Droplets,
   ArrowLeft,
   Clock,
   CheckCircle2,
-  AlertTriangle,
   AlertCircle,
-  Building2,
   User,
   Calendar,
   FileText,
@@ -22,22 +19,39 @@ import {
   MapPin,
   Check,
   X,
-  ChevronRight,
   Loader2,
-  Navigation,
-  Car,
-  HeartHandshake,
-  Info,
+  Heart,
+  Radio,
+  RadioTower,
   Eye,
   Download,
   History,
   ShieldAlert,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
-import { api, BloodRequestItem, RequestStatusHistoryItem, VolunteerDonorResponse } from "@/lib/api";
-import { formatDate, formatTimeAgo } from "@/lib/mappers";
-import EmergencyBroadcastCard from "@/components/broadcast/EmergencyBroadcastCard";
+import { api, BloodRequestItem } from "@/lib/api";
+import {
+  mapBloodGroupToDisplay,
+  mapBloodComponentToDisplay,
+  mapRequestStatusToDisplay,
+  mapUrgencyBadge,
+  formatTimeAgo,
+} from "@/lib/mappers";
 
-// Actual Swastya Blood Request status pipeline
+interface BroadcastData {
+  broadcastid: string;
+  triggertype: string;
+  triggerreason: string | null;
+  radiuskm: number;
+  status: string;
+  totalmatched: number;
+  totalnotified: number;
+  totalresponded: number;
+  createdat: string;
+}
+
+// Swastya Blood Request status pipeline
 const STATUS_STEPS = [
   { key: "CREATED", label: "Requisition Raised", stepNumber: 1 },
   { key: "HOSPITAL_REVIEW", label: "Hospital Review", stepNumber: 2 },
@@ -47,9 +61,23 @@ const STATUS_STEPS = [
   { key: "FULFILLED", label: "Transfusion Fulfilled", stepNumber: 6 },
 ];
 
+function formatDateTime(dateInput: string | Date | null | undefined): string {
+  if (!dateInput) return "Date not specified";
+  const date = typeof dateInput === "string" ? new Date(dateInput) : dateInput;
+  if (isNaN(date.getTime())) return "Invalid date";
+
+  return date.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+}
+
 export default function HospitalRequestDetailsPage() {
   const params = useParams();
-  const router = useRouter();
   const requestId = params?.id as string;
 
   const [request, setRequest] = useState<BloodRequestItem | null>(null);
@@ -66,7 +94,7 @@ export default function HospitalRequestDetailsPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  // Prescription Review State (Phase 2)
+  // Prescription Review State
   const [prescriptionReviewAction, setPrescriptionReviewAction] = useState<"VERIFIED" | "REJECTED" | null>(null);
   const [prescriptionReviewRemarks, setPrescriptionReviewRemarks] = useState("");
   const [isSubmittingReview, setIsSubmittingReview] = useState(false);
@@ -77,12 +105,84 @@ export default function HospitalRequestDetailsPage() {
   const [prescriptionViewError, setPrescriptionViewError] = useState<string | null>(null);
   const objectUrlsRef = useRef<string[]>([]);
 
+  // Broadcast State
+  const [hasBroadcast, setHasBroadcast] = useState(false);
+  const [broadcast, setBroadcast] = useState<BroadcastData | null>(null);
+  const [isBroadcastLoading, setIsBroadcastLoading] = useState(true);
+  const [isExpandingBroadcast, setIsExpandingBroadcast] = useState(false);
+  const [selectedRadius, setSelectedRadius] = useState<number>(25);
+  const [broadcastFeedback, setBroadcastFeedback] = useState<{
+    type: "success" | "error";
+    text: string;
+  } | null>(null);
+
+  // History Expand State
+  const [isHistoryExpanded, setIsHistoryExpanded] = useState(false);
+
+  // Edit Clinical Notes inline state
+  const [isEditingNotes, setIsEditingNotes] = useState(false);
+  const [editedNotes, setEditedNotes] = useState("");
+  const [isSavingNotes, setIsSavingNotes] = useState(false);
+
   useEffect(() => {
     return () => {
       objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
       objectUrlsRef.current = [];
     };
   }, []);
+
+  const fetchBroadcastStatus = useCallback(async () => {
+    if (!requestId) return;
+    try {
+      setIsBroadcastLoading(true);
+      const res = await api.bloodRequests.getBroadcastStatus(requestId);
+      setHasBroadcast(res.hasBroadcast);
+      setBroadcast(res.broadcast || null);
+      if (res.broadcast?.radiuskm) {
+        const cur = res.broadcast.radiuskm;
+        if (cur < 25) setSelectedRadius(25);
+        else if (cur < 50) setSelectedRadius(50);
+        else if (cur < 75) setSelectedRadius(75);
+        else if (cur < 100) setSelectedRadius(100);
+      }
+    } catch (err: unknown) {
+      console.error("Failed to load broadcast status:", err);
+    } finally {
+      setIsBroadcastLoading(false);
+    }
+  }, [requestId]);
+
+  const handleExpandOrTriggerBroadcast = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!requestId || isExpandingBroadcast) return;
+
+    try {
+      setIsExpandingBroadcast(true);
+      setBroadcastFeedback(null);
+
+      const res = await api.bloodRequests.triggerBroadcast(requestId, {
+        radiusKm: selectedRadius,
+        reason: hasBroadcast
+          ? `Emergency broadcast radius expanded to ${selectedRadius} km`
+          : "Emergency broadcast initiated",
+      });
+
+      setBroadcastFeedback({
+        type: "success",
+        text: res.message || `Broadcast updated to ${selectedRadius} km radius.`,
+      });
+
+      await fetchBroadcastStatus();
+      await fetchRequestDetails(true);
+    } catch (err: unknown) {
+      setBroadcastFeedback({
+        type: "error",
+        text: err instanceof Error ? err.message : "Failed to trigger or expand emergency broadcast.",
+      });
+    } finally {
+      setIsExpandingBroadcast(false);
+    }
+  };
 
   const handleOpenPrescription = async (download: boolean) => {
     if (!request) return;
@@ -131,11 +231,6 @@ export default function HospitalRequestDetailsPage() {
     }
   };
 
-  // Edit Clinical Notes inline state
-  const [isEditingNotes, setIsEditingNotes] = useState(false);
-  const [editedNotes, setEditedNotes] = useState("");
-  const [isSavingNotes, setIsSavingNotes] = useState(false);
-
   const fetchRequestDetails = useCallback(async (background = false) => {
     if (!requestId) return;
     try {
@@ -143,7 +238,6 @@ export default function HospitalRequestDetailsPage() {
       else setIsRefreshing(true);
       setError(null);
 
-      // Backend enforces ownership: checks if authenticated hospital is assigned
       const data = await api.hospital.getRequestDetails(requestId);
       setRequest(data);
       setEditedNotes(data.notes || "");
@@ -164,20 +258,19 @@ export default function HospitalRequestDetailsPage() {
 
   useEffect(() => {
     fetchRequestDetails();
-  }, [fetchRequestDetails]);
+    fetchBroadcastStatus();
+  }, [fetchRequestDetails, fetchBroadcastStatus]);
 
   // Handle status update submission
   const handleStatusSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!requestId || !actionType || isSubmitting) return;
 
-    // Safety constraint: Explicit authorized physical transfusion verification required for FULFILLED
     if (actionType === "FULFILLED" && !fulfillmentConfirmed) {
       setActionError("You must explicitly confirm that the physical transfusion was completed and verified by authorized hospital staff.");
       return;
     }
 
-    // Phase 2 Clinical safety gate: Requester requests cannot advance to BLOOD_ARRANGED or FULFILLED without verified prescription
     if (actionType === "BLOOD_ARRANGED" || actionType === "FULFILLED") {
       if (request?.requesterid && request?.prescription?.status !== "VERIFIED") {
         setActionError(
@@ -203,18 +296,16 @@ export default function HospitalRequestDetailsPage() {
         payload.notes = notes.trim();
       }
 
-      const res = await api.hospital.updateBloodRequest(requestId, payload);
+      await api.hospital.updateBloodRequest(requestId, payload);
 
-      setActionSuccess(`Requisition status successfully updated to ${actionType.replace(/_/g, " ")}.`);
+      setActionSuccess(`Requisition status updated to ${actionType.replace(/_/g, " ")}.`);
       setActionType(null);
       setRemarks("");
       setNotes("");
       setFulfillmentConfirmed(false);
 
-      // Refresh to get full updated state and latest status history
       await fetchRequestDetails(true);
 
-      // Auto-hide success alert after 5 seconds
       setTimeout(() => {
         setActionSuccess(null);
       }, 5000);
@@ -226,7 +317,7 @@ export default function HospitalRequestDetailsPage() {
     }
   };
 
-  // Handle Prescription Verification / Rejection (Phase 2)
+  // Handle Prescription Verification / Rejection
   const handleVerifyPrescription = async (status: "VERIFIED" | "REJECTED") => {
     if (!requestId || isSubmittingReview) return;
     if (status === "REJECTED" && !prescriptionReviewRemarks.trim()) {
@@ -282,6 +373,7 @@ export default function HospitalRequestDetailsPage() {
 
   const currentStatus = request?.status?.toUpperCase() || "CREATED";
   const isTerminal = ["FULFILLED", "CANCELLED", "EXPIRED"].includes(currentStatus);
+  const canManageBroadcast = !isTerminal;
 
   // Stepper helper
   const getStepState = (stepKey: string) => {
@@ -296,7 +388,7 @@ export default function HospitalRequestDetailsPage() {
     return "upcoming";
   };
 
-  // Determine allowed status transitions for Hospital role based on Phase 5.2 rules
+  // Allowed status transitions for Hospital
   const getAllowedActions = () => {
     if (!request || isTerminal) return [];
 
@@ -304,112 +396,37 @@ export default function HospitalRequestDetailsPage() {
       case "CREATED":
       case "VERIFIED":
         return [
-          {
-            targetStatus: "HOSPITAL_REVIEW",
-            title: "Accept for Hospital Review",
-            description: "Acknowledge receipt and initiate medical record evaluation.",
-            variant: "primary",
-          },
-          {
-            targetStatus: "BLOOD_BANK_CHECK",
-            title: "Initiate Blood Bank Check",
-            description: "Direct inquiry to internal hospital transfusion service.",
-            variant: "secondary",
-          },
-          {
-            targetStatus: "DONOR_MATCHING",
-            title: "Open Voluntary Donor Matching",
-            description: "Broadcast requisition to eligible volunteer blood donors.",
-            variant: "secondary",
-          },
-          {
-            targetStatus: "CANCELLED",
-            title: "Reject / Cancel Requisition",
-            description: "Unable to process or requisition withdrawn.",
-            variant: "danger",
-          },
+          { targetStatus: "HOSPITAL_REVIEW", title: "Accept for Review", variant: "primary" },
+          { targetStatus: "BLOOD_BANK_CHECK", title: "Check Blood Bank", variant: "secondary" },
+          { targetStatus: "DONOR_MATCHING", title: "Open Donor Matching", variant: "secondary" },
+          { targetStatus: "CANCELLED", title: "Cancel Requisition", variant: "danger" },
         ];
 
       case "HOSPITAL_REVIEW":
         return [
-          {
-            targetStatus: "BLOOD_BANK_CHECK",
-            title: "Check Blood Bank Stock",
-            description: "Verify cross-match inventory in internal blood bank.",
-            variant: "primary",
-          },
-          {
-            targetStatus: "DONOR_MATCHING",
-            title: "Open Donor Matching",
-            description: "Direct matching with voluntary compatible community donors.",
-            variant: "secondary",
-          },
-          {
-            targetStatus: "BLOOD_ARRANGED",
-            title: "Units Already Secured",
-            description: "Units reserved and ready for cross-match.",
-            variant: "secondary",
-          },
-          {
-            targetStatus: "CANCELLED",
-            title: "Cancel Requisition",
-            description: "Cancel active review with clinical explanation.",
-            variant: "danger",
-          },
+          { targetStatus: "BLOOD_BANK_CHECK", title: "Check Blood Bank Stock", variant: "primary" },
+          { targetStatus: "DONOR_MATCHING", title: "Open Donor Matching", variant: "secondary" },
+          { targetStatus: "BLOOD_ARRANGED", title: "Units Arranged", variant: "secondary" },
+          { targetStatus: "CANCELLED", title: "Cancel Requisition", variant: "danger" },
         ];
 
       case "BLOOD_BANK_CHECK":
         return [
-          {
-            targetStatus: "BLOOD_ARRANGED",
-            title: "Blood Bank Stock Confirmed",
-            description: "Required units identified, quarantined, and allocated.",
-            variant: "primary",
-          },
-          {
-            targetStatus: "DONOR_MATCHING",
-            title: "Stock Depleted — Match Donors",
-            description: "Internal supply insufficient; request volunteer community donors.",
-            variant: "secondary",
-          },
-          {
-            targetStatus: "CANCELLED",
-            title: "Cancel Requisition",
-            description: "Requisition cannot be met by facility.",
-            variant: "danger",
-          },
+          { targetStatus: "BLOOD_ARRANGED", title: "Stock Confirmed (Arranged)", variant: "primary" },
+          { targetStatus: "DONOR_MATCHING", title: "Stock Depleted (Match Donors)", variant: "secondary" },
+          { targetStatus: "CANCELLED", title: "Cancel Requisition", variant: "danger" },
         ];
 
       case "DONOR_MATCHING":
         return [
-          {
-            targetStatus: "BLOOD_ARRANGED",
-            title: "Confirm Units Arranged",
-            description: "Donation received or replacement units verified and prepped.",
-            variant: "primary",
-          },
-          {
-            targetStatus: "CANCELLED",
-            title: "Cancel Requisition",
-            description: "Cancel donor search with reason.",
-            variant: "danger",
-          },
+          { targetStatus: "BLOOD_ARRANGED", title: "Confirm Units Arranged", variant: "primary" },
+          { targetStatus: "CANCELLED", title: "Cancel Requisition", variant: "danger" },
         ];
 
       case "BLOOD_ARRANGED":
         return [
-          {
-            targetStatus: "FULFILLED",
-            title: "Confirm Transfusion & Fulfill",
-            description: "Verify physical blood transfusion performed on patient.",
-            variant: "success",
-          },
-          {
-            targetStatus: "CANCELLED",
-            title: "Cancel Requisition",
-            description: "Cancel requisition prior to transfusion.",
-            variant: "danger",
-          },
+          { targetStatus: "FULFILLED", title: "Confirm Transfusion & Fulfill", variant: "success" },
+          { targetStatus: "CANCELLED", title: "Cancel Requisition", variant: "danger" },
         ];
 
       default:
@@ -422,185 +439,202 @@ export default function HospitalRequestDetailsPage() {
   // Loading View
   if (isLoading) {
     return (
-      <div className="max-w-6xl mx-auto space-y-6 pb-12 animate-pulse">
-        <div className="flex items-center gap-2">
-          <div className="h-4 w-28 bg-slate-200 rounded" />
+      <div className="max-w-5xl mx-auto space-y-5 pb-12">
+        <div className="flex items-center gap-2 text-xs text-slate-400">
+          <div className="h-4 w-24 bg-slate-200 rounded animate-pulse" />
           <span>/</span>
-          <div className="h-4 w-40 bg-slate-200 rounded" />
+          <div className="h-4 w-32 bg-slate-200 rounded animate-pulse" />
         </div>
-        <div className="bg-white rounded-2xl border border-[#F3E9D1] p-6 sm:p-8 space-y-4">
-          <div className="h-6 w-48 bg-slate-200 rounded" />
-          <div className="h-10 w-72 bg-slate-200 rounded" />
-          <div className="h-20 bg-slate-100 rounded-xl" />
+        <div className="bg-white rounded-2xl border border-[#F3E9D1] p-6 space-y-4 animate-pulse">
+          <div className="h-7 w-56 bg-slate-200 rounded-lg" />
+          <div className="h-14 w-full bg-slate-100 rounded-xl" />
+          <div className="h-4 w-80 bg-slate-100 rounded" />
         </div>
+        <div className="bg-white rounded-2xl border border-[#F3E9D1] p-6 h-36 animate-pulse" />
       </div>
     );
   }
 
-  // Error / Not Found / Unauthorized View
+  // Error View
   if (error || !request) {
     return (
-      <div className="max-w-3xl mx-auto py-12">
-        <div className="bg-white rounded-2xl border border-rose-200 p-8 shadow-xs text-center space-y-4">
-          <div className="w-12 h-12 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center mx-auto">
-            <AlertCircle className="w-6 h-6" />
-          </div>
-          <h2 className="font-serif text-lg font-bold text-[#053845]">
+      <div className="max-w-xl mx-auto py-16 px-4 text-center space-y-5">
+        <div className="w-14 h-14 rounded-2xl bg-[#fdf2f2] border border-[#A2363A]/30 text-[#A2363A] flex items-center justify-center mx-auto shadow-2xs">
+          <AlertCircle className="w-7 h-7" />
+        </div>
+        <div className="space-y-1.5">
+          <h2 className="font-serif text-2xl font-bold text-[#053845]">
             Unable to Display Requisition
           </h2>
-          <p className="text-xs text-slate-600 max-w-md mx-auto leading-relaxed">
+          <p className="text-xs sm:text-sm text-slate-600 max-w-md mx-auto leading-relaxed">
             {error || "The requested requisition record is unavailable or access was denied."}
           </p>
-          <div className="pt-2 flex items-center justify-center gap-3">
-            <Link
-              href="/hospital/requests"
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold text-slate-700 bg-[#FAF6EE] hover:bg-[#F3E9D1] border border-[#F3E9D1] transition-colors"
-            >
-              <ArrowLeft className="w-3.5 h-3.5" />
-              <span>Back to Assigned Requests</span>
-            </Link>
-            <button
-              type="button"
-              onClick={() => fetchRequestDetails()}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold text-white bg-[#053845] hover:bg-[#317786] transition-colors"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span>Retry Query</span>
-            </button>
-          </div>
+        </div>
+        <div className="pt-2 flex items-center justify-center gap-3">
+          <Link
+            href="/hospital/requests"
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold text-slate-700 bg-white hover:bg-[#FAF6EE] border border-[#F3E9D1] shadow-2xs transition-colors"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span>Back to Requisitions</span>
+          </Link>
+          <button
+            type="button"
+            onClick={() => fetchRequestDetails()}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold text-white bg-[#053845] hover:bg-[#317786] shadow-xs transition-colors cursor-pointer"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>Retry Query</span>
+          </button>
         </div>
       </div>
     );
   }
 
+  const statusMeta = mapRequestStatusToDisplay(request.status);
+  const urgencyMeta = mapUrgencyBadge(request.urgencylevel);
+  const bloodGroupDisplay = mapBloodGroupToDisplay(request.bloodgroup);
+  const componentDisplay = mapBloodComponentToDisplay(request.bloodcomponent);
+  const refId = `REQ-${request.requestid.slice(0, 8).toUpperCase()}`;
+  const isCriticalOrEmergency = Boolean(request.isemergency) || request.urgencylevel === "CRITICAL";
+
   return (
-    <div className="space-y-6 sm:space-y-8 pb-16">
-      {/* Breadcrumb Navigation & Refresh */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2 text-xs text-slate-500">
-          <Link
-            href="/hospital/requests"
-            className="hover:text-[#053845] flex items-center gap-1 transition-colors"
-          >
-            <ArrowLeft className="w-3.5 h-3.5" />
-            <span>Assigned Requisitions</span>
+    <div className="max-w-5xl mx-auto space-y-5 pb-12">
+      {/* Top Breadcrumb Navigation */}
+      <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
+        <div className="flex items-center gap-2 text-slate-500">
+          <Link href="/hospital/dashboard" className="hover:text-[#053845] transition-colors">
+            Dashboard
           </Link>
           <span>/</span>
-          <span className="font-mono text-slate-700 font-semibold truncate max-w-[200px]">
-            {request.requestid}
-          </span>
+          <Link href="/hospital/requests" className="hover:text-[#053845] transition-colors">
+            Assigned Requisitions
+          </Link>
+          <span>/</span>
+          <span className="font-semibold text-[#053845] font-mono">{refId}</span>
         </div>
 
-        <button
-          type="button"
-          onClick={() => fetchRequestDetails(true)}
-          disabled={isRefreshing}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-700 bg-white hover:bg-[#FAF6EE] border border-[#F3E9D1] shadow-2xs transition-colors disabled:opacity-50"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 text-slate-500 ${isRefreshing ? "animate-spin" : ""}`} />
-          <span>Refresh Details</span>
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => {
+              fetchRequestDetails(true);
+              fetchBroadcastStatus();
+            }}
+            disabled={isRefreshing}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-700 bg-white hover:bg-[#FAF6EE] border border-[#F3E9D1] shadow-2xs transition-colors disabled:opacity-50 cursor-pointer"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 text-slate-500 ${isRefreshing ? "animate-spin" : ""}`} />
+            <span>Refresh</span>
+          </button>
+          <Link
+            href="/hospital/requests"
+            className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#053845] hover:text-[#317786] transition-colors"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            <span>Back to Requisitions</span>
+          </Link>
+        </div>
       </div>
 
       {/* Action Success Toast */}
       {actionSuccess && (
-        <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 flex items-start gap-2.5 shadow-xs">
+        <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 flex items-start gap-2.5 shadow-2xs">
           <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
           <div className="flex-1 font-medium">{actionSuccess}</div>
           <button
             type="button"
             onClick={() => setActionSuccess(null)}
-            className="text-emerald-700 hover:text-emerald-900 text-xs"
+            className="text-emerald-700 hover:text-emerald-900 text-xs font-bold"
           >
             &times;
           </button>
         </div>
       )}
 
-      {/* Header Requisition Card */}
-      <div className="bg-white rounded-3xl border border-[#F3E9D1] p-6 sm:p-8 shadow-xs">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-slate-100">
-          <div className="space-y-1.5">
-            <div className="flex flex-wrap items-center gap-2.5">
-              <span className="text-[10px] font-mono font-bold tracking-wider uppercase text-slate-400 bg-slate-100 px-2.5 py-0.5 rounded-md">
-                REQ #{request.requestid.slice(0, 8)}
-              </span>
-              {request.isemergency && (
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 border border-rose-200 text-rose-700 uppercase flex items-center gap-1">
-                  <AlertTriangle className="w-3 h-3" />
-                  <span>Emergency Requisition</span>
-                </span>
-              )}
-              <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                request.urgencylevel === "CRITICAL"
-                  ? "bg-rose-100 text-rose-800 border border-rose-200"
-                  : request.urgencylevel === "HIGH"
-                  ? "bg-amber-100 text-amber-800 border border-amber-200"
-                  : "bg-slate-100 text-slate-700"
-              }`}>
-                {request.urgencylevel} Urgency
+      {/* 1. Request Overview Header Card */}
+      <section className="bg-white rounded-2xl border border-[#F3E9D1] p-5 sm:p-6 shadow-2xs space-y-4">
+        {/* Header Row */}
+        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 pb-3.5 border-b border-[#F3E9D1]/70">
+          <div className="space-y-1 min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="font-serif text-xl sm:text-2xl font-bold text-[#053845] truncate">
+                {request.patientname}
+              </h1>
+              <span className="text-xs font-medium text-slate-400 shrink-0 font-mono">
+                {refId}
               </span>
             </div>
-
-            <h1 className="font-serif text-2xl sm:text-3xl font-bold text-[#053845]">
-              {request.patientname}
-            </h1>
-
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 pt-0.5">
-              <span>Patient: <strong className="text-slate-800">{request.patientage} yrs</strong> ({request.patientgender})</span>
-              <span>&bull;</span>
-              <span>Contact: <strong className="text-slate-800">{request.patientcontact}</strong></span>
-              <span>&bull;</span>
-              <span>Required by: <strong className="text-[#053845]">{formatDate(request.requiredby)}</strong></span>
-            </div>
+            <p className="text-xs text-slate-500">
+              Submitted {formatTimeAgo(request.createdat)}
+              {request.patientage ? ` · Age ${request.patientage} yrs` : ""}
+              {request.patientgender ? ` · ${request.patientgender}` : ""}
+            </p>
           </div>
 
-          {/* Blood Specs Badge */}
-          <div className="flex items-center gap-3 bg-[#FAF6EE] border border-[#F3E9D1] p-3.5 rounded-2xl self-start md:self-center">
-            <div className="w-12 h-12 rounded-xl bg-white border border-[#F3E9D1] flex items-center justify-center text-[#B94F30] font-serif text-xl font-bold shrink-0 shadow-2xs">
-              {request.bloodgroup}
-            </div>
-            <div className="space-y-0.5 pr-2">
-              <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 block">
-                Required Units
-              </span>
-              <span className="font-bold text-slate-800 text-sm block">
-                {request.unitsrequired} Unit(s)
-              </span>
-              <span className="text-[11px] text-slate-500 capitalize block">
-                {request.bloodcomponent.toLowerCase().replace(/_/g, " ")}
-              </span>
-            </div>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <span
+              className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${
+                isCriticalOrEmergency
+                  ? "bg-[#A2363A]/10 text-[#A2363A] border-[#A2363A]/25"
+                  : urgencyMeta.badgeClass
+              }`}
+            >
+              {isCriticalOrEmergency ? "Critical Emergency" : urgencyMeta.label}
+            </span>
+
+            <span
+              className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${statusMeta.badgeClass}`}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${statusMeta.dotClass}`} />
+              <span>{statusMeta.label}</span>
+            </span>
           </div>
         </div>
 
-        {/* Status Stepper */}
-        <div className="pt-6">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-bold text-[#053845] uppercase tracking-wider flex items-center gap-1.5">
-              <Activity className="w-4 h-4 text-[#317786]" />
-              <span>Requisition Pipeline Progression</span>
-            </span>
-            <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${
-              currentStatus === "FULFILLED"
-                ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                : currentStatus === "CANCELLED"
-                ? "bg-slate-100 text-slate-600 border border-slate-200"
-                : currentStatus === "BLOOD_ARRANGED"
-                ? "bg-teal-50 text-teal-800 border border-teal-200"
-                : "bg-[#e8f3f5] text-[#053845] border border-[#317786]/30"
-            }`}>
-              Current: {currentStatus.replace(/_/g, " ")}
-            </span>
+        {/* Blood Group & Required Units Focal Point */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 py-1">
+          <div className="flex items-center gap-3.5">
+            <div className="inline-flex flex-col items-center justify-center px-3.5 py-2 rounded-xl bg-[#317786]/10 border border-[#317786]/20 shrink-0">
+              <span className="font-serif text-xl font-bold text-[#053845] leading-none">
+                {bloodGroupDisplay}
+              </span>
+              <span className="text-[11px] font-medium text-[#317786] mt-1 leading-none whitespace-nowrap">
+                {componentDisplay}
+              </span>
+            </div>
+
+            <div className="space-y-0.5">
+              <p className="text-sm sm:text-base text-slate-700">
+                <span className="font-serif text-xl font-bold text-[#053845]">
+                  {request.unitsrequired}
+                </span>{" "}
+                {request.unitsrequired === 1 ? "unit" : "units"} required
+              </p>
+              <p className="text-xs text-slate-500 inline-flex items-center gap-1.5">
+                <Calendar className="w-3.5 h-3.5 text-[#317786]" />
+                <span>Required by {formatDateTime(request.requiredby)}</span>
+              </p>
+            </div>
           </div>
 
-          {/* Stepper Display */}
+          {request.patientcontact && (
+            <a
+              href={`tel:${request.patientcontact}`}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#FAF6EE] hover:bg-[#F3E9D1] border border-[#F3E9D1] text-xs font-semibold text-[#053845] transition-colors self-start sm:self-center shrink-0"
+            >
+              <Phone className="w-3.5 h-3.5 text-[#317786]" />
+              <span>{request.patientcontact}</span>
+            </a>
+          )}
+        </div>
+
+        {/* Horizontal Progress Tracker */}
+        <div className="pt-3 border-t border-[#F3E9D1]/70">
           {currentStatus === "CANCELLED" ? (
-            <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-700 flex items-center gap-2">
+            <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600 flex items-center gap-2">
               <X className="w-4 h-4 text-rose-500 shrink-0" />
-              <div>
-                <strong>Requisition Cancelled:</strong> This blood requisition was cancelled and is in a terminal state.
-              </div>
+              <span><strong>Requisition Cancelled:</strong> This blood requisition has been cancelled.</span>
             </div>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
@@ -609,12 +643,12 @@ export default function HospitalRequestDetailsPage() {
                 return (
                   <div
                     key={step.key}
-                    className={`p-3 rounded-xl border text-center transition-all ${
+                    className={`p-2.5 rounded-xl border text-center transition-all ${
                       state === "completed"
-                        ? "bg-emerald-50/60 border-emerald-200 text-emerald-800"
+                        ? "bg-emerald-50/70 border-emerald-200 text-emerald-800"
                         : state === "current"
-                        ? "bg-[#053845] border-[#053845] text-white shadow-xs ring-2 ring-[#317786]/30"
-                        : "bg-slate-50/60 border-slate-200 text-slate-400"
+                        ? "bg-[#053845] border-[#053845] text-white shadow-2xs ring-1 ring-[#317786]/30"
+                        : "bg-slate-50/60 border-slate-200/70 text-slate-400"
                     }`}
                   >
                     <div className="flex items-center justify-center mb-1">
@@ -626,7 +660,7 @@ export default function HospitalRequestDetailsPage() {
                         </span>
                       )}
                     </div>
-                    <span className="block text-[11px] font-bold leading-tight">
+                    <span className="block text-[11px] font-semibold leading-tight">
                       {step.label}
                     </span>
                   </div>
@@ -635,138 +669,440 @@ export default function HospitalRequestDetailsPage() {
             </div>
           )}
         </div>
-      </div>
+      </section>
 
-      {/* Main Grid: Clinical Actions, Donor Transit, Requester Info, and Status History */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Column (2 Cols): Actions & Voluntary Donor Coordination */}
-        <div className="lg:col-span-2 space-y-6">
-
-          {/* Clinical Prescription Verification Card (Phase 2 Hospital Review) */}
-          {request.prescription ? (
-            <div className="bg-white rounded-2xl border border-[#F3E9D1] p-5 sm:p-6 shadow-xs space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3.5 border-b border-slate-100 gap-3">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h2 className="font-serif text-base font-bold text-[#053845] flex items-center gap-2">
-                      <FileText className="w-4 h-4 text-[#317786]" />
-                      <span>Clinical Prescription Review</span>
-                    </h2>
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#FAF6EE] text-[#053845] border border-[#F3E9D1]">
-                      Transfusion Gate
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    Authorized hospital verification required before blood arrangement and fulfillment.
-                  </p>
-                </div>
-
-                {/* Status Badge */}
-                <div>
-                  {request.prescription.status === "VERIFIED" && (
-                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                      <span>Clinically Verified</span>
-                    </span>
-                  )}
-                  {request.prescription.status === "PENDING" && (
-                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-800 border border-amber-200">
-                      <Clock className="w-3.5 h-3.5 text-amber-600" />
-                      <span>Pending Your Verification</span>
-                    </span>
-                  )}
-                  {request.prescription.status === "REJECTED" && (
-                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-rose-100 text-rose-800 border border-rose-200">
-                      <AlertCircle className="w-3.5 h-3.5 text-rose-600" />
-                      <span>Prescription Rejected</span>
-                    </span>
-                  )}
-                </div>
+      {/* Main Content: Clean Two-Column Layout */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        {/* LEFT COLUMN: Emergency Broadcast, Volunteer Responses, Collapsible History */}
+        <div className="space-y-5">
+          {/* Emergency Blood Broadcast Card */}
+          <section className="bg-white rounded-2xl border border-[#F3E9D1] p-5 shadow-2xs space-y-3.5">
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[#F3E9D1]/70">
+              <div className="flex items-center gap-2">
+                <Radio className="w-4 h-4 text-[#B94F30]" />
+                <h2 className="font-serif text-base font-bold text-[#053845]">
+                  Emergency Blood Broadcast
+                </h2>
+                {hasBroadcast && broadcast && (
+                  <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-[#EFA27E]/20 text-[#B94F30] border border-[#EFA27E]/50">
+                    {broadcast.status === "DONOR_RESPONDED"
+                      ? "Donor Responded"
+                      : broadcast.status || "Active"}
+                  </span>
+                )}
               </div>
 
-              {/* Review Success Alert */}
+              <button
+                type="button"
+                onClick={() => fetchBroadcastStatus()}
+                disabled={isBroadcastLoading}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-[#F3E9D1] text-xs font-semibold text-slate-600 hover:bg-[#FAF6EE] cursor-pointer transition-colors"
+              >
+                <RefreshCw
+                  className={`w-3.5 h-3.5 text-[#317786] ${isBroadcastLoading ? "animate-spin" : ""}`}
+                />
+                <span>Refresh</span>
+              </button>
+            </div>
+
+            {broadcastFeedback && (
+              <div
+                className={`p-3 rounded-xl border text-xs flex items-center gap-2 ${
+                  broadcastFeedback.type === "success"
+                    ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                    : "bg-rose-50 border-rose-200 text-rose-800"
+                }`}
+              >
+                {broadcastFeedback.type === "success" ? (
+                  <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                )}
+                <span>{broadcastFeedback.text}</span>
+              </div>
+            )}
+
+            {isBroadcastLoading && !broadcast ? (
+              <div className="py-4 flex items-center justify-center gap-2 text-xs text-slate-500">
+                <Loader2 className="w-4 h-4 animate-spin text-[#317786]" />
+                <span>Loading broadcast status...</span>
+              </div>
+            ) : hasBroadcast && broadcast ? (
+              <div className="space-y-3">
+                {/* Horizontal Metrics */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                  <div className="px-3 py-2 rounded-xl bg-[#FAF6EE]/70 border border-[#F3E9D1]">
+                    <span className="text-[10px] text-slate-500 block uppercase font-medium">Radius</span>
+                    <span className="font-serif text-base font-bold text-[#053845]">
+                      {broadcast.radiuskm} km
+                    </span>
+                  </div>
+
+                  <div className="px-3 py-2 rounded-xl bg-[#FAF6EE]/70 border border-[#F3E9D1]">
+                    <span className="text-[10px] text-slate-500 block uppercase font-medium">Matched</span>
+                    <span className="font-serif text-base font-bold text-[#053845]">
+                      {broadcast.totalmatched}
+                    </span>
+                  </div>
+
+                  <div className="px-3 py-2 rounded-xl bg-[#FAF6EE]/70 border border-[#F3E9D1]">
+                    <span className="text-[10px] text-slate-500 block uppercase font-medium">Notified</span>
+                    <span className="font-serif text-base font-bold text-[#B94F30]">
+                      {broadcast.totalnotified}
+                    </span>
+                  </div>
+
+                  <div className="px-3 py-2 rounded-xl bg-[#FAF6EE]/70 border border-[#F3E9D1]">
+                    <span className="text-[10px] text-slate-500 block uppercase font-medium">Responded</span>
+                    <span className="font-serif text-base font-bold text-[#317786]">
+                      {broadcast.totalresponded}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Radius Expansion Control */}
+                {canManageBroadcast && broadcast.radiuskm < 100 && (
+                  <form
+                    onSubmit={handleExpandOrTriggerBroadcast}
+                    className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pt-1"
+                  >
+                    <span className="text-xs text-slate-600">
+                      Expand broadcast search radius:
+                    </span>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <select
+                        value={selectedRadius}
+                        onChange={(e) => setSelectedRadius(Number(e.target.value))}
+                        disabled={isExpandingBroadcast}
+                        className="px-2.5 py-1 rounded-xl border border-[#F3E9D1] bg-white text-xs font-semibold text-[#053845] focus:outline-none focus:border-[#317786]"
+                      >
+                        {[15, 25, 50, 75, 100].map((r) => (
+                          <option key={r} value={r} disabled={r <= broadcast.radiuskm}>
+                            {r} km {r <= broadcast.radiuskm ? "(Current)" : ""}
+                          </option>
+                        ))}
+                      </select>
+
+                      <button
+                        type="submit"
+                        disabled={isExpandingBroadcast || selectedRadius <= broadcast.radiuskm}
+                        className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-[#053845] hover:bg-[#317786] text-white text-xs font-semibold cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {isExpandingBroadcast ? (
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <RadioTower className="w-3 h-3" />
+                        )}
+                        <span>Expand</span>
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </div>
+            ) : (
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-xl bg-[#FAF6EE]/70 border border-[#F3E9D1] text-xs">
+                <span className="text-slate-600">
+                  Emergency broadcast has not been initiated yet.
+                </span>
+                {canManageBroadcast && (
+                  <button
+                    type="button"
+                    onClick={handleExpandOrTriggerBroadcast}
+                    disabled={isExpandingBroadcast}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#B94F30] hover:bg-[#a14023] text-white font-semibold cursor-pointer transition-colors disabled:opacity-50 shrink-0"
+                  >
+                    {isExpandingBroadcast ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Radio className="w-3.5 h-3.5" />
+                    )}
+                    <span>Initiate Broadcast</span>
+                  </button>
+                )}
+              </div>
+            )}
+          </section>
+
+          {/* Volunteer Donor Responses & Transit Card */}
+          <section className="bg-white rounded-2xl border border-[#F3E9D1] p-5 shadow-2xs space-y-3.5">
+            <div className="flex items-center justify-between pb-3 border-b border-[#F3E9D1]/70">
+              <div className="flex items-center gap-2">
+                <Heart className="w-4 h-4 text-[#B94F30]" />
+                <h2 className="font-serif text-base font-bold text-[#053845]">
+                  Volunteer Donor Responses
+                </h2>
+                <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-[#317786]/10 text-[#317786]">
+                  {(request.volunteers || []).length}
+                </span>
+              </div>
+            </div>
+
+            {!request.volunteers || request.volunteers.length === 0 ? (
+              <div className="p-4 rounded-xl bg-[#FAF6EE]/50 border border-[#F3E9D1] text-xs text-slate-500 text-center">
+                No volunteer responses recorded yet. Matched community donors will appear here as they respond.
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {request.volunteers.map((vol, idx) => {
+                  const transit = (vol.transitStatus || "DONOR_FOUND").toUpperCase();
+                  const isCompleted = transit === "COMPLETED";
+
+                  return (
+                    <div
+                      key={vol.notificationid || idx}
+                      className="p-3 rounded-xl border border-[#F3E9D1] bg-[#FAF6EE]/40 space-y-2 text-xs"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className="w-8 h-8 rounded-lg bg-white border border-[#F3E9D1] text-[#053845] flex items-center justify-center font-serif font-bold text-xs shrink-0">
+                            {mapBloodGroupToDisplay(vol.donorBloodGroup || request.bloodgroup)}
+                          </div>
+                          <div className="min-w-0">
+                            <span className="font-semibold text-[#053845] block truncate">
+                              {vol.donorName}
+                            </span>
+                            <span className="text-[11px] text-slate-500 inline-flex items-center gap-1">
+                              <MapPin className="w-3 h-3 text-[#317786]" />
+                              <span>{vol.donorCity || "Registered Donor"}</span>
+                            </span>
+                          </div>
+                        </div>
+
+                        <span
+                          className={`inline-flex items-center text-[10px] font-semibold border px-2 py-0.5 rounded-full shrink-0 ${
+                            isCompleted
+                              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                              : transit === "REACHED_LOCATION"
+                              ? "bg-teal-50 text-teal-800 border-teal-200"
+                              : transit === "STARTED"
+                              ? "bg-sky-50 text-sky-800 border-sky-200"
+                              : "bg-amber-50 text-amber-800 border-amber-200"
+                          }`}
+                        >
+                          {isCompleted
+                            ? "Blood Received"
+                            : transit === "REACHED_LOCATION"
+                            ? "Reached Hospital"
+                            : transit === "STARTED"
+                            ? "On the Way"
+                            : "Donor Matched"}
+                        </span>
+                      </div>
+
+                      {vol.screening && (
+                        <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-600 pt-1 border-t border-[#F3E9D1]/50">
+                          <span className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            Health: {vol.screening.generalHealth || "Cleared"}
+                          </span>
+                          <span className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            Alcohol: {vol.screening.alcoholClearance || "Cleared"}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+
+          {/* Status Audit History (Collapsible Accordion) */}
+          <section className="bg-white rounded-2xl border border-[#F3E9D1] shadow-2xs overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setIsHistoryExpanded(!isHistoryExpanded)}
+              className="w-full flex items-center justify-between p-4 text-left hover:bg-[#FAF6EE]/50 transition-colors cursor-pointer"
+            >
+              <div className="flex items-center gap-2">
+                <Clock className="w-4 h-4 text-[#317786]" />
+                <h3 className="font-serif text-sm font-bold text-[#053845]">
+                  Status Audit History
+                </h3>
+                <span className="text-xs font-semibold text-slate-400">
+                  ({request.requeststatushistory?.length || 0})
+                </span>
+              </div>
+              {isHistoryExpanded ? (
+                <ChevronUp className="w-4 h-4 text-slate-400" />
+              ) : (
+                <ChevronDown className="w-4 h-4 text-slate-400" />
+              )}
+            </button>
+
+            {isHistoryExpanded && (
+              <div className="p-4 pt-1 border-t border-[#F3E9D1]/70 space-y-2 text-xs">
+                {!request.requeststatushistory || request.requeststatushistory.length === 0 ? (
+                  <p className="text-slate-400 italic">No status transitions recorded yet.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {request.requeststatushistory.map((hist, idx) => (
+                      <div
+                        key={hist.historyid || idx}
+                        className="p-2.5 rounded-xl bg-[#FAF6EE]/50 border border-[#F3E9D1] space-y-0.5"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-semibold text-[#053845]">
+                            {hist.oldstatus ? `${hist.oldstatus} → ` : ""}{hist.newstatus}
+                          </span>
+                          <span className="text-[10px] text-slate-400">
+                            {formatDateTime(hist.changedat)}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-500">
+                          By: {hist.users?.name || "Staff Member"} ({hist.users?.role || "USER"})
+                        </p>
+                        {hist.remarks && (
+                          <p className="text-[11px] text-slate-600 italic">
+                            &quot;{hist.remarks}&quot;
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+        </div>
+
+        {/* RIGHT COLUMN: Clinical Actions, Prescription, Notes, Details */}
+        <div className="space-y-5">
+          {/* Clinical Coordination Actions Card */}
+          <section className="bg-white rounded-2xl border border-[#F3E9D1] p-5 shadow-2xs space-y-3">
+            <div className="flex items-center justify-between pb-3 border-b border-[#F3E9D1]/70">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-[#317786]" />
+                <h2 className="font-serif text-base font-bold text-[#053845]">
+                  Clinical Actions
+                </h2>
+              </div>
+              <span className="text-[11px] font-semibold text-slate-500">
+                {currentStatus.replace(/_/g, " ")}
+              </span>
+            </div>
+
+            {isTerminal ? (
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600">
+                Requisition is in terminal state ({currentStatus}). No further actions permitted.
+              </div>
+            ) : allowedActions.length === 0 ? (
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-500">
+                No active actions available for this stage.
+              </div>
+            ) : (
+              <div className="flex flex-wrap gap-2 pt-1">
+                {allowedActions.map((act) => (
+                  <button
+                    key={act.targetStatus}
+                    type="button"
+                    onClick={() => {
+                      setActionType(act.targetStatus);
+                      setActionError(null);
+                      setRemarks("");
+                      setFulfillmentConfirmed(false);
+                    }}
+                    className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold transition-colors cursor-pointer ${
+                      act.variant === "success"
+                        ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                        : act.variant === "danger"
+                        ? "bg-rose-50 hover:bg-rose-100 text-[#A2363A] border border-rose-200"
+                        : act.variant === "primary"
+                        ? "bg-[#053845] hover:bg-[#317786] text-white"
+                        : "bg-white hover:bg-[#FAF6EE] text-[#053845] border border-[#F3E9D1]"
+                    }`}
+                  >
+                    <span>{act.title}</span>
+                    <span>&rarr;</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
+
+          {/* Clinical Prescription Review (Only when present or requested) */}
+          {request.prescription ? (
+            <section className="bg-white rounded-2xl border border-[#F3E9D1] p-5 shadow-2xs space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[#F3E9D1]/70">
+                <div className="flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-[#317786]" />
+                  <h2 className="font-serif text-base font-bold text-[#053845]">
+                    Prescription &amp; Verification
+                  </h2>
+                </div>
+
+                {request.prescription.status === "VERIFIED" && (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Verified</span>
+                  </span>
+                )}
+                {request.prescription.status === "PENDING" && (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+                    <Clock className="w-3.5 h-3.5 text-amber-600" />
+                    <span>Pending Review</span>
+                  </span>
+                )}
+                {request.prescription.status === "REJECTED" && (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-50 text-[#A2363A] border border-rose-200">
+                    <AlertCircle className="w-3.5 h-3.5 text-[#A2363A]" />
+                    <span>Rejected</span>
+                  </span>
+                )}
+              </div>
+
               {reviewSuccess && (
-                <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
                   <span>{reviewSuccess}</span>
                 </div>
               )}
 
-              {/* Rejection Details Banner */}
-              {request.prescription.status === "REJECTED" && (
-                <div className="p-3.5 rounded-xl bg-rose-50/80 border border-rose-200 text-xs text-rose-800 space-y-1">
-                  <span className="font-bold flex items-center gap-1.5">
-                    <AlertCircle className="w-4 h-4 text-rose-600" />
-                    <span>Rejection Reason Recorded:</span>
-                  </span>
-                  <p className="pl-5 italic text-slate-700">
-                    &quot;{request.prescription.remarks || "No detailed remarks provided"}&quot;
-                  </p>
-                  <p className="pl-5 text-[11px] text-slate-500">
-                    The requester has been notified to provide an updated replacement prescription.
-                  </p>
-                </div>
-              )}
-
-              {/* Prescription Metadata Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
-                <div className="p-3 rounded-xl bg-[#FAF6EE] border border-[#F3E9D1]">
-                  <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider block">
-                    Prescribing Doctor
-                  </span>
-                  <span className="font-bold text-[#053845] block mt-0.5">
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="p-2.5 rounded-xl bg-[#FAF6EE]/60 border border-[#F3E9D1]">
+                  <span className="text-slate-400 block text-[10px] uppercase font-medium">Doctor</span>
+                  <span className="font-semibold text-[#053845] mt-0.5 block truncate">
                     {request.prescription.doctorname || "Attending Physician"}
                   </span>
                 </div>
-
-                <div className="p-3 rounded-xl bg-[#FAF6EE] border border-[#F3E9D1]">
-                  <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider block">
-                    Originating Facility
+                <div className="p-2.5 rounded-xl bg-[#FAF6EE]/60 border border-[#F3E9D1]">
+                  <span className="text-slate-400 block text-[10px] uppercase font-medium">Document</span>
+                  <span className="font-semibold text-[#053845] mt-0.5 block truncate">
+                    {request.prescription.originalfilename || "Prescription File"}
                   </span>
-                  <span className="font-bold text-[#053845] block mt-0.5 truncate">
-                    {request.prescription.hospitalname || request.hospitals?.hospitalname || "Prescribing Clinic"}
-                  </span>
-                </div>
-
-                <div className="p-3 rounded-xl bg-[#FAF6EE] border border-[#F3E9D1]">
-                  <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider block">
-                    File Attachment
-                  </span>
-                  <span className="font-bold text-[#053845] block mt-0.5 truncate">
-                    {request.prescription.originalfilename || "Prescription Document"}
-                  </span>
-                  {request.prescription.filesize && (
-                    <span className="text-[10px] text-slate-500 block">
-                      {(request.prescription.filesize / 1024).toFixed(1)} KB
-                    </span>
-                  )}
                 </div>
               </div>
 
-              {/* Review Actions Bar */}
-              <div className="pt-2 flex flex-wrap items-center justify-between gap-3 text-xs border-t border-slate-100">
+              {prescriptionViewError && (
+                <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{prescriptionViewError}</span>
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-xs">
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
                     disabled={isLoadingPrescription}
                     onClick={() => handleOpenPrescription(false)}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#FAF6EE] hover:bg-[#F3E9D1] text-[#053845] font-semibold border border-[#F3E9D1] transition-colors cursor-pointer disabled:opacity-50"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#317786]/10 hover:bg-[#317786]/15 text-[#053845] font-semibold border border-[#317786]/25 transition-colors cursor-pointer disabled:opacity-50"
                   >
                     {isLoadingPrescription ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-[#317786]" />
                     ) : (
-                      <Eye className="w-3.5 h-3.5" />
+                      <Eye className="w-3.5 h-3.5 text-[#317786]" />
                     )}
-                    <span>View Document</span>
+                    <span>View</span>
                   </button>
 
                   <button
                     type="button"
                     disabled={isLoadingPrescription}
                     onClick={() => handleOpenPrescription(true)}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white hover:bg-slate-50 text-slate-600 font-semibold border border-slate-200 transition-colors cursor-pointer disabled:opacity-50"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white hover:bg-[#FAF6EE] text-slate-700 font-semibold border border-[#F3E9D1] transition-colors cursor-pointer disabled:opacity-50"
                   >
-                    <Download className="w-3.5 h-3.5" />
+                    <Download className="w-3.5 h-3.5 text-[#317786]" />
                     <span>Download</span>
                   </button>
                 </div>
@@ -779,14 +1115,14 @@ export default function HospitalRequestDetailsPage() {
                       setPrescriptionReviewRemarks("");
                       setPrescriptionReviewAction("VERIFIED");
                     }}
-                    className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl font-semibold shadow-2xs transition-colors cursor-pointer ${
+                    className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-semibold cursor-pointer transition-colors ${
                       request.prescription.status === "VERIFIED"
                         ? "bg-slate-100 text-slate-600 hover:bg-slate-200"
                         : "bg-emerald-600 hover:bg-emerald-700 text-white"
                     }`}
                   >
-                    <Check className="w-3.5 h-3.5" />
-                    <span>{request.prescription.status === "VERIFIED" ? "Re-Verify" : "Verify Prescription"}</span>
+                    <Check className="w-3 h-3" />
+                    <span>{request.prescription.status === "VERIFIED" ? "Re-Verify" : "Verify"}</span>
                   </button>
 
                   <button
@@ -796,28 +1132,20 @@ export default function HospitalRequestDetailsPage() {
                       setPrescriptionReviewRemarks("");
                       setPrescriptionReviewAction("REJECTED");
                     }}
-                    className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl font-semibold transition-colors cursor-pointer ${
+                    className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-semibold cursor-pointer transition-colors ${
                       request.prescription.status === "REJECTED"
                         ? "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                        : "bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100"
+                        : "bg-rose-50 text-[#A2363A] border border-rose-200 hover:bg-rose-100"
                     }`}
                   >
-                    <X className="w-3.5 h-3.5" />
-                    <span>{request.prescription.status === "REJECTED" ? "Update Rejection" : "Reject Prescription"}</span>
+                    <X className="w-3 h-3" />
+                    <span>Reject</span>
                   </button>
                 </div>
               </div>
 
-              {/* Version History Collapsible */}
-              {prescriptionViewError && (
-                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>{prescriptionViewError}</span>
-                </div>
-              )}
-
               {request.prescriptionhistory && request.prescriptionhistory.length > 0 && (
-                <div className="pt-2 border-t border-slate-100">
+                <div className="pt-2 border-t border-[#F3E9D1]/70">
                   <button
                     type="button"
                     onClick={() => setShowPrescriptionHistory(!showPrescriptionHistory)}
@@ -825,28 +1153,23 @@ export default function HospitalRequestDetailsPage() {
                   >
                     <History className="w-3.5 h-3.5" />
                     <span>
-                      {showPrescriptionHistory ? "Hide Review History" : `Prescription Review History (${request.prescriptionhistory.length} records)`}
+                      {showPrescriptionHistory ? "Hide Review History" : `History (${request.prescriptionhistory.length})`}
                     </span>
                   </button>
 
                   {showPrescriptionHistory && (
-                    <div className="pt-2 space-y-2">
+                    <div className="pt-2 space-y-1.5">
                       {request.prescriptionhistory.map((hist) => (
-                        <div key={hist.historyid} className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs space-y-1">
+                        <div
+                          key={hist.historyid}
+                          className="p-2 rounded-xl bg-[#FAF6EE]/50 border border-[#F3E9D1] text-[11px] space-y-0.5"
+                        >
                           <div className="flex items-center justify-between">
-                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                              hist.status === "VERIFIED" ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
-                            }`}>
-                              {hist.status}
-                            </span>
-                            <span className="text-[10px] text-slate-400">
-                              {formatDate(hist.createdat)}
-                            </span>
+                            <span className="font-semibold text-[#053845]">{hist.status}</span>
+                            <span className="text-slate-400">{formatDateTime(hist.createdat)}</span>
                           </div>
                           {hist.remarks && (
-                            <p className="text-slate-700 text-[11px] italic">
-                              Remarks: &quot;{hist.remarks}&quot;
-                            </p>
+                            <p className="text-slate-600 italic">&quot;{hist.remarks}&quot;</p>
                           )}
                         </div>
                       ))}
@@ -854,275 +1177,19 @@ export default function HospitalRequestDetailsPage() {
                   )}
                 </div>
               )}
-            </div>
+            </section>
           ) : request.requesterid ? (
-            <div className="bg-amber-50/80 rounded-2xl border border-amber-200 p-5 shadow-xs flex items-start gap-3">
-              <ShieldAlert className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
-              <div className="text-xs space-y-1">
-                <span className="font-bold text-amber-900 block">
-                  Prescription Not Uploaded
-                </span>
-                <p className="text-amber-800 leading-relaxed">
-                  This blood requisition was created by an external requester without a prescription document. Under clinical safety gating, you cannot advance this request to <strong>Blood Arranged</strong> or <strong>Transfusion Fulfilled</strong> until verified.
-                </p>
-              </div>
-            </div>
-          ) : (
-            <div className="bg-teal-50/60 rounded-2xl border border-teal-200 p-4 shadow-xs flex items-center gap-3 text-xs text-teal-900">
-              <ShieldCheck className="w-5 h-5 text-teal-700 shrink-0" />
-              <span>Hospital-originated requisition. Verified clinical facility order.</span>
-            </div>
-          )}
-
-          {/* Emergency Blood Broadcast Card (Phase 3) */}
-          <EmergencyBroadcastCard
-            requestId={request.requestid}
-            isEmergency={Boolean(request.isemergency)}
-            urgencyLevel={request.urgencylevel}
-            canManage={!isTerminal}
-            isTerminal={isTerminal}
-            onRefreshParent={() => fetchRequestDetails(true)}
-          />
-
-          {/* Clinical Status Actions Card */}
-          <div className="bg-white rounded-2xl border border-[#F3E9D1] p-5 sm:p-6 shadow-xs">
-            <div className="flex items-center justify-between pb-3.5 border-b border-slate-100 mb-4">
-              <div>
-                <h2 className="font-serif text-base font-bold text-[#053845] flex items-center gap-2">
-                  <ShieldCheck className="w-4 h-4 text-[#317786]" />
-                  <span>Clinical Coordination Actions</span>
-                </h2>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Authorized medical staff actions strictly enforced by hospital ownership rules.
-                </p>
-              </div>
-            </div>
-
-            {isTerminal ? (
-              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600 space-y-1">
-                <span className="font-semibold text-slate-800 block">
-                  Requisition in Terminal State ({currentStatus})
-                </span>
-                <p>
-                  No further status updates or clinical modifications may be applied to this requisition in accordance with transfusion safety audit regulations.
-                </p>
-              </div>
-            ) : allowedActions.length === 0 ? (
-              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-500">
-                No next actions currently available for status: {currentStatus}.
-              </div>
-            ) : (
-              <div className="space-y-3">
-                <span className="text-[11px] uppercase font-bold text-slate-400 tracking-wider block">
-                  Available Next Clinical Transitions:
-                </span>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {allowedActions.map((act) => (
-                    <button
-                      key={act.targetStatus}
-                      type="button"
-                      onClick={() => {
-                        setActionType(act.targetStatus);
-                        setActionError(null);
-                        setRemarks("");
-                        setFulfillmentConfirmed(false);
-                      }}
-                      className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between gap-2 ${
-                        act.variant === "success"
-                          ? "bg-emerald-50/80 border-emerald-300 hover:bg-emerald-100/70 text-emerald-900"
-                          : act.variant === "danger"
-                          ? "bg-rose-50/80 border-rose-200 hover:bg-rose-100/70 text-rose-900"
-                          : act.variant === "primary"
-                          ? "bg-[#053845] text-white hover:bg-[#317786] border-[#053845] shadow-xs"
-                          : "bg-white border-slate-200 hover:border-[#317786] text-slate-800"
-                      }`}
-                    >
-                      <div>
-                        <span className={`block text-xs font-bold ${act.variant === "primary" ? "text-white" : ""}`}>
-                          {act.title}
-                        </span>
-                        <p className={`text-[11px] mt-1 leading-snug ${
-                          act.variant === "primary" ? "text-teal-100/90" : "text-slate-500"
-                        }`}>
-                          {act.description}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider pt-1 self-end">
-                        <span>Advance &rarr;</span>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Voluntary Donor Transit & Milestones Card */}
-          <div className="bg-white rounded-2xl border border-[#F3E9D1] p-5 sm:p-6 shadow-xs">
-            <div className="flex items-center justify-between pb-3.5 border-b border-slate-100 mb-4">
-              <div>
-                <h2 className="font-serif text-base font-bold text-[#053845] flex items-center gap-2">
-                  <HeartHandshake className="w-4 h-4 text-[#317786]" />
-                  <span>Voluntary Donor Coordination & Transit</span>
-                </h2>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Live responses and logistical progress reported by registered volunteer blood donors.
-                </p>
-              </div>
-              <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-[#FAF6EE] border border-[#F3E9D1] text-[#053845]">
-                {request.volunteers?.length || 0} Matched
-              </span>
-            </div>
-
-            {!request.volunteers || request.volunteers.length === 0 ? (
-              <div className="p-8 text-center bg-slate-50/50 rounded-xl border border-slate-100 space-y-2">
-                <User className="w-8 h-8 text-slate-300 mx-auto" />
-                <h4 className="text-xs font-bold text-slate-700">No Volunteer Responses Yet</h4>
-                <p className="text-[11px] text-slate-500 max-w-sm mx-auto leading-relaxed">
-                  When compatible donors accept the broadcast request, their arrival milestones and pre-screening declarations will be reported here.
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {request.volunteers.map((vol, idx) => (
-                  <div
-                    key={vol.notificationid || idx}
-                    className="p-4 rounded-xl border border-slate-200 bg-[#FAF6EE]/30 space-y-3"
-                  >
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                      <div className="flex items-center gap-2.5">
-                        <div className="w-8 h-8 rounded-lg bg-white border border-[#F3E9D1] flex items-center justify-center text-[#B94F30] font-bold text-xs shrink-0">
-                          {vol.donorBloodGroup || request.bloodgroup}
-                        </div>
-                        <div>
-                          <span className="font-bold text-xs text-[#053845] block">
-                            {vol.donorName}
-                          </span>
-                          <span className="text-[10px] text-slate-500 block">
-                            {vol.donorCity}{vol.donorState ? `, ${vol.donorState}` : ""}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Transit Status Badge */}
-                      <div className="flex items-center gap-2">
-                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 ${
-                          vol.transitStatus === "COMPLETED"
-                            ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
-                            : vol.transitStatus === "REACHED_LOCATION"
-                            ? "bg-teal-100 text-teal-800 border border-teal-200"
-                            : vol.transitStatus === "STARTED"
-                            ? "bg-sky-100 text-sky-800 border border-sky-200"
-                            : "bg-amber-100 text-amber-800 border border-amber-200"
-                        }`}>
-                          <Car className="w-3 h-3" />
-                          <span>{vol.transitStatus?.replace(/_/g, " ") || "DONOR FOUND"}</span>
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Transit Milestones Timeline */}
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 text-[11px] bg-white p-2.5 rounded-lg border border-slate-100">
-                      <div>
-                        <span className="text-slate-400 block text-[9px] uppercase font-bold">Transit Departure</span>
-                        <span className="text-slate-700 font-medium">
-                          {vol.startedAt ? formatDate(vol.startedAt) : "Not departed yet"}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-slate-400 block text-[9px] uppercase font-bold">Facility Arrival</span>
-                        <span className="text-slate-700 font-medium">
-                          {vol.reachedAt ? formatDate(vol.reachedAt) : "Pending arrival"}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-slate-400 block text-[9px] uppercase font-bold">Donation Collection</span>
-                        <span className="text-slate-700 font-medium">
-                          {vol.completedAt ? formatDate(vol.completedAt) : "Not completed"}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Pre-Screening Clearance */}
-                    {vol.screening && (
-                      <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-600 pt-0.5">
-                        <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold">
-                          Health: {vol.screening.generalHealth || "Cleared"}
-                        </span>
-                        <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold">
-                          Alcohol Screen: {vol.screening.alcoholClearance || "Cleared"}
-                        </span>
-                        <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-medium">
-                          Cooldown: Passed
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <div className="mt-4 p-3 rounded-xl bg-amber-50/70 border border-amber-200 text-[11px] text-amber-900 flex items-start gap-2">
-              <Info className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-              <p className="leading-relaxed">
-                <strong>Clinical Policy Notice:</strong> Voluntary donor response status reflects logistics and collection. Fulfilling the requisition requires physical transfusion confirmation by attending hospital clinical staff.
+            <div className="p-3.5 rounded-2xl bg-amber-50/80 border border-amber-200 text-xs flex items-start gap-2.5">
+              <ShieldAlert className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+              <p className="text-amber-800 leading-relaxed">
+                Prescription not attached by requester. Verification is required prior to transfusion fulfillment.
               </p>
             </div>
-          </div>
+          ) : null}
 
-          {/* Status Audit History Ledger */}
-          <div className="bg-white rounded-2xl border border-[#F3E9D1] p-5 sm:p-6 shadow-xs">
-            <div className="flex items-center justify-between pb-3.5 border-b border-slate-100 mb-4">
-              <h2 className="font-serif text-base font-bold text-[#053845] flex items-center gap-2">
-                <Clock className="w-4 h-4 text-[#317786]" />
-                <span>Status Audit History</span>
-              </h2>
-              <span className="text-xs text-slate-500">
-                {request.requeststatushistory?.length || 0} transitions logged
-              </span>
-            </div>
-
-            {!request.requeststatushistory || request.requeststatushistory.length === 0 ? (
-              <div className="text-xs text-slate-500 p-4 bg-slate-50 rounded-xl text-center">
-                Initial requisition creation logged. No status changes recorded yet.
-              </div>
-            ) : (
-              <div className="space-y-3 relative before:absolute before:inset-0 before:left-3.5 before:w-0.5 before:bg-slate-200">
-                {request.requeststatushistory.map((hist, idx) => (
-                  <div key={hist.historyid || idx} className="flex items-start gap-3 relative pl-1">
-                    <div className="w-6 h-6 rounded-full bg-[#053845] text-white flex items-center justify-center shrink-0 ring-4 ring-white z-10">
-                      <Check className="w-3 h-3 stroke-[3]" />
-                    </div>
-                    <div className="flex-1 bg-[#FAF6EE]/50 border border-[#F3E9D1] p-3 rounded-xl space-y-1">
-                      <div className="flex flex-wrap items-center justify-between gap-1">
-                        <span className="font-bold text-xs text-[#053845]">
-                          {hist.oldstatus ? `${hist.oldstatus} \u2192 ` : ""}{hist.newstatus}
-                        </span>
-                        <span className="text-[10px] text-slate-400">
-                          {formatDate(hist.changedat)}
-                        </span>
-                      </div>
-                      <div className="text-[11px] text-slate-600">
-                        Changed by: <strong className="text-slate-800">{hist.users?.name || "Staff Member"}</strong> ({hist.users?.role || "USER"})
-                      </div>
-                      {hist.remarks && (
-                        <p className="text-[11px] text-slate-700 bg-white p-2 rounded-lg border border-slate-100 mt-1 italic">
-                          &ldquo;{hist.remarks}&rdquo;
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Right Column (1 Col): Patient, Requester, and Clinical Notes */}
-        <div className="space-y-6">
           {/* Clinical Notes Card */}
-          <div className="bg-white rounded-2xl border border-[#F3E9D1] p-5 sm:p-6 shadow-xs space-y-3">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+          <section className="bg-white rounded-2xl border border-[#F3E9D1] p-5 shadow-2xs space-y-3">
+            <div className="flex items-center justify-between pb-3 border-b border-[#F3E9D1]/70">
               <h3 className="font-serif text-sm font-bold text-[#053845] flex items-center gap-1.5">
                 <FileText className="w-4 h-4 text-[#317786]" />
                 <span>Clinical Notes</span>
@@ -1143,15 +1210,15 @@ export default function HospitalRequestDetailsPage() {
                 <textarea
                   value={editedNotes}
                   onChange={(e) => setEditedNotes(e.target.value)}
-                  rows={4}
-                  placeholder="Enter clinical observations, cross-match instructions, or special handling notes..."
+                  rows={3}
+                  placeholder="Enter clinical observations or handling instructions..."
                   className="w-full text-xs p-3 rounded-xl border border-slate-200 bg-[#FAF6EE]/50 focus:bg-white focus:outline-none focus:border-[#317786] text-slate-800 leading-relaxed"
                 />
                 <div className="flex items-center justify-end gap-2">
                   <button
                     type="button"
                     onClick={() => setIsEditingNotes(false)}
-                    className="px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors"
+                    className="px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors cursor-pointer"
                   >
                     Cancel
                   </button>
@@ -1159,7 +1226,7 @@ export default function HospitalRequestDetailsPage() {
                     type="button"
                     onClick={handleSaveNotesOnly}
                     disabled={isSavingNotes}
-                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-[#053845] hover:bg-[#317786] transition-colors disabled:opacity-50"
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-[#053845] hover:bg-[#317786] transition-colors disabled:opacity-50 cursor-pointer"
                   >
                     {isSavingNotes && <Loader2 className="w-3 h-3 animate-spin" />}
                     <span>Save Notes</span>
@@ -1175,122 +1242,89 @@ export default function HospitalRequestDetailsPage() {
                 No clinical notes recorded for this requisition.
               </p>
             )}
-          </div>
+          </section>
 
-          {/* Requester Contact Details Card */}
-          <div className="bg-white rounded-2xl border border-[#F3E9D1] p-5 sm:p-6 shadow-xs space-y-3.5">
-            <h3 className="font-serif text-sm font-bold text-[#053845] flex items-center gap-1.5 pb-3 border-b border-slate-100">
+          {/* Patient & Contact Details Card */}
+          <section className="bg-white rounded-2xl border border-[#F3E9D1] p-5 shadow-2xs space-y-3">
+            <h3 className="font-serif text-sm font-bold text-[#053845] flex items-center gap-1.5 pb-3 border-b border-[#F3E9D1]/70">
               <User className="w-4 h-4 text-[#317786]" />
-              <span>Requester Information</span>
+              <span>Patient &amp; Contact Details</span>
             </h3>
 
-            <div className="space-y-3 text-xs">
-              <div>
-                <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
-                  Contact Person
+            <div className="space-y-2.5 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500">Patient:</span>
+                <span className="font-semibold text-slate-800">
+                  {request.patientname} ({request.patientage ? `${request.patientage} yrs` : "Age N/A"}, {request.patientgender || "N/A"})
                 </span>
-                <span className="font-semibold text-slate-800 mt-0.5 block">
+              </div>
+
+              {request.patientcontact && (
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-500">Patient Phone:</span>
+                  <a
+                    href={`tel:${request.patientcontact}`}
+                    className="font-semibold text-[#053845] hover:underline flex items-center gap-1"
+                  >
+                    <Phone className="w-3 h-3 text-[#317786]" />
+                    <span>{request.patientcontact}</span>
+                  </a>
+                </div>
+              )}
+
+              <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                <span className="text-slate-500">Requester:</span>
+                <span className="font-semibold text-slate-800">
                   {request.users?.name || "Not Specified"}
                 </span>
               </div>
 
-              <div>
-                <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
-                  Contact Number
-                </span>
-                <div className="flex items-center gap-1.5 text-slate-800 mt-0.5">
-                  <Phone className="w-3.5 h-3.5 text-[#317786]" />
-                  <a href={`tel:${request.users?.phonenumber || request.patientcontact}`} className="font-semibold hover:underline">
-                    {request.users?.phonenumber || request.patientcontact || "Not provided"}
+              {(request.users?.phonenumber || request.patientcontact) && (
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-500">Requester Phone:</span>
+                  <a
+                    href={`tel:${request.users?.phonenumber || request.patientcontact}`}
+                    className="font-semibold text-[#053845] hover:underline flex items-center gap-1"
+                  >
+                    <Phone className="w-3 h-3 text-[#317786]" />
+                    <span>{request.users?.phonenumber || request.patientcontact}</span>
                   </a>
                 </div>
-              </div>
+              )}
 
               {request.users?.email && (
-                <div>
-                  <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
-                    Email Address
-                  </span>
-                  <div className="flex items-center gap-1.5 text-slate-800 mt-0.5">
-                    <Mail className="w-3.5 h-3.5 text-[#317786]" />
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-500">Requester Email:</span>
+                  <span className="font-medium text-slate-700 flex items-center gap-1 truncate max-w-[200px]">
+                    <Mail className="w-3 h-3 text-[#317786]" />
                     <span className="truncate">{request.users.email}</span>
-                  </div>
+                  </span>
                 </div>
               )}
 
               {request.requesters && (
-                <div>
-                  <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
-                    Requester Location
-                  </span>
-                  <div className="flex items-start gap-1.5 text-slate-700 mt-0.5">
-                    <MapPin className="w-3.5 h-3.5 text-[#317786] shrink-0 mt-0.5" />
-                    <span>
-                      {request.requesters.address}, {request.requesters.city}, {request.requesters.state} - {request.requesters.pincode}
-                    </span>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Assigned Medical Facility Card */}
-          <div className="bg-white rounded-2xl border border-[#F3E9D1] p-5 sm:p-6 shadow-xs space-y-3.5">
-            <h3 className="font-serif text-sm font-bold text-[#053845] flex items-center gap-1.5 pb-3 border-b border-slate-100">
-              <Building2 className="w-4 h-4 text-[#317786]" />
-              <span>Assigned Facility Record</span>
-            </h3>
-
-            <div className="space-y-3 text-xs">
-              <div>
-                <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
-                  Facility Name
-                </span>
-                <span className="font-semibold text-slate-800 mt-0.5 block">
-                  {request.hospitals?.hospitalname || "Your Medical Facility"}
-                </span>
-              </div>
-
-              {request.hospitals?.city && (
-                <div>
-                  <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
-                    Location
-                  </span>
-                  <span className="text-slate-700 mt-0.5 block">
-                    {request.hospitals.city}, {request.hospitals.state}
+                <div className="flex items-start justify-between gap-2 pt-1">
+                  <span className="text-slate-500 shrink-0">Location:</span>
+                  <span className="font-medium text-slate-700 text-right">
+                    {request.requesters.city}, {request.requesters.state}
                   </span>
                 </div>
               )}
-
-              <div>
-                <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
-                  Assigned ID
-                </span>
-                <span className="font-mono text-slate-500 text-[10px] mt-0.5 block">
-                  {request.hospitalid || "Unassigned"}
-                </span>
-              </div>
             </div>
-          </div>
+          </section>
         </div>
       </div>
 
       {/* Status Transition Action & Fulfillment Modal */}
       {actionType && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl border border-[#F3E9D1] shadow-2xl max-w-lg w-full p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+          <div className="bg-white rounded-2xl border border-[#F3E9D1] shadow-2xl max-w-md w-full p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <h3 className="font-serif text-base font-bold text-[#053845] flex items-center gap-2">
-                {actionType === "FULFILLED" ? (
-                  <CheckCircle2 className="w-5 h-5 text-emerald-600" />
-                ) : actionType === "CANCELLED" ? (
-                  <AlertTriangle className="w-5 h-5 text-rose-600" />
-                ) : (
-                  <Activity className="w-5 h-5 text-[#317786]" />
-                )}
+                <Activity className="w-5 h-5 text-[#317786]" />
                 <span>
                   {actionType === "FULFILLED"
-                    ? "Confirm Clinical Transfusion (Fulfill)"
+                    ? "Confirm Transfusion (Fulfill)"
                     : actionType === "CANCELLED"
                     ? "Cancel Blood Requisition"
                     : `Transition to ${actionType.replace(/_/g, " ")}`}
@@ -1299,7 +1333,7 @@ export default function HospitalRequestDetailsPage() {
               <button
                 type="button"
                 onClick={() => setActionType(null)}
-                className="text-slate-400 hover:text-slate-600 text-lg font-bold p-1"
+                className="text-slate-400 hover:text-slate-600 text-lg font-bold p-1 cursor-pointer"
               >
                 &times;
               </button>
@@ -1313,18 +1347,16 @@ export default function HospitalRequestDetailsPage() {
             )}
 
             <form onSubmit={handleStatusSubmit} className="space-y-4">
-              {/* Special Fulfillment Confirmation Warning */}
               {actionType === "FULFILLED" && (
-                <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 space-y-3">
-                  <div className="flex items-start gap-2 text-xs text-emerald-900 leading-relaxed">
-                    <Info className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
-                    <div>
-                      <strong className="block mb-0.5">Physical Transfusion Verification Required</strong>
-                      Marking a requisition as <strong>FULFILLED</strong> is a terminal medical action. It certifies that the blood units were verified, cross-matched, and completely transfused into the patient. Once fulfilled, this record is locked.
-                    </div>
+                <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 space-y-2.5">
+                  <div className="text-xs text-emerald-900 leading-relaxed">
+                    <strong>Physical Transfusion Verification Required</strong>
+                    <p className="mt-0.5">
+                      Fulfilling is a terminal action confirming units were cross-matched and transfused into the patient.
+                    </p>
                   </div>
 
-                  <label className="flex items-start gap-2.5 pt-1 text-xs text-emerald-950 font-semibold cursor-pointer">
+                  <label className="flex items-start gap-2 pt-1 text-xs text-emerald-950 font-semibold cursor-pointer">
                     <input
                       type="checkbox"
                       checked={fulfillmentConfirmed}
@@ -1332,70 +1364,44 @@ export default function HospitalRequestDetailsPage() {
                       className="mt-0.5 w-4 h-4 rounded border-emerald-300 text-[#053845] focus:ring-[#317786]"
                     />
                     <span>
-                      I confirm that the physical transfusion was completed and verified by authorized hospital staff.
+                      I confirm that physical transfusion was completed and verified.
                     </span>
                   </label>
                 </div>
               )}
 
-              {/* Special Cancellation Notice */}
               {actionType === "CANCELLED" && (
-                <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 flex items-start gap-2">
-                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                  <div>
-                    <strong>Cancellation is permanent.</strong> Please provide the clinical reason for canceling this requisition in the remarks below.
-                  </div>
+                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800">
+                  <strong>Cancellation is permanent.</strong> Please provide a reason below.
                 </div>
               )}
 
-              {/* Transition Remarks / Audit Log */}
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Transition Remarks (Audit Log)
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Remarks / Notes
                 </label>
                 <input
                   type="text"
                   value={remarks}
                   onChange={(e) => setRemarks(e.target.value)}
-                  placeholder={
-                    actionType === "FULFILLED"
-                      ? "e.g., Transfusion completed in Ward 4, verified by attending physician"
-                      : actionType === "CANCELLED"
-                      ? "e.g., Patient discharged / alternative blood sourced"
-                      : "Enter notes for status history log..."
-                  }
+                  placeholder="Enter remarks for audit history..."
                   className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 bg-[#FAF6EE]/50 focus:bg-white focus:outline-none focus:border-[#317786] text-slate-800"
                 />
               </div>
 
-              {/* Optional Clinical Notes Update */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Clinical Notes (Optional Update)
-                </label>
-                <textarea
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  rows={2}
-                  placeholder="Update patient notes or handling instructions..."
-                  className="w-full text-xs p-3 rounded-xl border border-slate-200 bg-[#FAF6EE]/50 focus:bg-white focus:outline-none focus:border-[#317786] text-slate-800"
-                />
-              </div>
-
-              {/* Modal Buttons */}
               <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
                 <button
                   type="button"
                   onClick={() => setActionType(null)}
                   disabled={isSubmitting}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors"
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={isSubmitting || (actionType === "FULFILLED" && !fulfillmentConfirmed)}
-                  className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold text-white transition-colors disabled:opacity-50 ${
+                  className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold text-white transition-colors cursor-pointer disabled:opacity-50 ${
                     actionType === "FULFILLED"
                       ? "bg-emerald-600 hover:bg-emerald-700"
                       : actionType === "CANCELLED"
@@ -1406,7 +1412,7 @@ export default function HospitalRequestDetailsPage() {
                   {isSubmitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                   <span>
                     {actionType === "FULFILLED"
-                      ? "Confirm Physical Transfusion"
+                      ? "Confirm Transfusion"
                       : actionType === "CANCELLED"
                       ? "Confirm Cancellation"
                       : `Advance to ${actionType.replace(/_/g, " ")}`}
@@ -1421,38 +1427,18 @@ export default function HospitalRequestDetailsPage() {
       {/* Prescription Review & Verification Modal */}
       {prescriptionReviewAction && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <div className="flex items-center gap-2.5">
-                <div
-                  className={`w-9 h-9 rounded-xl flex items-center justify-center ${
-                    prescriptionReviewAction === "VERIFIED"
-                      ? "bg-emerald-100 text-emerald-700"
-                      : "bg-rose-100 text-rose-700"
-                  }`}
-                >
-                  {prescriptionReviewAction === "VERIFIED" ? (
-                    <Check className="w-5 h-5" />
-                  ) : (
-                    <X className="w-5 h-5" />
-                  )}
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-[#053845]">
-                    {prescriptionReviewAction === "VERIFIED"
-                      ? "Verify Blood Prescription"
-                      : "Reject Blood Prescription"}
-                  </h3>
-                  <p className="text-[11px] text-slate-500">
-                    Requisition #{request.requestid.slice(0, 8)}
-                  </p>
-                </div>
-              </div>
+              <h3 className="text-sm font-bold text-[#053845]">
+                {prescriptionReviewAction === "VERIFIED"
+                  ? "Verify Blood Prescription"
+                  : "Reject Blood Prescription"}
+              </h3>
               <button
                 type="button"
                 onClick={() => setPrescriptionReviewAction(null)}
                 disabled={isSubmittingReview}
-                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-colors"
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -1468,15 +1454,15 @@ export default function HospitalRequestDetailsPage() {
             <div className="space-y-3 text-xs">
               <p className="text-slate-600 leading-relaxed">
                 {prescriptionReviewAction === "VERIFIED"
-                  ? "You are certifying that this prescription document has been clinically examined, authenticated, and approved for transfusion requisition processing."
-                  : "Prescription rejection will notify the requester immediately and allow them to upload a corrected replacement prescription. A clear clinical explanation is required."}
+                  ? "You are certifying that this prescription has been clinically authenticated for transfusion processing."
+                  : "Prescription rejection will notify the requester to provide an updated document. A clear explanation is required."}
               </p>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
                   {prescriptionReviewAction === "VERIFIED"
-                    ? "Clinical Notes / Remarks (Optional)"
-                    : "Rejection Explanation (Required) *"}
+                    ? "Clinical Remarks (Optional)"
+                    : "Rejection Reason (Required) *"}
                 </label>
                 <textarea
                   rows={3}
@@ -1484,8 +1470,8 @@ export default function HospitalRequestDetailsPage() {
                   onChange={(e) => setPrescriptionReviewRemarks(e.target.value)}
                   placeholder={
                     prescriptionReviewAction === "VERIFIED"
-                      ? "e.g., Verified against attending physician records; hemoglobin match confirmed."
-                      : "e.g., Prescription image is blurry / Doctor's signature or hospital stamp missing / Expired requisition date."
+                      ? "e.g., Verified against attending physician records."
+                      : "e.g., Signature missing or image blurry."
                   }
                   required={prescriptionReviewAction === "REJECTED"}
                   className="w-full text-xs p-3 rounded-xl border border-slate-200 bg-[#FAF6EE]/40 focus:bg-white focus:outline-none focus:border-[#317786] text-slate-800 placeholder:text-slate-400"
@@ -1498,7 +1484,7 @@ export default function HospitalRequestDetailsPage() {
                 type="button"
                 onClick={() => setPrescriptionReviewAction(null)}
                 disabled={isSubmittingReview}
-                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors"
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors cursor-pointer"
               >
                 Cancel
               </button>
@@ -1509,7 +1495,7 @@ export default function HospitalRequestDetailsPage() {
                   isSubmittingReview ||
                   (prescriptionReviewAction === "REJECTED" && !prescriptionReviewRemarks.trim())
                 }
-                className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold text-white transition-colors disabled:opacity-50 ${
+                className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold text-white transition-colors cursor-pointer disabled:opacity-50 ${
                   prescriptionReviewAction === "VERIFIED"
                     ? "bg-emerald-600 hover:bg-emerald-700"
                     : "bg-rose-600 hover:bg-rose-700"

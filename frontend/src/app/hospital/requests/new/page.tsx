@@ -5,15 +5,12 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Droplet,
-  Building2,
-  ShieldCheck,
   ChevronLeft,
   ArrowRight,
   Loader2,
   Check,
   AlertCircle,
   Clock,
-  MapPin,
   Calendar,
   User,
   Phone,
@@ -21,9 +18,20 @@ import {
   AlertTriangle,
   Plus,
   Minus,
+  X,
+  ShieldCheck,
+  Building2,
 } from "lucide-react";
 import { api, CreateBloodRequestDto } from "@/lib/api";
 import { AuthHospital } from "@/lib/auth";
+import {
+  mapBloodGroupToDisplay,
+  mapBloodComponentToDisplay,
+} from "@/lib/mappers";
+import {
+  SwastyaDatePicker,
+  SwastyaTimePicker,
+} from "@/components/ui/SwastyaDateTimePickers";
 
 // Blood Group configurations
 const BLOOD_GROUPS = [
@@ -42,22 +50,22 @@ const BLOOD_COMPONENTS = [
   {
     value: "WHOLE_BLOOD",
     label: "Whole Blood",
-    desc: "Standard 450ml transfusion for trauma, acute hemorrhage, or surgical care.",
+    desc: "Standard 450ml transfusion for trauma, acute blood loss, or surgical care.",
   },
   {
     value: "PLATELETS",
     label: "Platelets (PRP/SDP)",
-    desc: "Platelet concentrate for thrombocytopenia, dengue, or oncology patients.",
+    desc: "Platelet concentrate for dengue, chemotherapy, or bleeding disorders.",
   },
   {
     value: "PLASMA",
     label: "Fresh Frozen Plasma (FFP)",
-    desc: "Coagulation factors for acute coagulopathy, liver disease, or severe burns.",
+    desc: "Coagulation factors for liver disorders, shock, or severe burns.",
   },
   {
     value: "RBC",
     label: "Packed Red Blood Cells (PRBC)",
-    desc: "Concentrated erythrocytes for severe anemia, hematology, or ICU care.",
+    desc: "Concentrated RBCs for severe anemia, hematology care, or ICU support.",
   },
 ];
 
@@ -66,30 +74,34 @@ const URGENCY_LEVELS = [
   {
     value: "CRITICAL",
     label: "Critical Emergency",
-    subtext: "Immediate life-saving requirement. Broadcasts high-priority alerts.",
+    subtext: "Immediate life threat. Broadcasts high-priority alerts to eligible donors.",
     badgeClass: "bg-[#fdf2f2] text-[#A2363A] border-[#A2363A]/30",
-    color: "#A2363A",
+    activeCardClass: "border-[#A2363A] bg-[#A2363A]/5 ring-1 ring-[#A2363A]/40",
+    dotColor: "bg-[#A2363A]",
   },
   {
     value: "HIGH",
     label: "Urgent Requisition",
-    subtext: "Required within 12 - 24 hours. Surgery, acute admission, or trauma care.",
+    subtext: "Required within 12 - 24 hours for acute admission, surgery, or trauma.",
     badgeClass: "bg-[#f9eee9] text-[#B94F30] border-[#B94F30]/30",
-    color: "#B94F30",
+    activeCardClass: "border-[#B94F30] bg-[#B94F30]/5 ring-1 ring-[#B94F30]/40",
+    dotColor: "bg-[#B94F30]",
   },
   {
     value: "MEDIUM",
     label: "Priority Case",
     subtext: "Required within 24 - 48 hours for scheduled procedures or chemotherapy.",
     badgeClass: "bg-[#e8f3f5] text-[#317786] border-[#317786]/30",
-    color: "#317786",
+    activeCardClass: "border-[#317786] bg-[#317786]/5 ring-1 ring-[#317786]/40",
+    dotColor: "bg-[#317786]",
   },
   {
     value: "LOW",
     label: "Standard / Planned",
     subtext: "Elective procedures or planned surgical reserve requirement.",
     badgeClass: "bg-slate-100 text-slate-700 border-slate-200",
-    color: "#64748b",
+    activeCardClass: "border-[#053845] bg-[#053845]/5 ring-1 ring-[#053845]/30",
+    dotColor: "bg-slate-500",
   },
 ];
 
@@ -304,315 +316,365 @@ export default function HospitalNewBloodRequestPage() {
     }
   };
 
+  const todayStr = new Date().toISOString().split("T")[0];
+
   if (isLoadingProfile) {
     return (
       <div className="py-20 flex flex-col items-center justify-center gap-3 text-center">
         <Loader2 className="w-6 h-6 text-[#317786] animate-spin" />
-        <p className="text-xs text-slate-500 font-medium">Loading hospital authorization profile...</p>
+        <p className="text-xs text-slate-500 font-medium">Loading hospital profile...</p>
       </div>
     );
   }
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6 sm:space-y-8 pb-16">
-      {/* Navigation Breadcrumb */}
-      <div className="flex items-center gap-2 text-xs text-slate-500">
+    <div className="max-w-4xl mx-auto space-y-5 pb-16">
+      {/* 1. Page Breadcrumb */}
+      <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-xs text-slate-500">
+        <Link
+          href="/hospital/dashboard"
+          className="hover:text-[#053845] transition-colors"
+        >
+          Dashboard
+        </Link>
+        <span className="text-slate-300">/</span>
         <Link
           href="/hospital/requests"
-          className="hover:text-[#053845] transition-colors inline-flex items-center gap-1 font-semibold"
+          className="hover:text-[#053845] transition-colors"
         >
-          <ChevronLeft className="w-3.5 h-3.5" />
-          <span>Assigned Requisitions</span>
+          Blood Requests
         </Link>
-        <span>/</span>
-        <span className="font-semibold text-slate-800">Direct Facility Requisition</span>
-      </div>
+        <span className="text-slate-300">/</span>
+        <span className="font-semibold text-slate-700">Create Request</span>
+      </nav>
 
-      {/* Header Banner */}
-      <div className="bg-white rounded-3xl border border-[#F3E9D1] p-6 sm:p-8 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div>
-          <div className="flex flex-wrap items-center gap-2 mb-1.5">
-            <span className="text-[10px] tracking-wider uppercase font-bold text-[#317786] bg-[#e8f3f5] border border-[#317786]/30 px-2.5 py-0.5 rounded-full">
-              Hospital Sourced
-            </span>
-            <span className="text-[10px] tracking-wider uppercase font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full">
-              Direct Clinical Dispatch
-            </span>
-          </div>
+      {/* 2. Compact Page Header */}
+      <header className="pb-4 border-b border-[#317786]/15 flex flex-col sm:flex-row sm:items-end justify-between gap-2">
+        <div className="space-y-1">
           <h1 className="font-serif text-2xl sm:text-3xl font-bold text-[#053845] tracking-tight">
-            Create Hospital Blood Request
+            Create Blood Request
           </h1>
-          <p className="text-xs sm:text-sm text-slate-500 mt-1">
-            Register an official clinical blood request under{" "}
-            <strong className="text-slate-700 font-semibold">{hospital?.hospitalname || "this hospital facility"}</strong>.
+          <p className="text-xs sm:text-sm text-slate-600">
+            Enter patient and blood requirement details.
           </p>
         </div>
-
-        {/* Facility Credentials Pill */}
-        <div className="flex items-center gap-2 bg-[#FAF6EE] border border-[#F3E9D1] rounded-xl px-3 py-2 text-xs shrink-0">
-          <Building2 className="w-4 h-4 text-[#317786] shrink-0" />
-          <div className="text-left">
-            <span className="block font-bold text-[#053845] text-xs truncate max-w-[200px]">
-              {hospital?.hospitalname || "Registered Facility"}
-            </span>
-            <span className="block text-[10px] text-slate-500 font-mono">
-              {hospital?.registrationnumber || "LIC-ACTIVE"} &bull; {hospital?.city || "Regional Network"}
+        {hospital?.hospitalname && (
+          <div className="text-left sm:text-right shrink-0">
+            <span className="text-[11px] text-slate-400 block">Sponsoring Facility</span>
+            <span className="text-xs font-semibold text-[#053845]">
+              {hospital.hospitalname}
+              {hospital.city ? ` (${hospital.city})` : ""}
             </span>
           </div>
-        </div>
-      </div>
+        )}
+      </header>
 
-      {/* Error Banner */}
+      {/* Global Error Banner */}
       {submitError && (
-        <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 flex items-start gap-2.5 shadow-2xs">
-          <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-          <div className="flex-1">
-            <strong className="font-semibold">Requisition Submission Error:</strong> {submitError}
+        <div className="p-4 rounded-2xl bg-[#fdf2f2] border border-[#A2363A]/30 flex items-start gap-3 text-xs sm:text-sm text-[#A2363A]">
+          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+          <div className="space-y-0.5">
+            <span className="font-bold block">Submission Error</span>
+            <span>{submitError}</span>
           </div>
         </div>
       )}
 
-      {/* Creation Form */}
-      <form onSubmit={handleReview} className="space-y-6">
-        {/* SECTION 1: PATIENT DEMOGRAPHICS */}
-        <div className="bg-white rounded-2xl border border-[#F3E9D1] p-5 sm:p-6 shadow-xs space-y-4">
-          <div className="border-b border-slate-100 pb-3 flex items-center justify-between">
-            <h2 className="font-serif text-base font-bold text-[#053845] flex items-center gap-2">
-              <User className="w-4 h-4 text-[#317786]" />
-              <span>1. Patient Demographics & Identification</span>
-            </h2>
-            <span className="text-[11px] text-slate-400 font-medium">* Required for clinical matching</span>
+      {/* Main Single-Page Form */}
+      <form onSubmit={handleReview} className="space-y-5" noValidate>
+        {/* SECTION 1: Patient Details */}
+        <section
+          id="section-patient"
+          className="bg-white rounded-2xl border border-[#F3E9D1] shadow-2xs p-5 space-y-4"
+        >
+          <div className="flex items-center justify-between pb-3 border-b border-[#F3E9D1]/70">
+            <div className="flex items-center gap-2.5">
+              <span className="w-7 h-7 rounded-lg bg-[#317786]/10 text-[#317786] flex items-center justify-center font-bold text-xs shrink-0">
+                1
+              </span>
+              <h2 className="font-serif text-base font-bold text-[#053845]">
+                Patient Details
+              </h2>
+            </div>
+            <span className="text-[11px] text-[#A2363A] font-medium">* Required</span>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {/* Patient Name */}
-            <div className="sm:col-span-2" id="patientName">
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Patient Full Name <span className="text-rose-500">*</span>
+          <div className="space-y-3.5">
+            {/* Full-width Patient Name */}
+            <div className="space-y-1" id="patientName">
+              <label className="block text-xs font-semibold text-[#053845]">
+                Patient Full Name <span className="text-[#A2363A]">*</span>
               </label>
               <input
                 type="text"
                 value={patientName}
                 onChange={(e) => {
                   setPatientName(e.target.value);
-                  if (errors.patientName) setErrors({ ...errors, patientName: "" });
+                  if (errors.patientName) {
+                    setErrors((prev) => ({ ...prev, patientName: "" }));
+                  }
                 }}
-                placeholder="e.g. Ramesh Chandra Verma"
-                className={`w-full px-3 py-2 text-xs rounded-xl border bg-[#FAF6EE]/40 focus:bg-white focus:outline-none focus:ring-2 transition-all ${
+                placeholder="e.g., Rajesh Kumar"
+                className={`w-full h-10 px-3.5 rounded-xl border text-xs sm:text-sm bg-white focus:outline-none transition-colors ${
                   errors.patientName
-                    ? "border-rose-300 ring-2 ring-rose-100 text-rose-900"
-                    : "border-slate-200 focus:border-[#317786] focus:ring-[#317786]/20 text-slate-800"
+                    ? "border-[#A2363A] focus:border-[#A2363A]"
+                    : "border-slate-200 focus:border-[#317786]"
                 }`}
               />
               {errors.patientName && (
-                <p className="text-[11px] text-rose-600 mt-1 font-medium">{errors.patientName}</p>
+                <p className="text-[11px] text-[#A2363A] flex items-center gap-1 font-medium">
+                  <AlertCircle className="w-3 h-3 shrink-0" />
+                  <span>{errors.patientName}</span>
+                </p>
               )}
             </div>
 
-            {/* Patient Age */}
-            <div id="patientAge">
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Age (Years) <span className="text-rose-500">*</span>
-              </label>
-              <input
-                type="number"
-                min="1"
-                max="125"
-                value={patientAge}
-                onChange={(e) => {
-                  setPatientAge(e.target.value);
-                  if (errors.patientAge) setErrors({ ...errors, patientAge: "" });
-                }}
-                placeholder="e.g. 42"
-                className={`w-full px-3 py-2 text-xs rounded-xl border bg-[#FAF6EE]/40 focus:bg-white focus:outline-none focus:ring-2 transition-all ${
-                  errors.patientAge
-                    ? "border-rose-300 ring-2 ring-rose-100 text-rose-900"
-                    : "border-slate-200 focus:border-[#317786] focus:ring-[#317786]/20 text-slate-800"
-                }`}
-              />
-              {errors.patientAge && (
-                <p className="text-[11px] text-rose-600 mt-1 font-medium">{errors.patientAge}</p>
-              )}
-            </div>
-
-            {/* Patient Gender */}
-            <div id="patientGender">
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Gender <span className="text-rose-500">*</span>
-              </label>
-              <div className="grid grid-cols-3 gap-1">
-                {(["MALE", "FEMALE", "OTHER"] as const).map((g) => (
-                  <button
-                    key={g}
-                    type="button"
-                    onClick={() => {
-                      setPatientGender(g);
-                      if (errors.patientGender) setErrors({ ...errors, patientGender: "" });
-                    }}
-                    className={`py-2 text-[11px] font-semibold rounded-xl border text-center transition-all cursor-pointer ${
-                      patientGender === g
-                        ? "bg-[#053845] text-white border-[#053845] shadow-2xs font-bold"
-                        : "bg-white text-slate-600 border-slate-200 hover:bg-[#FAF6EE]"
-                    }`}
-                  >
-                    {g === "MALE" ? "Male" : g === "FEMALE" ? "Female" : "Other"}
-                  </button>
-                ))}
+            {/* Age & Gender 2-Column Row */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+              <div className="space-y-1" id="patientAge">
+                <label className="block text-xs font-semibold text-[#053845]">
+                  Patient Age (Years) <span className="text-[#A2363A]">*</span>
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max="125"
+                  value={patientAge}
+                  onChange={(e) => {
+                    setPatientAge(e.target.value);
+                    if (errors.patientAge) {
+                      setErrors((prev) => ({ ...prev, patientAge: "" }));
+                    }
+                  }}
+                  placeholder="e.g., 34"
+                  className={`w-full h-10 px-3.5 rounded-xl border text-xs sm:text-sm bg-white focus:outline-none transition-colors ${
+                    errors.patientAge
+                      ? "border-[#A2363A] focus:border-[#A2363A]"
+                      : "border-slate-200 focus:border-[#317786]"
+                  }`}
+                />
+                {errors.patientAge && (
+                  <p className="text-[11px] text-[#A2363A] flex items-center gap-1 font-medium">
+                    <AlertCircle className="w-3 h-3 shrink-0" />
+                    <span>{errors.patientAge}</span>
+                  </p>
+                )}
               </div>
-              {errors.patientGender && (
-                <p className="text-[11px] text-rose-600 mt-1 font-medium">{errors.patientGender}</p>
-              )}
+
+              <div className="space-y-1" id="patientGender">
+                <label className="block text-xs font-semibold text-[#053845]">
+                  Gender <span className="text-[#A2363A]">*</span>
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {(["MALE", "FEMALE", "OTHER"] as const).map((g) => {
+                    const isSelected = patientGender === g;
+                    return (
+                      <button
+                        type="button"
+                        key={g}
+                        onClick={() => {
+                          setPatientGender(g);
+                          if (errors.patientGender) {
+                            setErrors((prev) => ({ ...prev, patientGender: "" }));
+                          }
+                        }}
+                        className={`h-10 px-3 rounded-xl text-xs font-semibold border transition-colors cursor-pointer ${
+                          isSelected
+                            ? "bg-[#317786]/10 text-[#053845] border-[#317786] ring-1 ring-[#317786]/30 font-bold"
+                            : "bg-white text-slate-600 border-slate-200 hover:border-[#317786]/50"
+                        }`}
+                      >
+                        {g === "MALE" ? "Male" : g === "FEMALE" ? "Female" : "Other"}
+                      </button>
+                    );
+                  })}
+                </div>
+                {errors.patientGender && (
+                  <p className="text-[11px] text-[#A2363A] flex items-center gap-1 font-medium">
+                    <AlertCircle className="w-3 h-3 shrink-0" />
+                    <span>{errors.patientGender}</span>
+                  </p>
+                )}
+              </div>
             </div>
 
-            {/* Contact Number */}
-            <div className="sm:col-span-2" id="patientContact">
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Patient / Attendant Phone <span className="text-rose-500">*</span>
-              </label>
-              <div className="relative">
-                <Phone className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            {/* Contact Phone & Ward/Room/Bed 2-Column Row */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+              <div className="space-y-1" id="patientContact">
+                <label className="block text-xs font-semibold text-[#053845]">
+                  Patient / Attendant Phone <span className="text-[#A2363A]">*</span>
+                </label>
                 <input
                   type="tel"
                   value={patientContact}
                   onChange={(e) => {
                     setPatientContact(e.target.value);
-                    if (errors.patientContact) setErrors({ ...errors, patientContact: "" });
+                    if (errors.patientContact) {
+                      setErrors((prev) => ({ ...prev, patientContact: "" }));
+                    }
                   }}
-                  placeholder="e.g. +91 98765 43210"
-                  className={`w-full pl-9 pr-3 py-2 text-xs rounded-xl border bg-[#FAF6EE]/40 focus:bg-white focus:outline-none focus:ring-2 transition-all ${
+                  placeholder="e.g., 9876543210"
+                  className={`w-full h-10 px-3.5 rounded-xl border text-xs sm:text-sm bg-white focus:outline-none transition-colors ${
                     errors.patientContact
-                      ? "border-rose-300 ring-2 ring-rose-100 text-rose-900"
-                      : "border-slate-200 focus:border-[#317786] focus:ring-[#317786]/20 text-slate-800"
+                      ? "border-[#A2363A] focus:border-[#A2363A]"
+                      : "border-slate-200 focus:border-[#317786]"
                   }`}
                 />
+                {errors.patientContact && (
+                  <p className="text-[11px] text-[#A2363A] flex items-center gap-1 font-medium">
+                    <AlertCircle className="w-3 h-3 shrink-0" />
+                    <span>{errors.patientContact}</span>
+                  </p>
+                )}
               </div>
-              <p className="text-[10px] text-slate-400 mt-1">
-                Protected by strict clinical privacy controls; only revealed upon verified volunteer response.
-              </p>
-              {errors.patientContact && (
-                <p className="text-[11px] text-rose-600 mt-1 font-medium">{errors.patientContact}</p>
-              )}
-            </div>
 
-            {/* Ward / Room / Bed */}
-            <div className="sm:col-span-2">
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Ward / Room / Bed (Optional)
-              </label>
-              <input
-                type="text"
-                value={wardRoom}
-                onChange={(e) => setWardRoom(e.target.value)}
-                placeholder="e.g. ICU-3 Bed 14 / Cardiology Ward 2B"
-                className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 bg-[#FAF6EE]/40 focus:bg-white focus:outline-none focus:border-[#317786] focus:ring-2 focus:ring-[#317786]/20 text-slate-800"
-              />
+              <div className="space-y-1">
+                <label className="block text-xs font-semibold text-[#053845]">
+                  Ward / Room / Bed <span className="text-slate-400 font-normal">(Optional)</span>
+                </label>
+                <input
+                  type="text"
+                  value={wardRoom}
+                  onChange={(e) => setWardRoom(e.target.value)}
+                  placeholder="e.g., ICU-3 Bed 14 / Ward 2B"
+                  className="w-full h-10 px-3.5 rounded-xl border border-slate-200 text-xs sm:text-sm bg-white focus:outline-none focus:border-[#317786] transition-colors"
+                />
+              </div>
             </div>
           </div>
-        </div>
+        </section>
 
-        {/* SECTION 2: BLOOD REQUIREMENTS */}
-        <div className="bg-white rounded-2xl border border-[#F3E9D1] p-5 sm:p-6 shadow-xs space-y-4">
-          <div className="border-b border-slate-100 pb-3 flex items-center justify-between">
-            <h2 className="font-serif text-base font-bold text-[#053845] flex items-center gap-2">
-              <Droplet className="w-4 h-4 text-[#B94F30]" />
-              <span>2. Transfusion Requisition Details</span>
-            </h2>
-            <span className="text-[11px] text-slate-400 font-medium">* Select specific blood group & component</span>
+        {/* SECTION 2: Blood Requirement */}
+        <section
+          id="section-blood"
+          className="bg-white rounded-2xl border border-[#F3E9D1] shadow-2xs p-5 space-y-4"
+        >
+          <div className="flex items-center justify-between pb-3 border-b border-[#F3E9D1]/70">
+            <div className="flex items-center gap-2.5">
+              <span className="w-7 h-7 rounded-lg bg-[#317786]/10 text-[#317786] flex items-center justify-center font-bold text-xs shrink-0">
+                2
+              </span>
+              <h2 className="font-serif text-base font-bold text-[#053845]">
+                Blood Requirement
+              </h2>
+            </div>
+            <span className="text-[11px] text-[#A2363A] font-medium">* Required</span>
           </div>
 
-          {/* Blood Group Selector */}
-          <div id="bloodGroup">
-            <label className="block text-xs font-semibold text-slate-700 mb-2">
-              Required Blood Group <span className="text-rose-500">*</span>
+          {/* Compact Blood Group Buttons */}
+          <div className="space-y-1.5" id="bloodGroup">
+            <label className="block text-xs font-semibold text-[#053845]">
+              Required Blood Group <span className="text-[#A2363A]">*</span>
             </label>
             <div className="grid grid-cols-4 sm:grid-cols-8 gap-2">
-              {BLOOD_GROUPS.map((bg) => (
-                <button
-                  key={bg.value}
-                  type="button"
-                  onClick={() => {
-                    setBloodGroup(bg.value);
-                    if (errors.bloodGroup) setErrors({ ...errors, bloodGroup: "" });
-                  }}
-                  className={`py-3 rounded-xl border text-center transition-all cursor-pointer flex flex-col items-center justify-center gap-0.5 ${
-                    bloodGroup === bg.value
-                      ? "bg-[#053845] text-white border-[#053845] shadow-xs ring-2 ring-[#053845]/20 font-bold scale-[1.02]"
-                      : "bg-[#FAF6EE]/60 text-slate-800 border-[#F3E9D1] hover:bg-[#FAF6EE] hover:border-[#317786]"
-                  }`}
-                >
-                  <span className="text-sm font-bold font-serif">{bg.label}</span>
-                  <span className="text-[9px] opacity-70">ABO Rh</span>
-                </button>
-              ))}
+              {BLOOD_GROUPS.map((bg) => {
+                const isSelected = bloodGroup === bg.value;
+                return (
+                  <button
+                    type="button"
+                    key={bg.value}
+                    onClick={() => {
+                      setBloodGroup(bg.value);
+                      if (errors.bloodGroup) {
+                        setErrors((prev) => ({ ...prev, bloodGroup: "" }));
+                      }
+                    }}
+                    className={`h-11 rounded-xl flex items-center justify-center font-serif text-base font-bold border transition-colors cursor-pointer ${
+                      isSelected
+                        ? "bg-[#B94F30] text-white border-[#B94F30] shadow-2xs"
+                        : "bg-[#FAF6EE]/70 text-[#053845] border-[#F3E9D1] hover:border-[#B94F30]/50 hover:bg-[#FAF6EE]"
+                    }`}
+                  >
+                    {bg.label}
+                  </button>
+                );
+              })}
             </div>
             {errors.bloodGroup && (
-              <p className="text-[11px] text-rose-600 mt-1.5 font-medium">{errors.bloodGroup}</p>
+              <p className="text-[11px] text-[#A2363A] flex items-center gap-1 font-medium">
+                <AlertCircle className="w-3 h-3 shrink-0" />
+                <span>{errors.bloodGroup}</span>
+              </p>
             )}
           </div>
 
-          {/* Blood Component Selector */}
-          <div id="bloodComponent">
-            <label className="block text-xs font-semibold text-slate-700 mb-2">
-              Blood Component <span className="text-rose-500">*</span>
+          {/* Blood Component Cards */}
+          <div className="space-y-1.5" id="bloodComponent">
+            <label className="block text-xs font-semibold text-[#053845]">
+              Blood Component <span className="text-[#A2363A]">*</span>
             </label>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {BLOOD_COMPONENTS.map((comp) => (
-                <button
-                  key={comp.value}
-                  type="button"
-                  onClick={() => setBloodComponent(comp.value)}
-                  className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex items-start gap-3 ${
-                    bloodComponent === comp.value
-                      ? "bg-[#e8f3f5] border-[#317786] shadow-2xs ring-1 ring-[#317786]"
-                      : "bg-white border-slate-200 hover:bg-[#FAF6EE]/70 hover:border-slate-300"
-                  }`}
-                >
-                  <div
-                    className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5 border ${
-                      bloodComponent === comp.value
-                        ? "bg-[#317786] border-[#317786] text-white"
-                        : "border-slate-300 bg-white"
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {BLOOD_COMPONENTS.map((comp) => {
+                const isSelected = bloodComponent === comp.value;
+                return (
+                  <button
+                    type="button"
+                    key={comp.value}
+                    onClick={() => setBloodComponent(comp.value)}
+                    className={`p-3 rounded-xl border text-left transition-colors cursor-pointer flex items-start gap-2.5 ${
+                      isSelected
+                        ? "bg-[#317786]/10 border-[#317786] ring-1 ring-[#317786]/30"
+                        : "bg-white border-slate-200 hover:border-[#317786]/50"
                     }`}
                   >
-                    {bloodComponent === comp.value && <Check className="w-3 h-3 stroke-[3]" />}
-                  </div>
-                  <div>
-                    <span className="block text-xs font-bold text-[#053845]">{comp.label}</span>
-                    <span className="block text-[11px] text-slate-500 mt-0.5 leading-relaxed">
-                      {comp.desc}
+                    <span
+                      className={`w-4 h-4 rounded-full border mt-0.5 flex items-center justify-center shrink-0 ${
+                        isSelected
+                          ? "border-[#317786] bg-[#317786]"
+                          : "border-slate-300 bg-white"
+                      }`}
+                    >
+                      {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-white" />}
                     </span>
-                  </div>
-                </button>
-              ))}
+                    <span className="min-w-0">
+                      <span className="block text-xs font-semibold text-[#053845]">
+                        {comp.label}
+                      </span>
+                      <span className="text-[11px] text-slate-500 leading-snug block mt-0.5">
+                        {comp.desc}
+                      </span>
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
           {/* Units Required Stepper */}
-          <div id="unitsRequired" className="pt-2">
-            <label className="block text-xs font-semibold text-slate-700 mb-2">
-              Units Required <span className="text-rose-500">*</span>
+          <div className="space-y-1.5 pt-1" id="unitsRequired">
+            <label className="block text-xs font-semibold text-[#053845]">
+              Units Required <span className="text-[#A2363A]">*</span>
             </label>
             <div className="flex flex-wrap items-center gap-3">
-              <div className="inline-flex items-center rounded-xl border border-slate-200 bg-[#FAF6EE]/50 p-1">
+              <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setUnitsRequired(Math.max(1, unitsRequired - 1))}
-                  className="w-8 h-8 rounded-lg bg-white border border-slate-200 text-slate-700 flex items-center justify-center hover:bg-slate-50 transition-colors cursor-pointer"
-                  disabled={unitsRequired <= 1}
+                  onClick={() => setUnitsRequired((prev) => Math.max(1, prev - 1))}
+                  className="w-10 h-10 rounded-xl bg-[#FAF6EE] hover:bg-[#F3E9D1] border border-[#F3E9D1] text-[#053845] font-bold text-base flex items-center justify-center transition-colors cursor-pointer"
                 >
-                  <Minus className="w-3.5 h-3.5" />
+                  -
                 </button>
-                <span className="w-12 text-center text-sm font-bold text-[#053845] font-serif">
-                  {unitsRequired}
+                <input
+                  type="number"
+                  min="1"
+                  max="100"
+                  value={unitsRequired}
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value, 10);
+                    if (!isNaN(v)) setUnitsRequired(Math.min(100, Math.max(1, v)));
+                  }}
+                  className="w-16 h-10 text-center rounded-xl border border-slate-200 text-sm font-bold text-[#053845] focus:outline-none focus:border-[#317786]"
+                />
+                <button
+                  type="button"
+                  onClick={() => setUnitsRequired((prev) => Math.min(100, prev + 1))}
+                  className="w-10 h-10 rounded-xl bg-[#FAF6EE] hover:bg-[#F3E9D1] border border-[#F3E9D1] text-[#053845] font-bold text-base flex items-center justify-center transition-colors cursor-pointer"
+                >
+                  +
+                </button>
+                <span className="text-xs text-slate-500 ml-1">
+                  {unitsRequired} {unitsRequired === 1 ? "unit" : "units"} (~{unitsRequired * 450} ml)
                 </span>
-                <button
-                  type="button"
-                  onClick={() => setUnitsRequired(Math.min(100, unitsRequired + 1))}
-                  className="w-8 h-8 rounded-lg bg-white border border-slate-200 text-slate-700 flex items-center justify-center hover:bg-slate-50 transition-colors cursor-pointer"
-                  disabled={unitsRequired >= 100}
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                </button>
               </div>
 
               {/* Quick Select Buttons */}
@@ -634,348 +696,423 @@ export default function HospitalNewBloodRequestPage() {
               </div>
             </div>
             {errors.unitsRequired && (
-              <p className="text-[11px] text-rose-600 mt-1.5 font-medium">{errors.unitsRequired}</p>
+              <p className="text-[11px] text-[#A2363A] flex items-center gap-1 font-medium">
+                <AlertCircle className="w-3 h-3 shrink-0" />
+                <span>{errors.unitsRequired}</span>
+              </p>
             )}
           </div>
-        </div>
+        </section>
 
-        {/* SECTION 3: URGENCY & SCHEDULE */}
-        <div className="bg-white rounded-2xl border border-[#F3E9D1] p-5 sm:p-6 shadow-xs space-y-4">
-          <div className="border-b border-slate-100 pb-3 flex items-center justify-between">
-            <h2 className="font-serif text-base font-bold text-[#053845] flex items-center gap-2">
-              <Clock className="w-4 h-4 text-[#317786]" />
-              <span>3. Clinical Urgency & Schedule</span>
-            </h2>
-            <span className="text-[11px] text-slate-400 font-medium">* Set priority & required-by timeframe</span>
+        {/* SECTION 3: Urgency & Schedule */}
+        <section
+          id="section-urgency"
+          className="bg-white rounded-2xl border border-[#F3E9D1] shadow-2xs p-5 space-y-4"
+        >
+          <div className="flex items-center justify-between pb-3 border-b border-[#F3E9D1]/70">
+            <div className="flex items-center gap-2.5">
+              <span className="w-7 h-7 rounded-lg bg-[#317786]/10 text-[#317786] flex items-center justify-center font-bold text-xs shrink-0">
+                3
+              </span>
+              <h2 className="font-serif text-base font-bold text-[#053845]">
+                Urgency &amp; Schedule
+              </h2>
+            </div>
+            <span className="text-[11px] text-[#A2363A] font-medium">* Required</span>
           </div>
 
           {/* Urgency Level Cards */}
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-2">
-              Clinical Urgency Level <span className="text-rose-500">*</span>
-            </label>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {URGENCY_LEVELS.map((lvl) => (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            {URGENCY_LEVELS.map((u) => {
+              const isSelected = urgencyLevel === u.value;
+              return (
                 <button
-                  key={lvl.value}
                   type="button"
-                  onClick={() => handleUrgencyChange(lvl.value)}
-                  className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between gap-1.5 ${
-                    urgencyLevel === lvl.value
-                      ? `${lvl.badgeClass} ring-2 ring-current font-semibold shadow-xs`
-                      : "bg-white border-slate-200 text-slate-700 hover:bg-[#FAF6EE]/60"
+                  key={u.value}
+                  onClick={() => handleUrgencyChange(u.value)}
+                  className={`p-3.5 rounded-xl border text-left transition-colors cursor-pointer ${
+                    isSelected
+                      ? u.activeCardClass
+                      : "border-slate-200 bg-white hover:border-slate-300"
                   }`}
                 >
-                  <div className="flex items-center justify-between w-full">
-                    <span className="text-xs font-bold">{lvl.label}</span>
-                    {urgencyLevel === lvl.value && (
-                      <span className="w-2 h-2 rounded-full bg-current" />
+                  <div className="flex items-center justify-between gap-2">
+                    <span
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${u.badgeClass}`}
+                    >
+                      <span className={`w-1.5 h-1.5 rounded-full ${u.dotColor}`} />
+                      <span>{u.label}</span>
+                    </span>
+                    {isSelected && (
+                      <Check className="w-4 h-4 text-[#053845] shrink-0" />
                     )}
                   </div>
-                  <span className="text-[11px] opacity-80 leading-relaxed">{lvl.subtext}</span>
+                  <p className="text-[11px] text-slate-600 mt-1.5 leading-snug">
+                    {u.subtext}
+                  </p>
                 </button>
-              ))}
-            </div>
+              );
+            })}
           </div>
 
-          {/* Emergency Override Toggle */}
-          <div className="p-3.5 rounded-xl bg-amber-50/60 border border-amber-200/60 flex items-center justify-between gap-4">
-            <div className="flex items-center gap-2.5">
-              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-              <div>
-                <span className="block text-xs font-bold text-amber-900">Emergency Protocol Flag</span>
-                <span className="block text-[11px] text-amber-700">
-                  Activates immediate rapid notifications to compatible verified donors within proximity.
+          {/* Emergency Flag Checkbox */}
+          <div className="p-3 rounded-xl bg-[#fdf2f2]/70 border border-[#A2363A]/20 flex items-start gap-3">
+            <input
+              type="checkbox"
+              id="isEmergencyToggle"
+              checked={isEmergency}
+              onChange={(e) => setIsEmergency(e.target.checked)}
+              className="w-4 h-4 text-[#A2363A] rounded border-rose-300 focus:ring-rose-400 mt-0.5 cursor-pointer"
+            />
+            <label htmlFor="isEmergencyToggle" className="cursor-pointer">
+              <span className="text-xs font-semibold text-[#A2363A] block">
+                Flag as Immediate Critical Emergency
+              </span>
+              <span className="text-[11px] text-slate-600 block mt-0.5">
+                Activates high-priority push notifications and alerts nearby donors and blood banks immediately.
+              </span>
+            </label>
+          </div>
+
+          {/* Required By Date & Time with Pickers */}
+          <div className="space-y-2 pt-1" id="requiredByDate">
+            <div className="flex items-center justify-between">
+              <label className="flex items-center gap-1.5 text-xs font-semibold text-[#053845]">
+                <Calendar className="w-3.5 h-3.5 text-[#317786]" />
+                <span>
+                  Required By (Date &amp; Time) <span className="text-[#A2363A]">*</span>
                 </span>
-              </div>
-            </div>
-            <label className="relative inline-flex items-center cursor-pointer shrink-0">
-              <input
-                type="checkbox"
-                checked={isEmergency}
-                onChange={(e) => setIsEmergency(e.target.checked)}
-                className="sr-only peer"
-              />
-              <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#B94F30]"></div>
-            </label>
-          </div>
-
-          {/* Required By Date & Time */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
-            <div id="requiredByDate">
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Required By Date <span className="text-rose-500">*</span>
               </label>
-              <input
-                type="date"
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <SwastyaDatePicker
                 value={requiredByDate}
-                min={new Date().toISOString().split("T")[0]}
-                onChange={(e) => {
-                  setRequiredByDate(e.target.value);
-                  if (errors.requiredByDate) setErrors({ ...errors, requiredByDate: "" });
+                min={todayStr}
+                hasError={Boolean(errors.requiredByDate)}
+                onChange={(val) => {
+                  setRequiredByDate(val);
+                  if (errors.requiredByDate) {
+                    setErrors((prev) => ({ ...prev, requiredByDate: "" }));
+                  }
                 }}
-                className={`w-full px-3 py-2 text-xs rounded-xl border bg-[#FAF6EE]/40 focus:bg-white focus:outline-none focus:ring-2 transition-all ${
-                  errors.requiredByDate
-                    ? "border-rose-300 ring-2 ring-rose-100 text-rose-900"
-                    : "border-slate-200 focus:border-[#317786] focus:ring-[#317786]/20 text-slate-800"
-                }`}
               />
-              {errors.requiredByDate && (
-                <p className="text-[11px] text-rose-600 mt-1 font-medium">{errors.requiredByDate}</p>
-              )}
-            </div>
-
-            <div id="requiredByTime">
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Required By Time <span className="text-rose-500">*</span>
-              </label>
-              <input
-                type="time"
+              <SwastyaTimePicker
                 value={requiredByTime}
-                onChange={(e) => {
-                  setRequiredByTime(e.target.value);
-                  if (errors.requiredByTime) setErrors({ ...errors, requiredByTime: "" });
+                hasError={Boolean(errors.requiredByDate || errors.requiredByTime)}
+                onChange={(val) => {
+                  setRequiredByTime(val);
+                  if (errors.requiredByDate || errors.requiredByTime) {
+                    setErrors((prev) => ({
+                      ...prev,
+                      requiredByDate: "",
+                      requiredByTime: "",
+                    }));
+                  }
                 }}
-                className={`w-full px-3 py-2 text-xs rounded-xl border bg-[#FAF6EE]/40 focus:bg-white focus:outline-none focus:ring-2 transition-all ${
-                  errors.requiredByTime
-                    ? "border-rose-300 ring-2 ring-rose-100 text-rose-900"
-                    : "border-slate-200 focus:border-[#317786] focus:ring-[#317786]/20 text-slate-800"
-                }`}
               />
-              {errors.requiredByTime && (
-                <p className="text-[11px] text-rose-600 mt-1 font-medium">{errors.requiredByTime}</p>
-              )}
+            </div>
+            {errors.requiredByDate && (
+              <p className="text-[11px] text-[#A2363A] flex items-center gap-1 font-medium">
+                <AlertCircle className="w-3 h-3 shrink-0" />
+                <span>{errors.requiredByDate}</span>
+              </p>
+            )}
+
+            {/* Quick Schedule Presets */}
+            <div className="flex flex-wrap items-center gap-1.5 pt-1">
+              <span className="text-[11px] text-slate-500 font-medium mr-1">Quick Presets:</span>
+              <button
+                type="button"
+                onClick={() => applyTimePreset(2)}
+                className="px-2.5 py-1 rounded-lg bg-[#FAF6EE] border border-[#F3E9D1] text-[#053845] hover:bg-[#F3E9D1] text-[11px] font-semibold transition-colors cursor-pointer"
+              >
+                +2h
+              </button>
+              <button
+                type="button"
+                onClick={() => applyTimePreset(4)}
+                className="px-2.5 py-1 rounded-lg bg-[#FAF6EE] border border-[#F3E9D1] text-[#053845] hover:bg-[#F3E9D1] text-[11px] font-semibold transition-colors cursor-pointer"
+              >
+                +4h
+              </button>
+              <button
+                type="button"
+                onClick={() => applyTimePreset(12)}
+                className="px-2.5 py-1 rounded-lg bg-[#FAF6EE] border border-[#F3E9D1] text-[#053845] hover:bg-[#F3E9D1] text-[11px] font-semibold transition-colors cursor-pointer"
+              >
+                +12h
+              </button>
+              <button
+                type="button"
+                onClick={() => applyTimePreset(24)}
+                className="px-2.5 py-1 rounded-lg bg-[#FAF6EE] border border-[#F3E9D1] text-[#053845] hover:bg-[#F3E9D1] text-[11px] font-semibold transition-colors cursor-pointer"
+              >
+                +24h
+              </button>
+              <button
+                type="button"
+                onClick={() => applyTimePreset(48)}
+                className="px-2.5 py-1 rounded-lg bg-[#FAF6EE] border border-[#F3E9D1] text-[#053845] hover:bg-[#F3E9D1] text-[11px] font-semibold transition-colors cursor-pointer"
+              >
+                +48h
+              </button>
             </div>
           </div>
 
-          {/* Quick Schedule Presets */}
-          <div className="flex flex-wrap items-center gap-1.5 text-xs">
-            <span className="text-[11px] text-slate-500 font-medium mr-1">Quick Presets:</span>
-            <button
-              type="button"
-              onClick={() => applyTimePreset(2)}
-              className="px-2.5 py-1 rounded-lg bg-[#FAF6EE] border border-[#F3E9D1] text-[#053845] hover:bg-[#F3E9D1] text-[11px] font-semibold transition-colors cursor-pointer"
-            >
-              +2 Hours (Immediate)
-            </button>
-            <button
-              type="button"
-              onClick={() => applyTimePreset(4)}
-              className="px-2.5 py-1 rounded-lg bg-[#FAF6EE] border border-[#F3E9D1] text-[#053845] hover:bg-[#F3E9D1] text-[11px] font-semibold transition-colors cursor-pointer"
-            >
-              +4 Hours (Standard Urgent)
-            </button>
-            <button
-              type="button"
-              onClick={() => applyTimePreset(12)}
-              className="px-2.5 py-1 rounded-lg bg-[#FAF6EE] border border-[#F3E9D1] text-[#053845] hover:bg-[#F3E9D1] text-[11px] font-semibold transition-colors cursor-pointer"
-            >
-              +12 Hours (Next Shift)
-            </button>
-            <button
-              type="button"
-              onClick={() => applyTimePreset(24)}
-              className="px-2.5 py-1 rounded-lg bg-[#FAF6EE] border border-[#F3E9D1] text-[#053845] hover:bg-[#F3E9D1] text-[11px] font-semibold transition-colors cursor-pointer"
-            >
-              +24 Hours (Tomorrow)
-            </button>
-          </div>
-
-          {/* Search Radius */}
-          <div className="pt-2">
-            <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-              Donor Search Radius
-            </label>
-            <div className="flex flex-wrap items-center gap-2">
+          {/* Donor Search Radius */}
+          <div className="space-y-1.5 pt-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <label className="text-xs font-semibold text-[#053845]">
+                Donor Search Radius:{" "}
+                <span className="text-[#317786]">{searchRadius} km</span>
+              </label>
+              <span className="text-[11px] text-slate-500">
+                Recommended: 15 km in metropolitan districts
+              </span>
+            </div>
+            <div className="grid grid-cols-5 gap-1 p-1 rounded-xl bg-[#FAF6EE] border border-[#F3E9D1]">
               {SEARCH_RADII.map((r) => (
                 <button
-                  key={r}
                   type="button"
+                  key={r}
                   onClick={() => setSearchRadius(r)}
-                  className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                  className={`py-2 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
                     searchRadius === r
-                      ? "bg-[#053845] text-white border-[#053845] shadow-xs"
-                      : "bg-white text-slate-600 border-slate-200 hover:bg-[#FAF6EE]"
+                      ? "bg-[#317786] text-white shadow-2xs"
+                      : "text-slate-600 hover:text-[#053845]"
                   }`}
                 >
                   {r} km
                 </button>
               ))}
-              <span className="text-[11px] text-slate-400 ml-1">
-                (Radius around {hospital?.city || "hospital location"})
-              </span>
             </div>
           </div>
-        </div>
+        </section>
 
-        {/* SECTION 4: CLINICAL NOTES & DOCTOR DETAILS */}
-        <div className="bg-white rounded-2xl border border-[#F3E9D1] p-5 sm:p-6 shadow-xs space-y-4">
-          <div className="border-b border-slate-100 pb-3 flex items-center justify-between">
-            <h2 className="font-serif text-base font-bold text-[#053845] flex items-center gap-2">
-              <FileText className="w-4 h-4 text-[#317786]" />
-              <span>4. Clinical Notes & Attending Physician</span>
-            </h2>
-            <span className="text-[11px] text-slate-400 font-medium">Diagnostic context</span>
+        {/* SECTION 4: Additional Clinical Information */}
+        <section
+          id="section-clinical"
+          className="bg-white rounded-2xl border border-[#F3E9D1] shadow-2xs p-5 space-y-4"
+        >
+          <div className="flex items-center justify-between pb-3 border-b border-[#F3E9D1]/70">
+            <div className="flex items-center gap-2.5">
+              <span className="w-7 h-7 rounded-lg bg-[#317786]/10 text-[#317786] flex items-center justify-center font-bold text-xs shrink-0">
+                4
+              </span>
+              <h2 className="font-serif text-base font-bold text-[#053845]">
+                Additional Clinical Information
+              </h2>
+            </div>
+            <span className="text-[11px] text-slate-400 font-medium">Optional</span>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+            <div className="space-y-1">
+              <label className="block text-xs font-semibold text-[#053845]">
                 Attending Physician / Surgeon
               </label>
               <input
                 type="text"
                 value={attendingDoctor}
                 onChange={(e) => setAttendingDoctor(e.target.value)}
-                placeholder="e.g. Dr. Ananya Sharma (Cardiothoracic)"
-                className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 bg-[#FAF6EE]/40 focus:bg-white focus:outline-none focus:border-[#317786] focus:ring-2 focus:ring-[#317786]/20 text-slate-800"
+                placeholder="e.g., Dr. Ananya Sharma, MD"
+                className="w-full h-10 px-3.5 rounded-xl border border-slate-200 text-xs sm:text-sm bg-white focus:outline-none focus:border-[#317786] transition-colors"
               />
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
+            <div className="space-y-1">
+              <label className="block text-xs font-semibold text-[#053845]">
                 Clinical Indication / Diagnosis
               </label>
               <input
                 type="text"
                 value={clinicalNotes}
                 onChange={(e) => setClinicalNotes(e.target.value)}
-                placeholder="e.g. Pre-operative CABG surgery reserve / Acute G.I. bleeding"
-                className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 bg-[#FAF6EE]/40 focus:bg-white focus:outline-none focus:border-[#317786] focus:ring-2 focus:ring-[#317786]/20 text-slate-800"
+                placeholder="e.g., Pre-operative reserve / Acute hemorrhage"
+                className="w-full h-10 px-3.5 rounded-xl border border-slate-200 text-xs sm:text-sm bg-white focus:outline-none focus:border-[#317786] transition-colors"
               />
             </div>
           </div>
-        </div>
+        </section>
 
-        {/* Form Submission Bar */}
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-2">
+        {/* Form Actions Footer */}
+        <div className="bg-white rounded-2xl border border-[#F3E9D1] p-4 shadow-2xs flex flex-col sm:flex-row items-center justify-between gap-3">
           <Link
             href="/hospital/requests"
-            className="w-full sm:w-auto px-4 py-2.5 rounded-xl text-xs font-semibold text-slate-600 bg-white hover:bg-slate-50 border border-slate-200 transition-colors text-center"
+            className="w-full sm:w-auto px-5 py-2.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-[#FAF6EE] transition-colors text-center"
           >
-            Cancel & Return
+            Cancel
           </Link>
 
           <button
             type="submit"
-            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl text-xs font-bold text-white bg-[#053845] hover:bg-[#317786] transition-all shadow-md cursor-pointer"
+            className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-[#053845] hover:bg-[#317786] text-white text-xs sm:text-sm font-semibold shadow-2xs transition-colors flex items-center justify-center gap-2 cursor-pointer"
           >
-            <span>Review Requisition Details</span>
+            <span>Review Request</span>
             <ArrowRight className="w-4 h-4" />
           </button>
         </div>
       </form>
 
-      {/* REVIEW & CONFIRMATION MODAL */}
+      {/* Review Summary Modal */}
       {showReviewModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
-          <div className="bg-white rounded-2xl border border-[#F3E9D1] shadow-2xl max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-lg bg-[#FAF6EE] border border-[#F3E9D1] flex items-center justify-center text-[#B94F30]">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="reviewModalTitle"
+            className="bg-white rounded-2xl border border-[#F3E9D1] shadow-xl max-w-[700px] w-full max-h-[90vh] flex flex-col overflow-hidden"
+          >
+            {/* Header */}
+            <div className="px-5 py-4 border-b border-[#F3E9D1] flex items-center justify-between gap-3 shrink-0 bg-white">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-[#FAF6EE] border border-[#F3E9D1] flex items-center justify-center text-[#B94F30] shrink-0">
                   <Droplet className="w-4 h-4" />
                 </div>
                 <div>
-                  <h3 className="font-serif text-base font-bold text-[#053845]">
-                    Confirm Blood Requisition
+                  <h3
+                    id="reviewModalTitle"
+                    className="font-serif text-lg font-bold text-[#053845] leading-tight"
+                  >
+                    Confirm Blood Request
                   </h3>
-                  <p className="text-[11px] text-slate-500">
-                    Verify clinical particulars before broadcasting to donors
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Review the request details before submitting.
                   </p>
                 </div>
               </div>
               <button
                 type="button"
                 onClick={() => setShowReviewModal(false)}
-                className="text-slate-400 hover:text-slate-600 text-xs font-semibold p-1"
                 disabled={isSubmitting}
+                aria-label="Close review modal"
+                className="w-8 h-8 rounded-lg hover:bg-[#FAF6EE] text-slate-400 hover:text-[#053845] flex items-center justify-center transition-colors cursor-pointer disabled:opacity-50"
               >
-                &times;
+                <X className="w-4 h-4" />
               </button>
             </div>
 
-            {/* Summary Grid */}
-            <div className="bg-[#FAF6EE]/70 rounded-xl p-4 border border-[#F3E9D1] space-y-3 text-xs">
-              <div className="flex items-center justify-between border-b border-[#F3E9D1]/60 pb-2">
-                <span className="text-slate-500">Facility:</span>
-                <span className="font-bold text-[#053845]">{hospital?.hospitalname || "Hospital Facility"}</span>
+            {/* Modal Body */}
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 text-xs">
+              {/* Request Summary in Clean Two-Column Label/Value Layout with Subtle Dividers */}
+              <div className="bg-[#FAF6EE]/50 rounded-xl border border-[#F3E9D1] p-4 text-xs">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2">
+                  <div className="flex items-baseline justify-between py-1.5 border-b border-[#F3E9D1]/70">
+                    <span className="text-slate-500">Hospital / Facility</span>
+                    <span className="font-semibold text-[#053845] text-right truncate max-w-[190px]">
+                      {hospital?.hospitalname || "Registered Hospital"}
+                    </span>
+                  </div>
+
+                  <div className="flex items-baseline justify-between py-1.5 border-b border-[#F3E9D1]/70">
+                    <span className="text-slate-500">Patient Name</span>
+                    <span className="font-semibold text-[#053845] text-right truncate max-w-[190px]">
+                      {patientName}
+                    </span>
+                  </div>
+
+                  <div className="flex items-baseline justify-between py-1.5 border-b border-[#F3E9D1]/70">
+                    <span className="text-slate-500">Age and Gender</span>
+                    <span className="font-medium text-slate-700 text-right">
+                      {patientAge} yrs &bull; {patientGender === "MALE" ? "Male" : patientGender === "FEMALE" ? "Female" : patientGender || "—"}
+                    </span>
+                  </div>
+
+                  <div className="flex items-baseline justify-between py-1.5 border-b border-[#F3E9D1]/70">
+                    <span className="text-slate-500">Blood Group</span>
+                    <span className="font-bold font-serif text-[#B94F30] text-sm text-right">
+                      {mapBloodGroupToDisplay(bloodGroup)}
+                    </span>
+                  </div>
+
+                  <div className="flex items-baseline justify-between py-1.5 border-b border-[#F3E9D1]/70">
+                    <span className="text-slate-500">Blood Component</span>
+                    <span className="font-semibold text-[#053845] text-right">
+                      {mapBloodComponentToDisplay(bloodComponent)}
+                    </span>
+                  </div>
+
+                  <div className="flex items-baseline justify-between py-1.5 border-b border-[#F3E9D1]/70">
+                    <span className="text-slate-500">Units Required</span>
+                    <span className="font-semibold text-[#053845] text-right">
+                      {unitsRequired} {unitsRequired === 1 ? "unit" : "units"}
+                    </span>
+                  </div>
+
+                  <div className="flex items-baseline justify-between py-1.5 border-b border-[#F3E9D1]/70">
+                    <span className="text-slate-500">Urgency</span>
+                    <span className="text-right">
+                      {urgencyLevel === "CRITICAL" || isEmergency ? (
+                        <span className="inline-flex items-center gap-1.5 text-[#A2363A] font-semibold">
+                          <span className="w-1.5 h-1.5 rounded-full bg-[#A2363A]" />
+                          Critical Emergency
+                        </span>
+                      ) : (
+                        <span className="font-semibold text-[#053845]">
+                          {URGENCY_LEVELS.find((u) => u.value === urgencyLevel)?.label || urgencyLevel}
+                        </span>
+                      )}
+                    </span>
+                  </div>
+
+                  <div className="flex items-baseline justify-between py-1.5 border-b border-[#F3E9D1]/70">
+                    <span className="text-slate-500">Required Date and Time</span>
+                    <span className="font-medium text-slate-700 text-right">
+                      {requiredByDate} at {requiredByTime}
+                    </span>
+                  </div>
+
+                  <div className="flex items-baseline justify-between py-1.5 sm:col-span-2">
+                    <span className="text-slate-500">Donor Search Radius</span>
+                    <span className="font-medium text-slate-700 text-right">
+                      {searchRadius} km radius
+                    </span>
+                  </div>
+                </div>
               </div>
 
-              <div className="flex items-center justify-between border-b border-[#F3E9D1]/60 pb-2">
-                <span className="text-slate-500">Patient:</span>
-                <span className="font-semibold text-slate-800">
-                  {patientName} ({patientAge} yrs, {patientGender})
+              {/* Confirmation Notice */}
+              <div className="p-3 rounded-xl bg-[#FAF6EE] border border-[#F3E9D1] text-[11px] text-slate-600 flex items-center gap-2.5">
+                <ShieldCheck className="w-4 h-4 text-[#317786] shrink-0" />
+                <span>
+                  Confirming this request will make it available to compatible donors within the selected search radius.
                 </span>
               </div>
 
-              <div className="flex items-center justify-between border-b border-[#F3E9D1]/60 pb-2">
-                <span className="text-slate-500">Required Group:</span>
-                <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-white border border-[#F3E9D1] text-[#B94F30]">
-                  {bloodGroup.replace("_", "+").replace("POSITIVE", "+").replace("NEGATIVE", "-")}
-                </span>
-              </div>
-
-              <div className="flex items-center justify-between border-b border-[#F3E9D1]/60 pb-2">
-                <span className="text-slate-500">Component & Units:</span>
-                <span className="font-semibold text-slate-800">
-                  {unitsRequired} unit(s) of {bloodComponent.replace(/_/g, " ")}
-                </span>
-              </div>
-
-              <div className="flex items-center justify-between border-b border-[#F3E9D1]/60 pb-2">
-                <span className="text-slate-500">Urgency Level:</span>
-                <span className="font-bold text-rose-700 uppercase">
-                  {urgencyLevel} {isEmergency && "(Emergency Flag Active)"}
-                </span>
-              </div>
-
-              <div className="flex items-center justify-between border-b border-[#F3E9D1]/60 pb-2">
-                <span className="text-slate-500">Required By:</span>
-                <span className="font-semibold text-slate-800">
-                  {requiredByDate} at {requiredByTime}
-                </span>
-              </div>
-
-              <div className="flex items-center justify-between">
-                <span className="text-slate-500">Search Radius:</span>
-                <span className="font-semibold text-slate-800">{searchRadius} km regional radius</span>
-              </div>
+              {submitError && (
+                <div className="p-3 rounded-xl bg-[#fdf2f2] border border-[#A2363A]/30 text-xs text-[#A2363A] flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{submitError}</span>
+                </div>
+              )}
             </div>
 
-            {/* Clinical Warning */}
-            <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-800 flex items-start gap-2">
-              <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-              <span>
-                By confirming, this requisition will immediately appear on the Swastya donor network. Compatible donors in your regional search radius will be eligible to volunteer.
-              </span>
-            </div>
-
-            {/* Modal Actions */}
-            <div className="flex items-center justify-end gap-3 pt-2">
+            {/* Footer Buttons */}
+            <div className="px-5 py-3.5 border-t border-[#F3E9D1] bg-[#FAF6EE]/50 flex items-center justify-end gap-3 shrink-0">
               <button
                 type="button"
                 onClick={() => setShowReviewModal(false)}
                 disabled={isSubmitting}
-                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50"
+                className="px-4 py-2 rounded-xl border border-[#F3E9D1] bg-white text-xs font-semibold text-slate-600 hover:text-[#053845] hover:bg-[#FAF6EE] transition-colors cursor-pointer disabled:opacity-50"
               >
-                Modify Form
+                Back to Edit
               </button>
 
               <button
                 type="button"
                 onClick={handleFinalSubmit}
                 disabled={isSubmitting}
-                className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-[#053845] hover:bg-[#317786] transition-all shadow-md disabled:opacity-50 cursor-pointer"
+                className="px-5 py-2.5 rounded-xl bg-[#053845] hover:bg-[#317786] text-white text-xs font-semibold shadow-2xs transition-colors flex items-center gap-2 cursor-pointer disabled:opacity-60"
               >
                 {isSubmitting ? (
                   <>
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    <span>Broadcasting Requisition...</span>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Broadcasting...</span>
                   </>
                 ) : (
                   <>
-                    <Check className="w-3.5 h-3.5" />
-                    <span>Confirm & Broadcast Requisition</span>
+                    <Check className="w-4 h-4" />
+                    <span>Confirm &amp; Broadcast</span>
                   </>
                 )}
               </button>
