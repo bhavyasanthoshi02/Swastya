@@ -134,6 +134,11 @@ async function runE2EIntegrationTests() {
         hospBUser = hospBData.user;
         hospitalBRecord = hospBData.hospital;
 
+        await prisma.hospitals.updateMany({
+            where: { hospitalid: { in: [hospitalARecord.hospitalid, hospitalBRecord.hospitalid] } },
+            data: { approvalstatus: "APPROVED" },
+        });
+
         // 1d. Register Compatible Eligible Donor
         const regDonorRes = await fetch(`${API_BASE}/auth/register`, {
             method: "POST",
@@ -174,26 +179,31 @@ async function runE2EIntegrationTests() {
         assert(Boolean(legacyHospToken), "1h. Legacy unlinked hospital account provisioned");
 
         console.log("\n--- 2. Workflow Steps 1 & 2: Blood Requisition Creation & Initial Persistence ---");
+        const reqForm = new FormData();
+        reqForm.append("patientname", "Rajesh Sharma");
+        reqForm.append("patientage", "45");
+        reqForm.append("patientgender", "MALE");
+        reqForm.append("patientcontact", "9876543210");
+        reqForm.append("bloodgroup", "O_POSITIVE");
+        reqForm.append("bloodcomponent", "WHOLE_BLOOD");
+        reqForm.append("unitsrequired", "2");
+        reqForm.append("urgencylevel", "CRITICAL");
+        reqForm.append("isemergency", "true");
+        reqForm.append("requiredby", new Date(Date.now() + 86400000).toISOString());
+        reqForm.append("notes", "Emergency surgical requisition for cardiac care.");
+        reqForm.append("hospitalid", hospitalARecord.hospitalid);
+        reqForm.append(
+            "prescription",
+            new Blob([Buffer.from("%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n")], { type: "application/pdf" }),
+            "prescription.pdf"
+        );
+
         const createReqRes = await fetch(`${API_BASE}/bloodrequests`, {
             method: "POST",
             headers: {
-                "Content-Type": "application/json",
                 Authorization: `Bearer ${reqToken}`,
             },
-            body: JSON.stringify({
-                patientname: "Rajesh Sharma",
-                patientage: 45,
-                patientgender: "MALE",
-                patientcontact: "9876543210",
-                bloodgroup: "O_POSITIVE",
-                bloodcomponent: "WHOLE_BLOOD",
-                unitsrequired: 2,
-                urgencylevel: "CRITICAL",
-                isemergency: true,
-                requiredby: new Date(Date.now() + 86400000).toISOString(),
-                notes: "Emergency surgical requisition for cardiac care.",
-                hospitalid: hospitalARecord.hospitalid,
-            }),
+            body: reqForm,
         });
         const reqCreateData: any = await createReqRes.json();
         assert(createReqRes.status === 201, "2a. Requester created blood requisition (HTTP 201)");
@@ -249,6 +259,16 @@ async function runE2EIntegrationTests() {
             body: JSON.stringify({
                 estimatedArrival: "Within 45 minutes",
                 notes: "On my way to hospital blood center",
+                screeningAnswers: {
+                    drinksAlcohol: false,
+                    alcoholInPast24Hours: false,
+                    feelingHealthy: true,
+                    recentAntibioticsOrMedication: false,
+                    recentTattooOrSurgery: false,
+                    donatedInLast90Days: false,
+                    chronicIllness: false,
+                    isPregnantOrBreastfeeding: false,
+                },
             }),
         });
         const respondData: any = await respondRes.json();
@@ -262,7 +282,19 @@ async function runE2EIntegrationTests() {
                 "Content-Type": "application/json",
                 Authorization: `Bearer ${donorToken}`,
             },
-            body: JSON.stringify({ estimatedArrival: "1 hour" }),
+            body: JSON.stringify({
+                estimatedArrival: "1 hour",
+                screeningAnswers: {
+                    drinksAlcohol: false,
+                    alcoholInPast24Hours: false,
+                    feelingHealthy: true,
+                    recentAntibioticsOrMedication: false,
+                    recentTattooOrSurgery: false,
+                    donatedInLast90Days: false,
+                    chronicIllness: false,
+                    isPregnantOrBreastfeeding: false,
+                },
+            }),
         });
         assert(dupRespondRes.status === 400, "4e. Deduplication: Duplicate volunteer response rejected with HTTP 400");
 
@@ -302,6 +334,24 @@ async function runE2EIntegrationTests() {
         });
         assert(directFulfillRes.status === 400, "6d. Safety guard: Direct jump to FULFILLED rejected with HTTP 400");
 
+        // Authorized hospital verifies prescription before advancing to BLOOD_ARRANGED
+        const verifyRxRes = await fetch(`${API_BASE}/bloodrequests/${createdRequest.requestid}/prescription/verify`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${hospAToken}`,
+            },
+            body: JSON.stringify({
+                status: "VERIFIED",
+                remarks: "Clinical prescription verified by Hospital A",
+            }),
+        });
+        const verifyRxData: any = await verifyRxRes.json();
+        assert(
+            verifyRxRes.status === 200 && (verifyRxData.prescription?.status === "VERIFIED" || verifyRxData.status === "VERIFIED"),
+            "6d-rx. Hospital A verified clinical prescription (VERIFIED)"
+        );
+
         // Permitted progression: DONOR_MATCHING -> BLOOD_ARRANGED
         const arrangeRes = await fetch(`${API_BASE}/bloodrequests/${createdRequest.requestid}`, {
             method: "PUT",
@@ -319,7 +369,21 @@ async function runE2EIntegrationTests() {
         assert(arrangeRes.status === 200, "6e. Hospital advanced status to BLOOD_ARRANGED (HTTP 200)");
 
         console.log("\n--- 7. Workflow Step 9: Donor Transit Milestones Tracking ---");
-        // Donor updates transit: STARTED -> REACHED_LOCATION -> COMPLETED
+        // Requester accepts volunteer commitment before donor starts journey
+        const acceptVolRes = await fetch(
+            `${API_BASE}/bloodrequests/${createdRequest.requestid}/volunteers/${getReqData.volunteers[0].deliveryId}/decision`,
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${reqToken}`,
+                },
+                body: JSON.stringify({ decision: "ACCEPTED" }),
+            }
+        );
+        assert(acceptVolRes.status === 200, "7-accept. Requester accepted volunteer commitment before transit");
+
+        // Donor updates transit: STARTED -> REACHED_LOCATION; Hospital confirms COMPLETED
         const transitStart = await fetch(`${API_BASE}/bloodrequests/${createdRequest.requestid}/transit-status`, {
             method: "PATCH",
             headers: {
@@ -344,11 +408,11 @@ async function runE2EIntegrationTests() {
             method: "PATCH",
             headers: {
                 "Content-Type": "application/json",
-                Authorization: `Bearer ${donorToken}`,
+                Authorization: `Bearer ${hospAToken}`,
             },
-            body: JSON.stringify({ status: "COMPLETED" }),
+            body: JSON.stringify({ status: "COMPLETED", donorUserId: donorUser.userid }),
         });
-        assert(transitDone.status === 200, "7c. Donor transit updated to COMPLETED");
+        assert(transitDone.status === 200, "7c. Assigned hospital confirmed transit COMPLETED");
 
         console.log("\n--- 8. Workflow Step 10: Physical Transfusion Verification & Fulfillment ---");
         // Requester cannot fulfill
@@ -480,6 +544,8 @@ async function runE2EIntegrationTests() {
         try {
             if (createdRequest?.requestid) {
                 await prisma.notification.deleteMany({ where: { requestid: createdRequest.requestid } });
+                await prisma.donationhistory.deleteMany({ where: { requestid: createdRequest.requestid } });
+                await prisma.prescription.deleteMany({ where: { requestid: createdRequest.requestid } });
                 await prisma.requeststatushistory.deleteMany({ where: { requestid: createdRequest.requestid } });
                 await prisma.bloodrequests.delete({ where: { requestid: createdRequest.requestid } });
             }

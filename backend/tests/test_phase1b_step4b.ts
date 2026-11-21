@@ -427,7 +427,16 @@ async function runTests() {
         const res3 = await postJson(`/bloodrequests/${requestId}/respond`, donorToken, {
             contactPhone: "+919876543210",
             estimatedArrival: "1 hour",
-            screeningAnswers: { feelingHealthy: true },
+            screeningAnswers: {
+                drinksAlcohol: false,
+                alcoholInPast24Hours: false,
+                feelingHealthy: true,
+                recentAntibioticsOrMedication: false,
+                recentTattooOrSurgery: false,
+                donatedInLast90Days: false,
+                chronicIllness: false,
+                isPregnantOrBreastfeeding: false,
+            },
         });
 
         check(res3.status === 400, "3a. Donor response rejected with HTTP 400");
@@ -452,7 +461,16 @@ async function runTests() {
         const res4a = await postJson(`/bloodrequests/${requestId}/respond`, donorToken, {
             contactPhone: "+919876543210",
             estimatedArrival: "1 hour",
-            screeningAnswers: { feelingHealthy: true },
+            screeningAnswers: {
+                drinksAlcohol: false,
+                alcoholInPast24Hours: false,
+                feelingHealthy: true,
+                recentAntibioticsOrMedication: false,
+                recentTattooOrSurgery: false,
+                donatedInLast90Days: false,
+                chronicIllness: false,
+                isPregnantOrBreastfeeding: false,
+            },
         });
         check(res4a.status === 200, "4a. Donor response succeeds (HTTP 200)");
         check(state.request.status === "DONOR_MATCHING", "4b. Status advanced to DONOR_MATCHING");
@@ -477,7 +495,16 @@ async function runTests() {
         const res5 = await postJson(`/bloodrequests/${requestId}/respond`, donorToken, {
             contactPhone: "+919876543210",
             estimatedArrival: "1 hour",
-            screeningAnswers: { feelingHealthy: true },
+            screeningAnswers: {
+                drinksAlcohol: false,
+                alcoholInPast24Hours: false,
+                feelingHealthy: true,
+                recentAntibioticsOrMedication: false,
+                recentTattooOrSurgery: false,
+                donatedInLast90Days: false,
+                chronicIllness: false,
+                isPregnantOrBreastfeeding: false,
+            },
         });
 
         check(res5.status === 400, "5a. Donor response rejected on FULFILLED (HTTP 400)");
@@ -497,7 +524,16 @@ async function runTests() {
         const res6 = await postJson(`/bloodrequests/${requestId}/respond`, donorToken, {
             contactPhone: "+919876543210",
             estimatedArrival: "1 hour",
-            screeningAnswers: { feelingHealthy: true },
+            screeningAnswers: {
+                drinksAlcohol: false,
+                alcoholInPast24Hours: false,
+                feelingHealthy: true,
+                recentAntibioticsOrMedication: false,
+                recentTattooOrSurgery: false,
+                donatedInLast90Days: false,
+                chronicIllness: false,
+                isPregnantOrBreastfeeding: false,
+            },
         });
 
         check(res6.status === 400, "6a. Donor response rejected on EXPIRED (HTTP 400)");
@@ -517,7 +553,16 @@ async function runTests() {
         const res7 = await postJson(`/bloodrequests/${requestId}/respond`, donorToken, {
             contactPhone: "+919876543210",
             estimatedArrival: "1 hour",
-            screeningAnswers: { feelingHealthy: true },
+            screeningAnswers: {
+                drinksAlcohol: false,
+                alcoholInPast24Hours: false,
+                feelingHealthy: true,
+                recentAntibioticsOrMedication: false,
+                recentTattooOrSurgery: false,
+                donatedInLast90Days: false,
+                chronicIllness: false,
+                isPregnantOrBreastfeeding: false,
+            },
         });
 
         check(res7.status === 400, "7a. Donor response rejected on CANCELLED (HTTP 400)");
@@ -546,7 +591,16 @@ async function runTests() {
         const res8 = await postJson(`/bloodrequests/${requestId}/respond`, donorToken, {
             contactPhone: "+919876543210",
             estimatedArrival: "1 hour",
-            screeningAnswers: { feelingHealthy: true },
+            screeningAnswers: {
+                drinksAlcohol: false,
+                alcoholInPast24Hours: false,
+                feelingHealthy: true,
+                recentAntibioticsOrMedication: false,
+                recentTattooOrSurgery: false,
+                donatedInLast90Days: false,
+                chronicIllness: false,
+                isPregnantOrBreastfeeding: false,
+            },
         });
 
         check(res8.status === 400, "8a. Duplicate response rejected with HTTP 400");

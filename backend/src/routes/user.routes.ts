@@ -70,15 +70,41 @@ router.get("/me", authenticate, async (req: Request, res: Response) => {
 /**
  * GET ALL USERS (ADMIN ONLY)
  * GET /users
+ * Supports server-side pagination with default page=1, limit=20, max limit=100.
  */
-router.get("/", authenticate, authorize("ADMIN"), async (_req: Request, res: Response) => {
+router.get("/", authenticate, authorize("ADMIN"), async (req: Request, res: Response) => {
     try {
-        const users = await prisma.users.findMany({
-            select: SAFE_USER_SELECT,
-            orderBy: { createdat: "desc" },
-        });
+        const page = Math.max(1, parseInt(req.query.page as string) || 1);
+        const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 20));
+        const skip = (page - 1) * limit;
 
-        return res.status(200).json(users);
+        const role = req.query.role as string | undefined;
+        const whereClause: any = {};
+        if (role) {
+            whereClause.role = role;
+        }
+
+        const [users, total] = await Promise.all([
+            prisma.users.findMany({
+                where: whereClause,
+                select: SAFE_USER_SELECT,
+                orderBy: { createdat: "desc" },
+                skip,
+                take: limit,
+            }),
+            prisma.users.count({ where: whereClause }),
+        ]);
+
+        const totalPages = Math.ceil(total / limit);
+
+        return res.status(200).json({
+            success: true,
+            total,
+            page,
+            limit,
+            totalPages,
+            users,
+        });
     } catch (error) {
         console.error("Error fetching users:", error);
         return res.status(500).json({

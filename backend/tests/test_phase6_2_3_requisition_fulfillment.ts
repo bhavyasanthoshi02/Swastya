@@ -1,9 +1,17 @@
-import { prisma } from "../src/config/prisma";
-import { generateToken } from "../src/utils/jwt";
-import { blood_group, blood_component, user_role } from "../src/generated/prisma/enums";
-import app from "../src/app";
+import dotenv from "dotenv";
+import path from "path";
 import http from "http";
 import crypto from "crypto";
+
+dotenv.config({ path: path.resolve(__dirname, "../.env") });
+if (process.env.DATABASE_URL) {
+    process.env.DATABASE_URL = process.env.DATABASE_URL.replace(/\/Swastya(\?|$)/i, "/swastya_test$1");
+}
+
+import { generateToken } from "../src/utils/jwt";
+import { blood_group, blood_component, user_role } from "../src/generated/prisma/enums";
+const { prisma } = require("../src/config/prisma") as typeof import("../src/config/prisma");
+const app = (require("../src/app") as typeof import("../src/app")).default;
 
 let server: http.Server;
 let API_BASE = "";
@@ -97,44 +105,76 @@ async function runTestSuite() {
         });
     });
 
+    const createdRequestIds: string[] = [];
+    let createdHospitalId: string | null = null;
+
     try {
-        // 2. Fetch or create test blood bank and users
-        const bb = await prisma.bloodbanks.findFirst({
-            include: { users: true },
+        // 2. Self-seed isolated test blood bank, hospital, and clinical staff users
+        const timestamp = Date.now();
+        const runSuffix = `${timestamp}_${crypto.randomUUID().slice(0, 8)}`;
+
+        const bbUser = await prisma.users.create({
+            data: {
+                email: `bb_623_${runSuffix}@swastya.org`,
+                name: "Test Blood Bank 6.2.3",
+                password: "hashedpassword123",
+                role: user_role.BLOOD_BANK,
+            },
         });
-        if (!bb) {
-            throw new Error("No blood bank found in database. Seed data required.");
-        }
+        const bb = await prisma.bloodbanks.create({
+            data: {
+                userid: bbUser.userid,
+                bloodbankname: `Swastya Test Blood Bank ${runSuffix}`,
+                licensenumber: `LIC-623-${runSuffix}`,
+                contactpersonname: "Dr. Test Director",
+                contactpersonphone: "9876540001",
+                city: "Mumbai",
+                state: "Maharashtra",
+                address: "101 Clinical Test Wing",
+                pincode: "400001",
+                approvalstatus: "APPROVED",
+            },
+        });
         const bloodBankId = bb.bloodbankid;
-        const bbUser = bb.users;
         const bbToken = generateToken(bbUser.userid, user_role.BLOOD_BANK);
 
-        // Create two distinct clinical staff users for dual signoff
-        const timestamp = Date.now();
-        const tester = await prisma.users.create({
-            data: {
-                email: `tester_${timestamp}@swastya.org`,
-                name: "Clinical Lab Tester",
-                password: "hashedpassword123",
-                role: user_role.BLOOD_BANK,
-            },
-        });
+        // Use seeded bbUser (facility owner) as tester and a distinct active ADMIN user as verifier
+        const tester = bbUser;
         const verifier = await prisma.users.create({
             data: {
-                email: `verifier_${timestamp}@swastya.org`,
+                email: `verifier_${runSuffix}@swastya.org`,
                 name: "Quality Assurance Verifier",
                 password: "hashedpassword123",
-                role: user_role.BLOOD_BANK,
+                role: user_role.ADMIN,
+                isactive: true,
             },
         });
+        const verifierToken = generateToken(verifier.userid, user_role.ADMIN);
 
-        const hospitalUser = await prisma.users.findFirst({
-            where: { role: user_role.HOSPITAL },
+        const hospitalUser = await prisma.users.create({
+            data: {
+                email: `hosp_623_${runSuffix}@swastya.org`,
+                name: "Test Hospital 6.2.3",
+                password: "hashedpassword123",
+                role: user_role.HOSPITAL,
+            },
         });
-        const hospitalToken = generateToken(
-            hospitalUser ? hospitalUser.userid : bbUser.userid,
-            user_role.HOSPITAL
-        );
+        const hospital = await prisma.hospitals.create({
+            data: {
+                userid: hospitalUser.userid,
+                hospitalname: `Swastya Test Hospital ${runSuffix}`,
+                registrationnumber: `HOSP-623-${runSuffix}`,
+                contactpersonname: "Dr. Hospital Coordinator",
+                contactpersonphone: "9876540002",
+                city: "Mumbai",
+                state: "Maharashtra",
+                address: "202 Clinical Test Ave",
+                pincode: "400002",
+                approvalstatus: "APPROVED",
+            },
+        });
+        createdHospitalId = hospital.hospitalid;
+        const hospitalToken = generateToken(hospitalUser.userid, user_role.HOSPITAL);
 
         console.log("-------------------------------------------------------------------------------");
         console.log("TEST 1: TC-6.2.3-D01 Legacy Opening Balance Ledger Baseline & Isolation");
@@ -230,42 +270,61 @@ async function runTestSuite() {
             assert(err.message.includes("SAFETY VIOLATION"), "PostgreSQL trigger trg_enforce_unit_screening_clearance blocked un-screened clearance");
         }
 
-        // Test dual-signoff enforcement: tester cannot equal verifier
-        const invalidSignoffRes = await postJson(
+        // Test dual-signoff enforcement: client-supplied verifiedByUserId rejected, and tester cannot self-verify
+        const clientVerifierRes = await postJson(
             `/bloodbanks/${bloodBankId}/units/${u1Id}/screening`,
             bbToken,
             {
-                testedByUserId: tester.userid,
-                verifiedByUserId: tester.userid, // same user!
+                verifiedByUserId: verifier.userid,
                 hivResult: "NON_REACTIVE",
                 hbvResult: "NON_REACTIVE",
                 hcvResult: "NON_REACTIVE",
                 syphilisResult: "NON_REACTIVE",
-                malariaResult: "NEGATIVE",
+                malariaResult: "NON_REACTIVE",
                 overallStatus: "PASSED",
             }
         );
-        assert(invalidSignoffRes.status === 400, "Same user for tester & verifier rejected with 400");
-        assert(invalidSignoffRes.data.message.includes("distinct"), "Error message demands distinct personnel");
+        assert(clientVerifierRes.status === 403, "Client-supplied verifiedByUserId rejected with 403");
 
-        // Clear all 3 units with valid dual-signoff
+        // Clear all 3 units with valid two-step dual-signoff
         for (const uid of [u1Id, u2Id, u3Id]) {
-            const clearRes = await postJson(
+            const submitRes = await postJson(
                 `/bloodbanks/${bloodBankId}/units/${uid}/screening`,
                 bbToken,
                 {
-                    testedByUserId: tester.userid,
-                    verifiedByUserId: verifier.userid,
                     hivResult: "NON_REACTIVE",
                     hbvResult: "NON_REACTIVE",
                     hcvResult: "NON_REACTIVE",
                     syphilisResult: "NON_REACTIVE",
-                    malariaResult: "NEGATIVE",
+                    malariaResult: "NON_REACTIVE",
                     overallStatus: "PASSED",
                     laboratoryRemarks: "5-panel chemiluminescence assay non-reactive",
                 }
             );
-            assert(clearRes.status === 200, `Unit ${uid} screening clearance succeeded`);
+            assert(submitRes.status === 200, `Unit ${uid} screening submission succeeded`);
+            assert(submitRes.data.unitStatus === "QUARANTINED", `Unit ${uid} remains QUARANTINED pending verification`);
+
+            if (uid === u1Id) {
+                const selfVerifyRes = await postJson(
+                    `/bloodbanks/${bloodBankId}/units/${uid}/screening/verify`,
+                    bbToken,
+                    {}
+                );
+                assert(selfVerifyRes.status === 403, "Same user for tester & verifier rejected with 403");
+                assert(
+                    selfVerifyRes.data.message.includes("tester and verifier cannot be the same user"),
+                    "Error message demands distinct tester and verifier"
+                );
+            }
+
+            const clearRes = await postJson(
+                `/bloodbanks/${bloodBankId}/units/${uid}/screening/verify`,
+                verifierToken,
+                {
+                    screeningId: submitRes.data.screeningId,
+                }
+            );
+            assert(clearRes.status === 200, `Unit ${uid} screening verification clearance succeeded`);
             assert(clearRes.data.unitStatus === "AVAILABLE", `Unit ${uid} transitioned to AVAILABLE`);
         }
 
@@ -273,24 +332,32 @@ async function runTestSuite() {
         console.log("TEST 3: TC-6.2.3-D03 Screening Amendment & Superseded Record Revocation");
         console.log("-------------------------------------------------------------------------------");
         // Amend Unit 3 with a confirmatory reactive result
-        const amendRes = await postJson(
+        const amendSubmitRes = await postJson(
             `/bloodbanks/${bloodBankId}/units/${u3Id}/screening`,
             bbToken,
             {
-                testedByUserId: tester.userid,
-                verifiedByUserId: verifier.userid,
                 hivResult: "NON_REACTIVE",
                 hbvResult: "REACTIVE",
                 hcvResult: "NON_REACTIVE",
                 syphilisResult: "NON_REACTIVE",
-                malariaResult: "NEGATIVE",
+                malariaResult: "NON_REACTIVE",
                 overallStatus: "FAILED",
                 laboratoryRemarks: "Confirmatory EIA indicates HBV surface antigen reactivity",
             }
         );
-        assert(amendRes.status === 200, "Screening amendment recorded successfully");
-        assert(amendRes.data.revisionNumber === 2, "Screening revision incremented to 2");
-        assert(amendRes.data.unitStatus === "QUARANTINED", "Unit instantly revoked back to QUARANTINED");
+        assert(amendSubmitRes.status === 200, "Screening amendment submitted successfully");
+        assert(amendSubmitRes.data.revisionNumber === 2, "Screening revision incremented to 2");
+        assert(amendSubmitRes.data.unitStatus === "QUARANTINED", "Unit instantly revoked back to QUARANTINED");
+
+        const amendVerifyRes = await postJson(
+            `/bloodbanks/${bloodBankId}/units/${u3Id}/screening/verify`,
+            verifierToken,
+            {
+                screeningId: amendSubmitRes.data.screeningId,
+            }
+        );
+        assert(amendVerifyRes.status === 200, "Screening amendment verified successfully");
+        assert(amendVerifyRes.data.unitStatus === "QUARANTINED", "Verified FAILED unit remains QUARANTINED");
 
         // Verify screening history preserves both revisions
         const histRes = await getJson(`/bloodbanks/${bloodBankId}/units/${u3Id}/screening-history`, bbToken);
@@ -305,7 +372,8 @@ async function runTestSuite() {
         // Create a blood request for O+ RBC
         const bloodReq = await prisma.bloodrequests.create({
             data: {
-                createdbyuserid: hospitalUser ? hospitalUser.userid : bbUser.userid,
+                createdbyuserid: hospitalUser.userid,
+                hospitalid: hospital.hospitalid,
                 patientname: "Rahul Verma",
                 patientage: 45,
                 patientgender: "MALE",
@@ -318,6 +386,7 @@ async function runTestSuite() {
                 status: "VERIFIED",
             },
         });
+        createdRequestIds.push(bloodReq.requestid);
 
         // Assign to blood bank
         const assignRes = await postJson(`/bloodrequests/${bloodReq.requestid}/assign`, hospitalToken, {
@@ -559,22 +628,22 @@ async function runTestSuite() {
         );
         const cUnitId = cIntake.data.units[0].unitId;
 
-        // Screen unit to AVAILABLE
+        // Screen unit to AVAILABLE via two-step sign-off
         await postJson(`/bloodbanks/${bloodBankId}/units/${cUnitId}/screening`, bbToken, {
-            testedByUserId: tester.userid,
-            verifiedByUserId: verifier.userid,
             hivResult: "NON_REACTIVE",
             hbvResult: "NON_REACTIVE",
             hcvResult: "NON_REACTIVE",
             syphilisResult: "NON_REACTIVE",
-            malariaResult: "NEGATIVE",
+            malariaResult: "NON_REACTIVE",
             overallStatus: "PASSED",
         });
+        await postJson(`/bloodbanks/${bloodBankId}/units/${cUnitId}/screening/verify`, verifierToken, {});
 
         // Create two requests competing for the single unit
         const reqA = await prisma.bloodrequests.create({
             data: {
-                createdbyuserid: hospitalUser ? hospitalUser.userid : bbUser.userid,
+                createdbyuserid: hospitalUser.userid,
+                hospitalid: hospital.hospitalid,
                 patientname: "Competing Patient A",
                 patientage: 30,
                 patientgender: "FEMALE",
@@ -587,9 +656,11 @@ async function runTestSuite() {
                 status: "VERIFIED",
             },
         });
+        createdRequestIds.push(reqA.requestid);
         const reqB = await prisma.bloodrequests.create({
             data: {
-                createdbyuserid: hospitalUser ? hospitalUser.userid : bbUser.userid,
+                createdbyuserid: hospitalUser.userid,
+                hospitalid: hospital.hospitalid,
                 patientname: "Competing Patient B",
                 patientage: 32,
                 patientgender: "MALE",
@@ -602,6 +673,7 @@ async function runTestSuite() {
                 status: "VERIFIED",
             },
         });
+        createdRequestIds.push(reqB.requestid);
 
         const asgnA = await postJson(`/bloodrequests/${reqA.requestid}/assign`, hospitalToken, { bloodBankId });
         const asgnB = await postJson(`/bloodrequests/${reqB.requestid}/assign`, hospitalToken, { bloodBankId });
@@ -632,6 +704,38 @@ async function runTestSuite() {
         console.log(`  ALL ${passedTests} OF ${totalTests} SWASTYA PHASE 6.2.3 TEST ASSERTIONS PASSED!`);
         console.log("===============================================================================\n");
     } finally {
+        try {
+            // Clean up mutable records created by this test run in FK dependency order.
+            // Immutable records (inventoryledger, unitscreeningrecords) and their ON DELETE RESTRICT
+            // parents (inventoryunits, inventory, bloodbanks, actor users) are intentionally retained.
+            if (createdRequestIds.length > 0) {
+                await prisma.clinicalcrossmatches.deleteMany({
+                    where: { requestid: { in: createdRequestIds } },
+                });
+                await prisma.reservationitems.deleteMany({
+                    where: { reservation: { requestid: { in: createdRequestIds } } },
+                });
+                await prisma.bloodreservations.deleteMany({
+                    where: { requestid: { in: createdRequestIds } },
+                });
+                await prisma.requisitionassignments.deleteMany({
+                    where: { requestid: { in: createdRequestIds } },
+                });
+                await prisma.notification.deleteMany({
+                    where: { requestid: { in: createdRequestIds } },
+                });
+                await prisma.bloodrequests.deleteMany({
+                    where: { requestid: { in: createdRequestIds } },
+                });
+            }
+            if (createdHospitalId) {
+                await prisma.hospitals.deleteMany({
+                    where: { hospitalid: createdHospitalId },
+                });
+            }
+        } catch (cleanupErr) {
+            console.error("Cleanup warning:", cleanupErr);
+        }
         server.close();
     }
 }

@@ -1,9 +1,17 @@
+import dotenv from "dotenv";
+import path from "path";
 import http from "http";
 import crypto from "crypto";
 import bcrypt from "bcrypt";
-import app from "../src/app";
-import { prisma } from "../src/config/prisma";
+
+dotenv.config({ path: path.resolve(__dirname, "../.env") });
+if (process.env.DATABASE_URL) {
+    process.env.DATABASE_URL = process.env.DATABASE_URL.replace(/\/Swastya(\?|$)/i, "/swastya_test$1");
+}
+
 import { generateToken } from "../src/utils/jwt";
+const { prisma } = require("../src/config/prisma") as typeof import("../src/config/prisma");
+const app = (require("../src/app") as typeof import("../src/app")).default;
 import {
     user_role,
     blood_group,
@@ -302,19 +310,19 @@ async function runTests() {
         const bbSample = Array.isArray(pubBbs.data) ? pubBbs.data.find((b: any) => b.bloodbankid === bbA.bloodbankid) : null;
         assert(
             pubBbs.status === 200 &&
-                bbSample &&
-                bbSample.users === undefined &&
-                bbSample.licensenumber === undefined &&
-                bbSample.contactpersonphone === undefined,
+            bbSample &&
+            bbSample.users === undefined &&
+            bbSample.licensenumber === undefined &&
+            bbSample.contactpersonphone === undefined,
             "3d. GET /bloodbanks returns only safe public directory fields (no PII)"
         );
 
         const pubBbById = await reqJson("GET", `/bloodbanks/${bbA.bloodbankid}`);
         assert(
             pubBbById.status === 200 &&
-                pubBbById.data?.users === undefined &&
-                pubBbById.data?.licensenumber === undefined &&
-                pubBbById.data?.contactpersonphone === undefined,
+            pubBbById.data?.users === undefined &&
+            pubBbById.data?.licensenumber === undefined &&
+            pubBbById.data?.contactpersonphone === undefined,
             "3e. GET /bloodbanks/:id hides PII from unauthenticated callers"
         );
 
@@ -385,10 +393,11 @@ async function runTests() {
         assert(crossTransit.status === 403, "7. PATCH /bloodrequests/:id/transit-status rejects non-owner requester with 403", `got ${crossTransit.status}`);
 
         // 8. Clinical dual-sign-off separation of duties
-        const missingVerifier = await reqJson(
+        const clientSuppliedVerifier = await reqJson(
             "POST",
             `/bloodbanks/${bbB.bloodbankid}/units/${unitB.unitid}/screening`,
             {
+                verifiedByUserId: admin.userid,
                 hivResult: "NON_REACTIVE",
                 hbvResult: "NON_REACTIVE",
                 hcvResult: "NON_REACTIVE",
@@ -398,7 +407,7 @@ async function runTests() {
             },
             bbBToken
         );
-        assert(missingVerifier.status === 400, "8a. Clinical screening rejects missing verifiedByUserId with 400", `got ${missingVerifier.status}`);
+        assert(clientSuppliedVerifier.status === 403, "8a. Clinical screening rejects client-supplied verifiedByUserId with 403", `got ${clientSuppliedVerifier.status}`);
 
         const selfVerify = await reqJson(
             "POST",
@@ -419,18 +428,9 @@ async function runTests() {
 
         const donorVerifier = await reqJson(
             "POST",
-            `/bloodbanks/${bbB.bloodbankid}/units/${unitB.unitid}/screening`,
-            {
-                testedByUserId: bbUserB.userid,
-                verifiedByUserId: donorUserA.userid,
-                hivResult: "NON_REACTIVE",
-                hbvResult: "NON_REACTIVE",
-                hcvResult: "NON_REACTIVE",
-                syphilisResult: "NON_REACTIVE",
-                malariaResult: "NON_REACTIVE",
-                overallStatus: "PASSED",
-            },
-            bbBToken
+            `/bloodbanks/${bbB.bloodbankid}/units/${unitB.unitid}/screening/verify`,
+            {},
+            donorAToken
         );
         assert(donorVerifier.status === 403, "8c. Clinical screening rejects DONOR as clinical verifier with 403", `got ${donorVerifier.status}`);
 
@@ -450,7 +450,7 @@ async function runTests() {
         // Security headers check
         assert(
             unauthDonors.headers.get("x-content-type-options") === "nosniff" &&
-                unauthDonors.headers.get("x-frame-options") === "DENY",
+            unauthDonors.headers.get("x-frame-options") === "DENY",
             "10b. Security headers (X-Content-Type-Options, X-Frame-Options) present"
         );
 
@@ -587,9 +587,9 @@ async function runTests() {
         const verifierIds: string[] = (verifiersRes.data?.verifiers || []).map((v: any) => v.userid);
         assert(
             verifiersRes.status === 200 &&
-                verifierIds.includes(admin.userid) &&
-                !verifierIds.includes(bbUserB.userid) &&
-                !verifierIds.includes(donorUserA.userid),
+            verifierIds.includes(admin.userid) &&
+            !verifierIds.includes(bbUserB.userid) &&
+            !verifierIds.includes(donorUserA.userid),
             "13. GET /bloodbanks/:id/verifiers returns eligible active ADMIN/BLOOD_BANK verifiers excluding caller"
         );
 

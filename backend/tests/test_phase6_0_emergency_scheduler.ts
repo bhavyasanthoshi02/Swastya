@@ -687,6 +687,7 @@ async function runPhase6SchedulerTests() {
         assert(deliveryCount >= 1, "Broadcast deliveries are preserved independently");
 
         console.log("--- 17. Worker crash recovery handles abandoned processing jobs ---");
+        await prisma.emergencyschedulerjobs.deleteMany({ where: { requestid: req1.requestid } });
         const abandonedJob = await prisma.emergencyschedulerjobs.create({
             data: {
                 requestid: req1.requestid,

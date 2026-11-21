@@ -644,6 +644,10 @@ async function runTests() {
         // SCENARIO 6: Transit Milestone Progression on Persistent Commitments
         // =========================================================================
         console.log("\n--- Scenario 6: Transit Milestone Updates on Persistent Commitments ---");
+        const deliveryBeforeTransit = store.deliveries.get(initialDeliveryId);
+        if (deliveryBeforeTransit) {
+            deliveryBeforeTransit.acceptancestatus = "ACCEPTED";
+        }
         // 6a. STARTED
         const resStarted = await patchJson(`/bloodrequests/${emergencyRequestId}/transit-status`, hospitalToken, {
             status: "STARTED",

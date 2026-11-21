@@ -94,8 +94,8 @@ export async function migratePhase623UnitTraceability() {
             overallstatus VARCHAR(20) NOT NULL,
             testedat TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
             testedbyuserid UUID NOT NULL,
-            verifiedat TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            verifiedbyuserid UUID NOT NULL,
+            verifiedat TIMESTAMP(6),
+            verifiedbyuserid UUID,
             laboratoryremarks TEXT,
             createdat TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP,
 
@@ -108,7 +108,42 @@ export async function migratePhase623UnitTraceability() {
             CONSTRAINT fk_screening_supersededby FOREIGN KEY (supersededbyuserid)
                 REFERENCES users(userid) ON DELETE RESTRICT ON UPDATE NO ACTION,
             CONSTRAINT chk_screening_dual_signoff CHECK (testedbyuserid != verifiedbyuserid),
+            CONSTRAINT chk_screening_verification_pair CHECK ((verifiedbyuserid IS NULL AND verifiedat IS NULL) OR (verifiedbyuserid IS NOT NULL AND verifiedat IS NOT NULL)),
             CONSTRAINT chk_screening_overall CHECK (overallstatus IN ('PASSED', 'FAILED', 'INDETERMINATE')),
+            CONSTRAINT chk_screening_panel_values CHECK (
+                hivresult IN ('NON_REACTIVE', 'REACTIVE', 'INDETERMINATE') AND
+                hbvresult IN ('NON_REACTIVE', 'REACTIVE', 'INDETERMINATE') AND
+                hcvresult IN ('NON_REACTIVE', 'REACTIVE', 'INDETERMINATE') AND
+                syphilisresult IN ('NON_REACTIVE', 'REACTIVE', 'INDETERMINATE') AND
+                malariaresult IN ('NON_REACTIVE', 'REACTIVE', 'INDETERMINATE')
+            ),
+            CONSTRAINT chk_screening_overall_consistency CHECK (
+                (overallstatus = 'PASSED' AND
+                 hivresult = 'NON_REACTIVE' AND
+                 hbvresult = 'NON_REACTIVE' AND
+                 hcvresult = 'NON_REACTIVE' AND
+                 syphilisresult = 'NON_REACTIVE' AND
+                 malariaresult = 'NON_REACTIVE')
+                OR
+                (overallstatus = 'FAILED' AND (
+                 hivresult != 'NON_REACTIVE' OR
+                 hbvresult != 'NON_REACTIVE' OR
+                 hcvresult != 'NON_REACTIVE' OR
+                 syphilisresult != 'NON_REACTIVE' OR
+                 malariaresult != 'NON_REACTIVE'))
+                OR
+                (overallstatus = 'INDETERMINATE' AND
+                 hivresult != 'REACTIVE' AND
+                 hbvresult != 'REACTIVE' AND
+                 hcvresult != 'REACTIVE' AND
+                 syphilisresult != 'REACTIVE' AND
+                 malariaresult != 'REACTIVE' AND (
+                 hivresult = 'INDETERMINATE' OR
+                 hbvresult = 'INDETERMINATE' OR
+                 hcvresult = 'INDETERMINATE' OR
+                 syphilisresult = 'INDETERMINATE' OR
+                 malariaresult = 'INDETERMINATE'))
+            ),
             CONSTRAINT uq_unit_screening_revision UNIQUE (unitid, revisionnumber)
         );
     `);
@@ -297,15 +332,51 @@ export async function migratePhase623UnitTraceability() {
 
     console.log("Step 10: Installing Database Triggers for Clinical Safety & Integrity...");
 
-    // Trigger 1: Protect Screening Records (immutable, append-only, allow superseding updates only)
+    // Trigger 1: Protect Screening Records (immutable, append-only, allow verification and superseding updates only, block terminal/dispatched units)
     await prisma.$executeRawUnsafe(`
         CREATE OR REPLACE FUNCTION fn_protect_screening_records()
         RETURNS TRIGGER AS $$
+        DECLARE
+            v_unit inventoryunits%ROWTYPE;
         BEGIN
             IF (TG_OP = 'DELETE') THEN
                 RAISE EXCEPTION 'CLINICAL VIOLATION: Screening records are immutable and cannot be deleted.';
-            ELSIF (TG_OP = 'UPDATE') THEN
-                IF (OLD.iscurrent = true AND NEW.iscurrent = false AND NEW.supersededat IS NOT NULL) THEN
+            END IF;
+
+            SELECT * INTO v_unit FROM inventoryunits WHERE unitid = NEW.unitid;
+            IF NOT FOUND THEN
+                RAISE EXCEPTION 'CLINICAL VIOLATION: Target blood unit % not found.', NEW.unitid;
+            END IF;
+
+            IF (v_unit.status IN ('IN_TRANSIT', 'DELIVERED', 'DISCARDED')) THEN
+                RAISE EXCEPTION 'CLINICAL VIOLATION: Cannot create or modify screening records for unit % in % status.', v_unit.unitbarcode, v_unit.status;
+            END IF;
+
+            IF (TG_OP = 'UPDATE') THEN
+                IF (NEW.unitid IS DISTINCT FROM OLD.unitid OR
+                    NEW.revisionnumber IS DISTINCT FROM OLD.revisionnumber OR
+                    NEW.hivresult IS DISTINCT FROM OLD.hivresult OR
+                    NEW.hbvresult IS DISTINCT FROM OLD.hbvresult OR
+                    NEW.hcvresult IS DISTINCT FROM OLD.hcvresult OR
+                    NEW.syphilisresult IS DISTINCT FROM OLD.syphilisresult OR
+                    NEW.malariaresult IS DISTINCT FROM OLD.malariaresult OR
+                    NEW.overallstatus IS DISTINCT FROM OLD.overallstatus OR
+                    NEW.testedat IS DISTINCT FROM OLD.testedat OR
+                    NEW.testedbyuserid IS DISTINCT FROM OLD.testedbyuserid) THEN
+                    RAISE EXCEPTION 'CLINICAL VIOLATION: Screening results are immutable once recorded.';
+                END IF;
+
+                -- Transition 1: Independent second-person clinical verification of a pending current record
+                IF (OLD.iscurrent = true AND NEW.iscurrent = true AND
+                    OLD.verifiedbyuserid IS NULL AND OLD.verifiedat IS NULL AND
+                    NEW.verifiedbyuserid IS NOT NULL AND NEW.verifiedat IS NOT NULL AND
+                    NEW.supersededat IS NULL AND NEW.supersededbyuserid IS NULL) THEN
+                    RETURN NEW;
+                -- Transition 2: Superseding an existing current record with a newer revision
+                ELSIF (OLD.iscurrent = true AND NEW.iscurrent = false AND
+                       NEW.supersededat IS NOT NULL AND
+                       NEW.verifiedbyuserid IS NOT DISTINCT FROM OLD.verifiedbyuserid AND
+                       NEW.verifiedat IS NOT DISTINCT FROM OLD.verifiedat) THEN
                     RETURN NEW;
                 ELSE
                     RAISE EXCEPTION 'CLINICAL VIOLATION: Screening results are immutable once recorded.';
@@ -317,7 +388,7 @@ export async function migratePhase623UnitTraceability() {
 
         DROP TRIGGER IF EXISTS trg_protect_screening_records ON unitscreeningrecords;
         CREATE TRIGGER trg_protect_screening_records
-        BEFORE UPDATE OR DELETE ON unitscreeningrecords
+        BEFORE INSERT OR UPDATE OR DELETE ON unitscreeningrecords
         FOR EACH ROW EXECUTE FUNCTION fn_protect_screening_records();
     `);
     console.log("  [PASS] trg_protect_screening_records installed.");
@@ -329,7 +400,14 @@ export async function migratePhase623UnitTraceability() {
         DECLARE
             v_screening unitscreeningrecords%ROWTYPE;
         BEGIN
-            IF (NEW.status IN ('AVAILABLE', 'RESERVED')) THEN
+            IF (TG_OP = 'UPDATE' AND OLD.status IN ('IN_TRANSIT', 'DELIVERED', 'DISCARDED')) THEN
+                IF (NEW.currentscreeningid IS DISTINCT FROM OLD.currentscreeningid OR
+                    NEW.ttiscreeningstatus IS DISTINCT FROM OLD.ttiscreeningstatus) THEN
+                    RAISE EXCEPTION 'SAFETY VIOLATION: Cannot modify TTI screening state for unit % while in % status.', NEW.unitbarcode, OLD.status;
+                END IF;
+            END IF;
+
+            IF (NEW.status IN ('AVAILABLE', 'RESERVED') OR NEW.ttiscreeningstatus = 'PASSED') THEN
                 IF (NEW.currentscreeningid IS NULL) THEN
                     RAISE EXCEPTION 'SAFETY VIOLATION: Unit % cannot enter % status without an attached screening record.', NEW.unitbarcode, NEW.status;
                 END IF;
@@ -337,9 +415,27 @@ export async function migratePhase623UnitTraceability() {
                 SELECT * INTO v_screening 
                 FROM unitscreeningrecords 
                 WHERE screeningid = NEW.currentscreeningid;
+
+                IF NOT FOUND OR v_screening.unitid != NEW.unitid THEN
+                    RAISE EXCEPTION 'SAFETY VIOLATION: Attached screening record % does not belong to unit %.', NEW.currentscreeningid, NEW.unitbarcode;
+                END IF;
                 
                 IF (v_screening.iscurrent != true OR v_screening.overallstatus != 'PASSED') THEN
                     RAISE EXCEPTION 'SAFETY VIOLATION: Unit % screening status is %, not PASSED.', NEW.unitbarcode, v_screening.overallstatus;
+                END IF;
+
+                IF (v_screening.hivresult != 'NON_REACTIVE' OR
+                    v_screening.hbvresult != 'NON_REACTIVE' OR
+                    v_screening.hcvresult != 'NON_REACTIVE' OR
+                    v_screening.syphilisresult != 'NON_REACTIVE' OR
+                    v_screening.malariaresult != 'NON_REACTIVE') THEN
+                    RAISE EXCEPTION 'SAFETY VIOLATION: Unit % cannot be cleared unless all five TTI markers are NON_REACTIVE.', NEW.unitbarcode;
+                END IF;
+
+                IF (v_screening.verifiedbyuserid IS NULL OR
+                    v_screening.verifiedat IS NULL OR
+                    v_screening.verifiedbyuserid = v_screening.testedbyuserid) THEN
+                    RAISE EXCEPTION 'SAFETY VIOLATION: Unit % cannot be cleared without independent two-person clinical verification.', NEW.unitbarcode;
                 END IF;
             END IF;
             RETURN NEW;
@@ -348,7 +444,7 @@ export async function migratePhase623UnitTraceability() {
 
         DROP TRIGGER IF EXISTS trg_enforce_unit_screening_clearance ON inventoryunits;
         CREATE TRIGGER trg_enforce_unit_screening_clearance
-        BEFORE INSERT OR UPDATE OF status, currentscreeningid ON inventoryunits
+        BEFORE INSERT OR UPDATE OF status, currentscreeningid, ttiscreeningstatus ON inventoryunits
         FOR EACH ROW EXECUTE FUNCTION fn_enforce_unit_screening_clearance();
     `);
     console.log("  [PASS] trg_enforce_unit_screening_clearance installed.");

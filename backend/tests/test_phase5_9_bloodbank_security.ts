@@ -14,12 +14,20 @@
  * 10. Clean blood bank with no dependent records can be deleted by ADMIN.
  */
 
+import dotenv from "dotenv";
+import path from "path";
 import http from "node:http";
-import app from "../src/app";
-import { prisma } from "../src/config/prisma";
-import { generateToken } from "../src/utils/jwt";
 import bcrypt from "bcrypt";
+
+dotenv.config({ path: path.resolve(__dirname, "../.env") });
+if (process.env.DATABASE_URL) {
+    process.env.DATABASE_URL = process.env.DATABASE_URL.replace(/\/Swastya(\?|$)/i, "/swastya_test$1");
+}
+
+import { generateToken } from "../src/utils/jwt";
 import { approval_status, blood_group, blood_component, user_role } from "../src/generated/prisma/enums";
+const { prisma } = require("../src/config/prisma") as typeof import("../src/config/prisma");
+const app = (require("../src/app") as typeof import("../src/app")).default;
 
 let API_BASE = "http://127.0.0.1:5000";
 let server: http.Server | null = null;

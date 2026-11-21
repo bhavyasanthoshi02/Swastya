@@ -13,7 +13,24 @@ import notificationRoutes from "./routes/notification.routes";
 
 const app = express();
 app.disable("x-powered-by");
-app.set("trust proxy", 1);
+
+// F1 — Configure Express proxy trust only for explicitly configured trusted proxies
+const configuredTrustProxy = process.env.TRUST_PROXY;
+if (configuredTrustProxy !== undefined && configuredTrustProxy.trim() !== "") {
+    const trimmed = configuredTrustProxy.trim();
+    if (trimmed.toLowerCase() === "true") {
+        app.set("trust proxy", true);
+    } else if (trimmed.toLowerCase() === "false") {
+        app.set("trust proxy", false);
+    } else if (!isNaN(Number(trimmed))) {
+        app.set("trust proxy", Number(trimmed));
+    } else {
+        app.set("trust proxy", trimmed);
+    }
+} else {
+    // Unconditional trust proxy disabled: do not blindly trust client-supplied forwarded headers
+    app.set("trust proxy", false);
+}
 
 // Security headers (Helmet-equivalent baseline)
 app.use((_req: Request, res: Response, next: NextFunction) => {
@@ -26,16 +43,70 @@ app.use((_req: Request, res: Response, next: NextFunction) => {
     next();
 });
 
-// Lightweight in-memory sliding-window rate limiter for auth & upload endpoints
-function createRateLimiter(windowMs: number, maxRequests: number, label: string) {
+// F2 — Bounded in-memory sliding-window rate limiter with automatic expired entry pruning
+export interface RateLimiterOptions {
+    windowMs: number;
+    maxRequests: number;
+    label: string;
+    maxEntries?: number;
+}
+
+export function createRateLimiter(
+    windowMsOrOptions: number | RateLimiterOptions,
+    maxRequestsParam?: number,
+    labelParam?: string
+) {
+    const options: RateLimiterOptions =
+        typeof windowMsOrOptions === "number"
+            ? {
+                  windowMs: windowMsOrOptions,
+                  maxRequests: maxRequestsParam || 100,
+                  label: labelParam || "default",
+                  maxEntries: 10000,
+              }
+            : { maxEntries: 10000, ...windowMsOrOptions };
+
+    const { windowMs, maxRequests, label, maxEntries = 10000 } = options;
     const hits = new Map<string, { count: number; resetAt: number }>();
-    return (req: Request, res: Response, next: NextFunction) => {
+
+    // Bounded cleanup helper: purge expired entries
+    const pruneExpired = (now: number) => {
+        for (const [k, v] of hits.entries()) {
+            if (v.resetAt <= now) {
+                hits.delete(k);
+            }
+        }
+    };
+
+    // Periodic sweep that does not block Node process exit
+    const sweepTimer = setInterval(() => {
+        pruneExpired(Date.now());
+    }, Math.min(windowMs, 60000));
+    if (sweepTimer.unref) {
+        sweepTimer.unref();
+    }
+
+    const limiter = (req: Request, res: Response, next: NextFunction) => {
         if (process.env.DISABLE_RATE_LIMIT === "true") {
             return next();
         }
-        const ip = req.ip || req.socket.remoteAddress || "unknown";
+
+        const ip = req.ip || req.socket?.remoteAddress || "unknown";
         const key = `${label}:${ip}`;
         const now = Date.now();
+
+        // Enforce maximum capacity bounds to prevent memory exhaustion
+        if (!hits.has(key) && hits.size >= maxEntries) {
+            pruneExpired(now);
+            // If still full after pruning expired, evict oldest entry (FIFO)
+            if (hits.size >= maxEntries) {
+                const oldestKey = hits.keys().next().value;
+                if (oldestKey) {
+                    hits.delete(oldestKey);
+                }
+            }
+        }
+
         const entry = hits.get(key);
         if (!entry || entry.resetAt <= now) {
             hits.set(key, { count: 1, resetAt: now + windowMs });
@@ -43,6 +114,7 @@ function createRateLimiter(windowMs: number, maxRequests: number, label: string)
             res.setHeader("X-RateLimit-Remaining", String(Math.max(0, maxRequests - 1)));
             return next();
         }
+
         if (entry.count >= maxRequests) {
             const retryAfterSec = Math.max(1, Math.ceil((entry.resetAt - now) / 1000));
             res.setHeader("Retry-After", String(retryAfterSec));
@@ -53,32 +125,54 @@ function createRateLimiter(windowMs: number, maxRequests: number, label: string)
                 message: "Too many requests. Please try again later.",
             });
         }
+
         entry.count += 1;
         res.setHeader("X-RateLimit-Limit", String(maxRequests));
         res.setHeader("X-RateLimit-Remaining", String(Math.max(0, maxRequests - entry.count)));
         return next();
     };
+
+    (limiter as any).hits = hits;
+    (limiter as any).pruneExpired = pruneExpired;
+    (limiter as any).destroy = () => clearInterval(sweepTimer);
+
+    return limiter;
 }
 
 const authRateLimiter = createRateLimiter(15 * 60 * 1000, 100, "auth");
 const uploadRateLimiter = createRateLimiter(15 * 60 * 1000, 60, "upload");
 
-// Allowed origins: default development Next.js app + optional FRONTEND_URL env
-const configuredOrigin = process.env.FRONTEND_URL;
-const allowedOrigins = [
-    "http://localhost:3000",
-    "http://localhost:3001",
-    "http://localhost:3002",
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:3001",
-    ...(configuredOrigin ? configuredOrigin.split(",").map((o) => o.trim()) : [])
-];
+// F3 — Production CORS: exclude localhost in production, allow explicitly configured frontend origins only
+export function getAllowedOrigins(): string[] {
+    const isProduction = process.env.NODE_ENV === "production";
+    const configuredOrigin = process.env.FRONTEND_URL || process.env.ALLOWED_ORIGINS;
+    const prodOrigins = configuredOrigin
+        ? configuredOrigin.split(",").map((o) => o.trim()).filter(Boolean)
+        : [];
+
+    if (isProduction) {
+        return prodOrigins;
+    }
+
+    return [
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://localhost:3002",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:3001",
+        ...prodOrigins,
+    ];
+}
 
 app.use(
     cors({
         origin: (origin, callback) => {
             // Allow server-to-server or tools with no origin (e.g. mobile/curl/Postman)
-            if (!origin || allowedOrigins.includes(origin)) {
+            if (!origin) {
+                return callback(null, true);
+            }
+            const allowed = getAllowedOrigins();
+            if (allowed.includes(origin)) {
                 return callback(null, true);
             }
             return callback(new Error("CORS policy violation: Origin not allowed"));

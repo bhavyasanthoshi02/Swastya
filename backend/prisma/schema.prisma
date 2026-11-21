@@ -499,14 +499,14 @@ model unitscreeningrecords {
   overallstatus      String                 @db.VarChar(20)
   testedat           DateTime               @default(now()) @db.Timestamp(6)
   testedbyuserid     String                 @db.Uuid
-  verifiedat         DateTime               @default(now()) @db.Timestamp(6)
-  verifiedbyuserid   String                 @db.Uuid
+  verifiedat         DateTime?              @db.Timestamp(6)
+  verifiedbyuserid   String?                @db.Uuid
   laboratoryremarks  String?
   createdat          DateTime?              @default(now()) @db.Timestamp(6)
   unit               inventoryunits         @relation("UnitScreeningHistory", fields: [unitid], references: [unitid], onDelete: Restrict, onUpdate: NoAction, map: "fk_screening_unit")
   currentforunits    inventoryunits[]       @relation("UnitCurrentScreening")
   testedby           users                  @relation("ScreeningTestedBy", fields: [testedbyuserid], references: [userid], onDelete: Restrict, onUpdate: NoAction, map: "fk_screening_tester")
-  verifiedby         users                  @relation("ScreeningVerifiedBy", fields: [verifiedbyuserid], references: [userid], onDelete: Restrict, onUpdate: NoAction, map: "fk_screening_verifier")
+  verifiedby         users?                 @relation("ScreeningVerifiedBy", fields: [verifiedbyuserid], references: [userid], onDelete: Restrict, onUpdate: NoAction, map: "fk_screening_verifier")
   supersededby       users?                 @relation("ScreeningSupersededBy", fields: [supersededbyuserid], references: [userid], onDelete: Restrict, onUpdate: NoAction, map: "fk_screening_supersededby")
 
   @@unique([unitid, revisionnumber], map: "uq_unit_screening_revision")

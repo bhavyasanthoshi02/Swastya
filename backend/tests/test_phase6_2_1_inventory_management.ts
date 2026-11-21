@@ -1,9 +1,17 @@
-import { prisma } from "../src/config/prisma";
-import { generateToken } from "../src/utils/jwt";
-import { blood_group, blood_component } from "../src/generated/prisma/enums";
-import app from "../src/app";
+import dotenv from "dotenv";
+import path from "path";
 import http from "http";
 import crypto from "crypto";
+
+dotenv.config({ path: path.resolve(__dirname, "../.env") });
+if (process.env.DATABASE_URL) {
+    process.env.DATABASE_URL = process.env.DATABASE_URL.replace(/\/Swastya(\?|$)/i, "/swastya_test$1");
+}
+
+import { generateToken } from "../src/utils/jwt";
+import { blood_group, blood_component } from "../src/generated/prisma/enums";
+const { prisma } = require("../src/config/prisma") as typeof import("../src/config/prisma");
+const app = (require("../src/app") as typeof import("../src/app")).default;
 
 let server: http.Server;
 let API_BASE = "";
@@ -115,13 +123,13 @@ async function runPhase621InventoryTests() {
             const staleBBIds = staleBBs.map((b) => b.bloodbankid);
             if (staleBBIds.length > 0) {
                 // Disable trigger for cleanup
-                await prisma.$executeRawUnsafe(`ALTER TABLE inventoryledger DISABLE TRIGGER trg_prevent_ledger_update_delete;`).catch(() => {});
-                await prisma.inventoryledger.deleteMany({ where: { bloodbankid: { in: staleBBIds } } }).catch(() => {});
-                await prisma.inventory.deleteMany({ where: { bloodbankid: { in: staleBBIds } } }).catch(() => {});
-                await prisma.bloodbanks.deleteMany({ where: { bloodbankid: { in: staleBBIds } } }).catch(() => {});
-                await prisma.$executeRawUnsafe(`ALTER TABLE inventoryledger ENABLE TRIGGER trg_prevent_ledger_update_delete;`).catch(() => {});
+                await prisma.$executeRawUnsafe(`ALTER TABLE inventoryledger DISABLE TRIGGER trg_prevent_ledger_update_delete;`).catch(() => { });
+                await prisma.inventoryledger.deleteMany({ where: { bloodbankid: { in: staleBBIds } } }).catch(() => { });
+                await prisma.inventory.deleteMany({ where: { bloodbankid: { in: staleBBIds } } }).catch(() => { });
+                await prisma.bloodbanks.deleteMany({ where: { bloodbankid: { in: staleBBIds } } }).catch(() => { });
+                await prisma.$executeRawUnsafe(`ALTER TABLE inventoryledger ENABLE TRIGGER trg_prevent_ledger_update_delete;`).catch(() => { });
             }
-            await prisma.users.deleteMany({ where: { userid: { in: staleUserIds } } }).catch(() => {});
+            await prisma.users.deleteMany({ where: { userid: { in: staleUserIds } } }).catch(() => { });
         }
 
         // --- Setup Test Entities ---
@@ -636,16 +644,16 @@ async function runPhase621InventoryTests() {
     } finally {
         console.log("Cleaning up test records...");
         // Disable immutability trigger temporarily to clean up test-scoped records
-        await prisma.$executeRawUnsafe(`ALTER TABLE inventoryledger DISABLE TRIGGER trg_prevent_ledger_update_delete;`).catch(() => {});
+        await prisma.$executeRawUnsafe(`ALTER TABLE inventoryledger DISABLE TRIGGER trg_prevent_ledger_update_delete;`).catch(() => { });
         if (testBloodBankIds.length > 0) {
-            await prisma.inventoryledger.deleteMany({ where: { bloodbankid: { in: testBloodBankIds } } }).catch(() => {});
-            await prisma.inventory.deleteMany({ where: { bloodbankid: { in: testBloodBankIds } } }).catch(() => {});
-            await prisma.bloodbanks.deleteMany({ where: { bloodbankid: { in: testBloodBankIds } } }).catch(() => {});
+            await prisma.inventoryledger.deleteMany({ where: { bloodbankid: { in: testBloodBankIds } } }).catch(() => { });
+            await prisma.inventory.deleteMany({ where: { bloodbankid: { in: testBloodBankIds } } }).catch(() => { });
+            await prisma.bloodbanks.deleteMany({ where: { bloodbankid: { in: testBloodBankIds } } }).catch(() => { });
         }
-        await prisma.$executeRawUnsafe(`ALTER TABLE inventoryledger ENABLE TRIGGER trg_prevent_ledger_update_delete;`).catch(() => {});
+        await prisma.$executeRawUnsafe(`ALTER TABLE inventoryledger ENABLE TRIGGER trg_prevent_ledger_update_delete;`).catch(() => { });
 
         if (testUserIds.length > 0) {
-            await prisma.users.deleteMany({ where: { userid: { in: testUserIds } } }).catch(() => {});
+            await prisma.users.deleteMany({ where: { userid: { in: testUserIds } } }).catch(() => { });
         }
 
         if (server) {

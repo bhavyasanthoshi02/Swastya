@@ -4,6 +4,77 @@ import { authenticate } from "../middleware/auth.middleware";
 
 const router = Router();
 
+/**
+ * AUD-12: Sanitizes notification payloads to enforce patient privacy.
+ * Patient-identifying information is NEVER exposed before the request/delivery
+ * reaches an explicit ACCEPTED state.
+ * Even after ACCEPTED, only explicitly permitted fields (patientname, bloodgroup, urgencylevel, status)
+ * are exposed; patientcontact, registration identifiers, and prescription URLs remain hidden.
+ */
+export function sanitizeNotificationForResponse(n: any, callerUserId?: string) {
+    const title = n.title || "";
+
+    // Explicitly accepted notification titles
+    const isAcceptedTitle = title === "Your Donation Offer Was Accepted" ||
+                            title === "Blood Receipt Confirmed" ||
+                            title === "Donation Completed";
+
+    // Titles representing pre-acceptance states (broadcasts, pending reviews, offers, search expansion)
+    const isPreAcceptanceTitle = title.includes("EMERGENCY:") ||
+                                 title.includes("Broadcast") ||
+                                 title.includes("Requisition Received") ||
+                                 title.includes("Volunteer Response Confirmed") ||
+                                 title.includes("Volunteer Donor Matched") ||
+                                 title.includes("Donor Volunteered") ||
+                                 title.includes("Radius") ||
+                                 title.includes("Expired") ||
+                                 title.includes("Prescription") ||
+                                 title.includes("Not Selected") ||
+                                 title.includes("Pending");
+
+    const reqStatus = n.bloodrequests?.status;
+    const isAcceptedRequestStatus = reqStatus === "ACCEPTED" ||
+                                   reqStatus === "BLOOD_ARRANGED" ||
+                                   reqStatus === "FULFILLED";
+
+    const isAccepted = (isAcceptedTitle || isAcceptedRequestStatus) && !isPreAcceptanceTitle;
+
+    let cleanMessage = (n.message || "").replace(/<!--META:[\s\S]*?-->/g, "").trim();
+
+    if (!isAccepted) {
+        // Redact any patient name references from pre-acceptance or unaccepted notification messages
+        cleanMessage = cleanMessage
+            .replace(/\bfor patient\s+[^,()]+(?=\s*[(,]|\s+has|\s+was|\s+at|\s+by|\.|$)/gi, "")
+            .replace(/\bpatient\s+[^,()]+(?=\s*[(,]|\s+has|\s+was|\s+at|\s+by|\.|$)/gi, "")
+            .replace(/\s{2,}/g, " ")
+            .trim();
+    }
+
+    // Always strip URLs and sensitive contacts from notification messages to prevent leaks
+    cleanMessage = cleanMessage.replace(/https?:\/\/[^\s]+/gi, "[REDACTED_URL]");
+
+    let sanitizedRequest = undefined;
+    if (n.bloodrequests) {
+        sanitizedRequest = {
+            requestid: n.bloodrequests.requestid,
+            bloodgroup: n.bloodrequests.bloodgroup,
+            urgencylevel: n.bloodrequests.urgencylevel,
+            status: n.bloodrequests.status,
+            // patientname is ONLY included when explicitly in an ACCEPTED state
+            patientname: isAccepted ? (n.bloodrequests.patientname || null) : null,
+        };
+    }
+
+    const { bloodrequests, ...rest } = n;
+
+    return {
+        ...rest,
+        message: cleanMessage,
+        createdat: n.sentat,
+        ...(sanitizedRequest ? { bloodrequests: sanitizedRequest } : {}),
+    };
+}
+
 /*
  * GET NOTIFICATIONS
  * GET /notifications
@@ -60,11 +131,7 @@ router.get("/", authenticate, async (req: Request, res: Response) => {
             unreadCount,
             page,
             limit,
-            notifications: notifications.map((n) => ({
-                ...n,
-                message: n.message.replace(/<!--META:[\s\S]*?-->/g, "").trim(),
-                createdat: n.sentat,
-            })),
+            notifications: notifications.map((n) => sanitizeNotificationForResponse(n, user.userid)),
         });
     } catch (error) {
         console.error("Error fetching notifications:", error);
@@ -125,10 +192,7 @@ router.patch("/:id/read", authenticate, async (req: Request, res: Response) => {
         return res.status(200).json({
             success: true,
             message: "Notification marked as read",
-            notification: {
-                ...updated,
-                message: updated.message.replace(/<!--META:[\s\S]*?-->/g, "").trim(),
-            },
+            notification: sanitizeNotificationForResponse(updated, user.userid),
         });
     } catch (error) {
         console.error("Error updating notification:", error);

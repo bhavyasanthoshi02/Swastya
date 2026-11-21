@@ -1,10 +1,17 @@
-import "dotenv/config";
+import dotenv from "dotenv";
+import path from "path";
 import http from "http";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
-import app from "../src/app";
-import { prisma } from "../src/config/prisma";
+
+dotenv.config({ path: path.resolve(__dirname, "../.env") });
+if (process.env.DATABASE_URL) {
+    process.env.DATABASE_URL = process.env.DATABASE_URL.replace(/\/Swastya(\?|$)/i, "/swastya_test$1");
+}
+
 import { generateToken, getJwtSecret } from "../src/utils/jwt";
+const { prisma } = require("../src/config/prisma") as typeof import("../src/config/prisma");
+const app = (require("../src/app") as typeof import("../src/app")).default;
 
 let server: http.Server;
 let baseUrl = "";
@@ -377,7 +384,7 @@ async function runAuditTests() {
         // === PHASE 5: FOUR-PORTAL END-TO-END WORKFLOW + CLINICAL UPGRADE ===
         const screeningPayload = {
             estimatedArrival: "25 mins",
-            screening: {
+            screeningAnswers: {
                 drinksAlcohol: false,
                 alcoholInPast24Hours: false,
                 feelingHealthy: true,
@@ -450,7 +457,19 @@ async function runAuditTests() {
             `/bloodbanks/${bbA.bloodbankid}/units/${unitId}/screening`,
             {
                 testedByUserId: bbBUser.userid,
-                verifiedByUserId: adminUser.userid,
+                hivResult: "NON_REACTIVE",
+                hbvResult: "NON_REACTIVE",
+                hcvResult: "NON_REACTIVE",
+                syphilisResult: "NON_REACTIVE",
+                malariaResult: "NON_REACTIVE",
+                overallStatus: "PASSED",
+            },
+            bbAToken
+        );
+        const rValidScreenSubmit = await reqJson(
+            "POST",
+            `/bloodbanks/${bbA.bloodbankid}/units/${unitId}/screening`,
+            {
                 hivResult: "NON_REACTIVE",
                 hbvResult: "NON_REACTIVE",
                 hcvResult: "NON_REACTIVE",
@@ -462,18 +481,9 @@ async function runAuditTests() {
         );
         const rValidScreen = await reqJson(
             "POST",
-            `/bloodbanks/${bbA.bloodbankid}/units/${unitId}/screening`,
-            {
-                testedByUserId: bbAUser.userid,
-                verifiedByUserId: adminUser.userid,
-                hivResult: "NON_REACTIVE",
-                hbvResult: "NON_REACTIVE",
-                hcvResult: "NON_REACTIVE",
-                syphilisResult: "NON_REACTIVE",
-                malariaResult: "NON_REACTIVE",
-                overallStatus: "PASSED",
-            },
-            bbAToken
+            `/bloodbanks/${bbA.bloodbankid}/units/${unitId}/screening/verify`,
+            {},
+            adminToken
         );
         const rIncompatAlloc = await reqJson(
             "POST",
@@ -488,10 +498,11 @@ async function runAuditTests() {
                 rBBAAccept.status === 200 &&
                 rIntake.status === 201 &&
                 rForgedTester.status === 403 &&
+                rValidScreenSubmit.status === 200 &&
                 rValidScreen.status === 200 &&
                 rIncompatAlloc.status === 409,
             "14. Blood Bank assignment isolation, cross-facility tester forgery block (403), and incompatible specificUnitIds block (409)",
-            `assign=${rAssignBB.status} steal=${rBBBStealAssign.status} acc=${rBBAAccept.status} intake=${rIntake.status} forged=${rForgedTester.status} screen=${rValidScreen.status} incompat=${rIncompatAlloc.status}`
+            `assign=${rAssignBB.status} steal=${rBBBStealAssign.status} acc=${rBBAAccept.status} intake=${rIntake.status} forged=${rForgedTester.status} submit=${rValidScreenSubmit.status} screen=${rValidScreen.status} incompat=${rIncompatAlloc.status}`
         );
 
         console.log(`\n=== FOUR-PORTAL AUDIT TEST SUMMARY: ${passed}/${passed + failed} PASSED ===`);

@@ -115,6 +115,11 @@ async function runPhase56Tests() {
         hospBUser = hospBData.user;
         hospitalBRecord = hospBData.hospital;
 
+        await prisma.hospitals.updateMany({
+            where: { hospitalid: { in: [hospitalARecord.hospitalid, hospitalBRecord.hospitalid] } },
+            data: { approvalstatus: "APPROVED" },
+        });
+
         // 1c. Register Donor (O+ blood group)
         const regDonorRes = await fetch(`${API_BASE}/auth/register`, {
             method: "POST",
@@ -233,7 +238,7 @@ async function runPhase56Tests() {
         });
         assert(unlinkedHospRes.status === 403, "2d. Hospital user without linked profile rejected with HTTP 403");
         const unlinkedJson: any = await unlinkedHospRes.json();
-        assert(unlinkedJson.message.includes("Hospital profile not found"), "2e. Helpful message returned for unlinked profile");
+        assert(unlinkedJson.message.includes("Registered hospital profile required"), "2e. Helpful message returned for unlinked profile");
 
         // ---------------------------------------------------------------------------
         // 3. PAYLOAD VALIDATION TESTS

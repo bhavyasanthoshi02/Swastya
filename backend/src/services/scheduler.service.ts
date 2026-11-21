@@ -38,15 +38,39 @@ export interface ClaimedSchedulerJob {
 }
 
 /**
- * Sanitizes error messages to prevent leaking passwords, tokens, or connection strings into DB or logs.
+ * Sanitizes error messages to prevent leaking passwords, tokens, or database/Prisma internals into DB or logs.
  */
-export function sanitizeErrorMessage(msg: string): string {
-    if (!msg) return "Unknown error";
-    return msg
+export function sanitizeErrorMessage(msg: string | null | undefined): string {
+    if (!msg) return "UNKNOWN_ERROR";
+    const lower = String(msg).toLowerCase();
+    if (
+        lower.includes("prisma") ||
+        lower.includes("postgres") ||
+        lower.includes("select") ||
+        lower.includes("update") ||
+        lower.includes("insert") ||
+        lower.includes("delete") ||
+        lower.includes("relation") ||
+        lower.includes("table") ||
+        lower.includes("column") ||
+        lower.includes("database") ||
+        lower.includes("syntax error") ||
+        lower.includes("constraint") ||
+        lower.includes("uuid") ||
+        lower.includes("foreign key") ||
+        lower.includes("eacces") ||
+        lower.includes("econnrefused")
+    ) {
+        return "DATABASE_OPERATION_FAILED";
+    }
+    if (lower.includes("password") || lower.includes("bearer") || lower.includes("secret") || lower.includes("token")) {
+        return "AUTHENTICATION_FAILED";
+    }
+    return String(msg)
         .replace(/postgres(?:ql)?:\/\/[^\s@]+@[^\s/]+/gi, "postgresql://[REDACTED]")
         .replace(/Bearer\s+[A-Za-z0-9\-_.]+/gi, "Bearer [REDACTED]")
         .replace(/password\s*=\s*[^\s;]+/gi, "password=[REDACTED]")
-        .slice(0, 1000);
+        .slice(0, 500);
 }
 
 /**
@@ -76,18 +100,23 @@ async function createNotificationSafely(data: {
 }
 
 async function updateJobIfProcessing(jobId: string, data: Record<string, any>): Promise<boolean> {
-    if (typeof (prisma.emergencyschedulerjobs as any).updateMany === "function") {
-        const res = await prisma.emergencyschedulerjobs.updateMany({
-            where: { jobid: jobId, status: "PROCESSING" },
+    try {
+        if (typeof (prisma.emergencyschedulerjobs as any).updateMany === "function") {
+            const res = await prisma.emergencyschedulerjobs.updateMany({
+                where: { jobid: jobId, status: "PROCESSING" },
+                data,
+            });
+            return (res?.count ?? 0) > 0;
+        }
+        await prisma.emergencyschedulerjobs.update({
+            where: { jobid: jobId },
             data,
         });
-        return (res?.count ?? 0) > 0;
+        return true;
+    } catch (err: any) {
+        console.error("[EmergencyScheduler] Failed to update job state:", sanitizeErrorMessage(err?.message));
+        return false;
     }
-    await prisma.emergencyschedulerjobs.update({
-        where: { jobid: jobId },
-        data,
-    });
-    return true;
 }
 
 async function isJobStillProcessing(jobId: string): Promise<boolean> {
@@ -128,8 +157,31 @@ export async function scheduleEmergencyFollowUp(options: ScheduleJobOptions) {
         }
     }
 
+    // 1. Enforce at most one open follow-up job per request: return existing if PENDING or PROCESSING
+    const existingOpenJob = await prisma.emergencyschedulerjobs.findFirst({
+        where: {
+            requestid: requestId,
+            status: { in: ["PENDING", "PROCESSING"] },
+        },
+        orderBy: { scheduledfor: "asc" },
+    });
+    if (existingOpenJob) {
+        if (scheduledFor && scheduledFor.getTime() < existingOpenJob.scheduledfor.getTime()) {
+            const updated = await prisma.emergencyschedulerjobs.update({
+                where: { jobid: existingOpenJob.jobid },
+                data: {
+                    scheduledfor: scheduledFor,
+                    idempotencykey: idempotencyKey || existingOpenJob.idempotencykey,
+                },
+            });
+            return updated;
+        }
+        return existingOpenJob;
+    }
+
     const dueTime = scheduledFor ?? new Date(Date.now() + delayMinutes * 60 * 1000);
-    const key = idempotencyKey || `followup_${requestId}_${dueTime.getTime()}`;
+    // Stable per-request follow-up key
+    const key = idempotencyKey || `followup_${requestId}`;
 
     // Check for existing pending or processing job with the same idempotency key
     const existing = await prisma.emergencyschedulerjobs.findFirst({
@@ -157,8 +209,20 @@ export async function scheduleEmergencyFollowUp(options: ScheduleJobOptions) {
         });
         return job;
     } catch (err: any) {
-        // Handle race-condition duplicate key conflict gracefully
-        if (err?.code === "P2002" || err?.message?.includes("idempotencykey")) {
+        // Handle race-condition duplicate key or partial unique index (uq_open_scheduler_job_per_request) conflict gracefully
+        if (
+            err?.code === "P2002" ||
+            err?.message?.includes("idempotencykey") ||
+            err?.message?.includes("uq_open_scheduler_job_per_request")
+        ) {
+            const conflictOpen = await prisma.emergencyschedulerjobs.findFirst({
+                where: {
+                    requestid: requestId,
+                    status: { in: ["PENDING", "PROCESSING"] },
+                },
+            });
+            if (conflictOpen) return conflictOpen;
+
             const conflictExisting = await prisma.emergencyschedulerjobs.findUnique({
                 where: { idempotencykey: key },
             });
@@ -310,7 +374,7 @@ export async function executeFollowUpJob(job: ClaimedSchedulerJob): Promise<{
     }
 
     // 2. Terminal state check
-    const terminalStatuses = ["FULFILLED", "CANCELLED", "EXPIRED"];
+    const terminalStatuses = ["FULFILLED", "CANCELLED", "EXPIRED", "BLOOD_ARRANGED"];
     if (terminalStatuses.includes(request.status || "")) {
         await updateJobIfProcessing(job.jobid, {
             status: "CANCELLED",
@@ -333,6 +397,43 @@ export async function executeFollowUpJob(job: ClaimedSchedulerJob): Promise<{
             updatedat: new Date(),
         });
         return { status: "CANCELLED", details: "Request is no longer marked emergency or critical" };
+    }
+
+    // 3a. Recheck prescription status: block follow-up execution for REJECTED prescriptions
+    const rx = await prisma.prescription.findUnique({
+        where: { requestid: job.requestid },
+        select: { status: true },
+    });
+    if (rx?.status === "REJECTED") {
+        await updateJobIfProcessing(job.jobid, {
+            status: "CANCELLED",
+            lasterror: "PRESCRIPTION_REJECTED",
+            lockeduntil: null,
+            lockedby: null,
+            updatedat: new Date(),
+        });
+        return { status: "CANCELLED", details: "Prescription rejected by hospital; follow-up escalation cancelled." };
+    }
+
+    // 3b. Validate assigned hospital approval: if hospital is unapproved, cancel follow-up execution
+    if (request.hospitalid) {
+        const hosp = await prisma.hospitals.findUnique({
+            where: { hospitalid: request.hospitalid },
+            select: { approvalstatus: true },
+        });
+        if (!hosp || hosp.approvalstatus !== "APPROVED") {
+            await updateJobIfProcessing(job.jobid, {
+                status: "CANCELLED",
+                lasterror: "HOSPITAL_NOT_APPROVED",
+                lockeduntil: null,
+                lockedby: null,
+                updatedat: new Date(),
+            });
+            return {
+                status: "CANCELLED",
+                details: "Assigned hospital is not approved; follow-up escalation cancelled.",
+            };
+        }
     }
 
     // 4. Clinical Expiration check based on requiredby deadline
@@ -394,14 +495,15 @@ export async function executeFollowUpJob(job: ClaimedSchedulerJob): Promise<{
 
         if (expiryOutcome.expired) {
             const notifiedUserId = expiryOutcome.lockedReq?.createdbyuserid || request.createdbyuserid;
-            const patientName = expiryOutcome.lockedReq?.patientname || request.patientname;
+            const bloodGroup = expiryOutcome.lockedReq?.bloodgroup || request.bloodgroup;
+            const bloodComponent = expiryOutcome.lockedReq?.bloodcomponent || request.bloodcomponent || "Whole Blood";
 
             await createNotificationSafely({
                 userId: notifiedUserId,
                 requestId: request.requestid,
                 type: notification_type.REQUEST,
                 title: "Blood Requisition Expired",
-                message: `Blood requisition for patient ${patientName} has expired based on requiredBy deadline.`,
+                message: `Blood requisition for ${bloodGroup} (${bloodComponent}) has expired based on requiredBy deadline.`,
             });
 
             await updateJobIfProcessing(job.jobid, {
@@ -527,7 +629,7 @@ export async function executeFollowUpJob(job: ClaimedSchedulerJob): Promise<{
             requestId: request.requestid,
             type: notification_type.REQUEST,
             title: "Maximum Search Radius Reached",
-            message: `Emergency blood search for patient ${request.patientname} has reached the maximum 100 km radius. Insufficient responses received (${confirmedDeliveries.length}/${requiredUnits} confirmed pledges). Direct coordination with regional blood banks is recommended.`,
+            message: `Emergency blood search for ${request.bloodgroup} (${request.bloodcomponent || "Whole Blood"}) has reached the maximum 100 km radius. Insufficient responses received (${confirmedDeliveries.length}/${requiredUnits} confirmed pledges). Direct coordination with regional blood banks is recommended.`,
         });
 
         if (request.hospitals?.userid && request.hospitals.userid !== request.createdbyuserid) {
@@ -536,7 +638,7 @@ export async function executeFollowUpJob(job: ClaimedSchedulerJob): Promise<{
                 requestId: request.requestid,
                 type: notification_type.REQUEST,
                 title: "Maximum Search Radius Reached",
-                message: `Emergency blood search for patient ${request.patientname} has reached the maximum 100 km radius with insufficient responses.`,
+                message: `Emergency blood search for ${request.bloodgroup} (${request.bloodcomponent || "Whole Blood"}) has reached the maximum 100 km radius with insufficient responses.`,
             });
         }
 
@@ -557,6 +659,7 @@ export async function executeFollowUpJob(job: ClaimedSchedulerJob): Promise<{
         triggerReason: `Automatic follow-up escalation: search radius expanded from ${currentRadius} km to ${nextRadius} km`,
         radiusKm: nextRadius,
         expandRadius: true,
+        isWorkerEscalation: true,
     });
 
     if (!broadcastResult.success) {
@@ -640,7 +743,7 @@ export async function executeFollowUpJob(job: ClaimedSchedulerJob): Promise<{
         requestId: request.requestid,
         type: notification_type.REQUEST,
         title: "Emergency Radius Expanded",
-        message: `Search radius for patient ${request.patientname} was automatically expanded from ${currentRadius} km to ${nextRadius} km (${broadcastResult.totalNotified} new donor(s) notified).`,
+        message: `Search radius for ${request.bloodgroup} (${request.bloodcomponent || "Whole Blood"}) was automatically expanded from ${currentRadius} km to ${nextRadius} km (${broadcastResult.totalNotified} new donor(s) notified).`,
     });
 
     if (request.hospitals?.userid && request.hospitals.userid !== request.createdbyuserid) {
@@ -649,7 +752,7 @@ export async function executeFollowUpJob(job: ClaimedSchedulerJob): Promise<{
             requestId: request.requestid,
             type: notification_type.REQUEST,
             title: "Emergency Radius Expanded",
-            message: `Search radius for patient ${request.patientname} was automatically expanded to ${nextRadius} km.`,
+            message: `Search radius for ${request.bloodgroup} (${request.bloodcomponent || "Whole Blood"}) was automatically expanded to ${nextRadius} km.`,
         });
     }
 

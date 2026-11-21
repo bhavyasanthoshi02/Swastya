@@ -115,6 +115,11 @@ async function runPhase52CoordinationTests() {
         hospBUser = regHospBJson.user;
         hospitalBData = regHospBJson.hospital;
 
+        await prisma.hospitals.updateMany({
+            where: { hospitalid: { in: [hospitalAData.hospitalid, hospitalBData.hospitalid] } },
+            data: { approvalstatus: "APPROVED" },
+        });
+
         // 3. User with role HOSPITAL but without linked hospital profile
         unlinkedHospUser = await prisma.users.create({
             data: {
@@ -193,26 +198,31 @@ async function runPhase52CoordinationTests() {
         // =====================================================================
         console.log("--- Suite 1: Request Creation & Hospital Notification ---");
 
+        const reqForm1 = new FormData();
+        reqForm1.append("hospitalid", hospitalAData.hospitalid);
+        reqForm1.append("patientname", "Sunita Verma");
+        reqForm1.append("patientage", "42");
+        reqForm1.append("patientgender", "FEMALE");
+        reqForm1.append("patientcontact", "9876543210");
+        reqForm1.append("bloodgroup", "O_POSITIVE");
+        reqForm1.append("bloodcomponent", "WHOLE_BLOOD");
+        reqForm1.append("unitsrequired", "2");
+        reqForm1.append("urgencylevel", "HIGH");
+        reqForm1.append("isemergency", "true");
+        reqForm1.append("requiredby", new Date(Date.now() + 86400000).toISOString());
+        reqForm1.append("notes", "Emergency surgical admission at treating facility");
+        reqForm1.append(
+            "prescription",
+            new Blob([Buffer.from("%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n")], { type: "application/pdf" }),
+            "prescription.pdf"
+        );
+
         const createReqRes = await fetch(`${API_BASE}/bloodrequests`, {
             method: "POST",
             headers: {
-                "Content-Type": "application/json",
                 Authorization: `Bearer ${tokenReq}`,
             },
-            body: JSON.stringify({
-                hospitalid: hospitalAData.hospitalid,
-                patientname: "Sunita Verma",
-                patientage: 42,
-                patientgender: "FEMALE",
-                patientcontact: "9876543210",
-                bloodgroup: "O_POSITIVE",
-                bloodcomponent: "WHOLE_BLOOD",
-                unitsrequired: 2,
-                urgencylevel: "HIGH",
-                isemergency: true,
-                requiredby: new Date(Date.now() + 86400000).toISOString(),
-                notes: "Emergency surgical admission at treating facility",
-            }),
+            body: reqForm1,
         });
 
         assert(createReqRes.status === 201, `1a. Requester created blood request (Status: ${createReqRes.status})`);
@@ -278,7 +288,7 @@ async function runPhase52CoordinationTests() {
         });
         assert(unlinkedPutRes.status === 403, `2c. Unlinked hospital profile receives 403 (got ${unlinkedPutRes.status})`);
         const unlinkedJson = await unlinkedPutRes.json();
-        assert(unlinkedJson.message.includes("no hospital profile linked"), "2d. Error explains missing hospital profile link");
+        assert(unlinkedJson.message.includes("Registered hospital profile required"), "2d. Error explains missing hospital profile link");
 
         // 2e. Unrelated Hospital B attempting PUT on Hospital A's request -> 403
         const unrelatedPutRes = await fetch(`${API_BASE}/bloodrequests/${requestId1}`, {
@@ -357,6 +367,22 @@ async function runPhase52CoordinationTests() {
         const trans2Json = await trans2Res.json();
         assert(trans2Json.status === "DONOR_MATCHING", "3d. Status is now DONOR_MATCHING");
 
+        // Verify clinical prescription via authorized Hospital A before BLOOD_ARRANGED
+        const verifyRx1Res = await fetch(`${API_BASE}/bloodrequests/${requestId1}/prescription/verify`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${tokenHospA}`,
+            },
+            body: JSON.stringify({
+                status: "VERIFIED",
+                remarks: "Clinical prescription verified by Hospital A",
+            }),
+        });
+        assert(verifyRx1Res.status === 200, "3d-rx. Hospital A verified prescription (HTTP 200)");
+        const verifyRx1Json = await verifyRx1Res.json();
+        assert(verifyRx1Json.prescription?.status === "VERIFIED" || verifyRx1Json.status === "VERIFIED", "3d-rx2. Prescription status is VERIFIED");
+
         // Step 3: DONOR_MATCHING -> BLOOD_ARRANGED
         const trans3Res = await fetch(`${API_BASE}/bloodrequests/${requestId1}`, {
             method: "PUT",
@@ -394,33 +420,35 @@ async function runPhase52CoordinationTests() {
             where: { requestid: requestId1 },
             orderBy: { changedat: "asc" },
         });
-        assert(fullHistory.length === 6, `3i. Exactly 6 history entries recorded (got ${fullHistory.length})`);
-        assert(fullHistory[5].newstatus === "FULFILLED", "3j. Final history step is FULFILLED");
+        assert(fullHistory.length === 7, `3i. Exactly 7 history entries recorded (got ${fullHistory.length})`);
+        assert(fullHistory[fullHistory.length - 1].newstatus === "FULFILLED", "3j. Final history step is FULFILLED");
 
         // =====================================================================
         // SUITE 4: INVALID STATUS TRANSITIONS & DIRECT JUMPS
         // =====================================================================
         console.log("\n--- Suite 4: Invalid Status Transitions & Direct Jumps ---");
 
-        // Create fresh request 2 for invalid transition testing
+        // Create fresh request 2 for invalid transition testing (with mandatory prescription upload)
+        const reqForm2 = new FormData();
+        reqForm2.append("hospitalid", hospitalAData.hospitalid);
+        reqForm2.append("patientname", "Ramesh Gupta");
+        reqForm2.append("patientage", "55");
+        reqForm2.append("patientgender", "MALE");
+        reqForm2.append("patientcontact", "9876543211");
+        reqForm2.append("bloodgroup", "O_POSITIVE");
+        reqForm2.append("bloodcomponent", "WHOLE_BLOOD");
+        reqForm2.append("unitsrequired", "1");
+        reqForm2.append("urgencylevel", "MEDIUM");
+        reqForm2.append("requiredby", new Date(Date.now() + 86400000).toISOString());
+        reqForm2.append(
+            "prescription",
+            new Blob([Buffer.from("%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n")], { type: "application/pdf" }),
+            "prescription2.pdf"
+        );
         const req2Res = await fetch(`${API_BASE}/bloodrequests`, {
             method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${tokenReq}`,
-            },
-            body: JSON.stringify({
-                hospitalid: hospitalAData.hospitalid,
-                patientname: "Ramesh Gupta",
-                patientage: 55,
-                patientgender: "MALE",
-                patientcontact: "9876543211",
-                bloodgroup: "O_POSITIVE",
-                bloodcomponent: "WHOLE_BLOOD",
-                unitsrequired: 1,
-                urgencylevel: "MEDIUM",
-                requiredby: new Date(Date.now() + 86400000).toISOString(),
-            }),
+            headers: { Authorization: `Bearer ${tokenReq}` },
+            body: reqForm2,
         });
         const req2Data = await req2Res.json();
         const requestId2 = req2Data.requestid;
@@ -519,31 +547,38 @@ async function runPhase52CoordinationTests() {
         // =====================================================================
         console.log("\n--- Suite 6: Fulfillment Authorization Guard ---");
 
-        // Create fresh request 3
+        // Create fresh request 3 (with mandatory prescription upload)
+        const reqForm3 = new FormData();
+        reqForm3.append("hospitalid", hospitalAData.hospitalid);
+        reqForm3.append("patientname", "Kavita Nair");
+        reqForm3.append("patientage", "28");
+        reqForm3.append("patientgender", "FEMALE");
+        reqForm3.append("patientcontact", "9876543212");
+        reqForm3.append("bloodgroup", "O_POSITIVE");
+        reqForm3.append("bloodcomponent", "WHOLE_BLOOD");
+        reqForm3.append("unitsrequired", "1");
+        reqForm3.append("urgencylevel", "HIGH");
+        reqForm3.append("requiredby", new Date(Date.now() + 86400000).toISOString());
+        reqForm3.append(
+            "prescription",
+            new Blob([Buffer.from("%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n")], { type: "application/pdf" }),
+            "prescription3.pdf"
+        );
         const req3Res = await fetch(`${API_BASE}/bloodrequests`, {
             method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${tokenReq}`,
-            },
-            body: JSON.stringify({
-                hospitalid: hospitalAData.hospitalid,
-                patientname: "Kavita Nair",
-                patientage: 28,
-                patientgender: "FEMALE",
-                patientcontact: "9876543212",
-                bloodgroup: "O_POSITIVE",
-                bloodcomponent: "WHOLE_BLOOD",
-                unitsrequired: 1,
-                urgencylevel: "HIGH",
-                requiredby: new Date(Date.now() + 86400000).toISOString(),
-            }),
+            headers: { Authorization: `Bearer ${tokenReq}` },
+            body: reqForm3,
         });
         const req3Data = await req3Res.json();
         const requestId3 = req3Data.requestid;
         createdRequestIds.push(requestId3);
 
-        // Advance requestId3 to BLOOD_ARRANGED via Hospital A
+        // Verify prescription & advance requestId3 to BLOOD_ARRANGED via Hospital A
+        await fetch(`${API_BASE}/bloodrequests/${requestId3}/prescription/verify`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokenHospA}` },
+            body: JSON.stringify({ status: "VERIFIED", remarks: "Verified for Suite 6" }),
+        });
         await fetch(`${API_BASE}/bloodrequests/${requestId3}`, {
             method: "PUT",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokenHospA}` },
@@ -612,25 +647,27 @@ async function runPhase52CoordinationTests() {
         // =====================================================================
         console.log("\n--- Suite 7: Atomic History Logging & No-Op Updates ---");
 
-        // Create fresh request 4
+        // Create fresh request 4 (with mandatory prescription upload)
+        const reqForm4 = new FormData();
+        reqForm4.append("hospitalid", hospitalAData.hospitalid);
+        reqForm4.append("patientname", "Meera Sen");
+        reqForm4.append("patientage", "34");
+        reqForm4.append("patientgender", "FEMALE");
+        reqForm4.append("patientcontact", "9876543213");
+        reqForm4.append("bloodgroup", "O_POSITIVE");
+        reqForm4.append("bloodcomponent", "WHOLE_BLOOD");
+        reqForm4.append("unitsrequired", "1");
+        reqForm4.append("urgencylevel", "LOW");
+        reqForm4.append("requiredby", new Date(Date.now() + 86400000).toISOString());
+        reqForm4.append(
+            "prescription",
+            new Blob([Buffer.from("%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n")], { type: "application/pdf" }),
+            "prescription4.pdf"
+        );
         const req4Res = await fetch(`${API_BASE}/bloodrequests`, {
             method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${tokenReq}`,
-            },
-            body: JSON.stringify({
-                hospitalid: hospitalAData.hospitalid,
-                patientname: "Meera Sen",
-                patientage: 34,
-                patientgender: "FEMALE",
-                patientcontact: "9876543213",
-                bloodgroup: "O_POSITIVE",
-                bloodcomponent: "WHOLE_BLOOD",
-                unitsrequired: 1,
-                urgencylevel: "LOW",
-                requiredby: new Date(Date.now() + 86400000).toISOString(),
-            }),
+            headers: { Authorization: `Bearer ${tokenReq}` },
+            body: reqForm4,
         });
         const req4Data = await req4Res.json();
         const requestId4 = req4Data.requestid;
@@ -676,25 +713,27 @@ async function runPhase52CoordinationTests() {
         // =====================================================================
         console.log("\n--- Suite 8: Donor Response Workflow & Hospital Notifications ---");
 
-        // Create fresh request 5 assigned to Hospital A
+        // Create fresh request 5 assigned to Hospital A (with mandatory prescription upload)
+        const reqForm5 = new FormData();
+        reqForm5.append("hospitalid", hospitalAData.hospitalid);
+        reqForm5.append("patientname", "Vikram Malhotra");
+        reqForm5.append("patientage", "50");
+        reqForm5.append("patientgender", "MALE");
+        reqForm5.append("patientcontact", "9876543214");
+        reqForm5.append("bloodgroup", "O_POSITIVE");
+        reqForm5.append("bloodcomponent", "WHOLE_BLOOD");
+        reqForm5.append("unitsrequired", "1");
+        reqForm5.append("urgencylevel", "HIGH");
+        reqForm5.append("requiredby", new Date(Date.now() + 86400000).toISOString());
+        reqForm5.append(
+            "prescription",
+            new Blob([Buffer.from("%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n")], { type: "application/pdf" }),
+            "prescription5.pdf"
+        );
         const req5Res = await fetch(`${API_BASE}/bloodrequests`, {
             method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${tokenReq}`,
-            },
-            body: JSON.stringify({
-                hospitalid: hospitalAData.hospitalid,
-                patientname: "Vikram Malhotra",
-                patientage: 50,
-                patientgender: "MALE",
-                patientcontact: "9876543214",
-                bloodgroup: "O_POSITIVE",
-                bloodcomponent: "WHOLE_BLOOD",
-                unitsrequired: 1,
-                urgencylevel: "HIGH",
-                requiredby: new Date(Date.now() + 86400000).toISOString(),
-            }),
+            headers: { Authorization: `Bearer ${tokenReq}` },
+            body: reqForm5,
         });
         const req5Data = await req5Res.json();
         const requestId5 = req5Data.requestid;
@@ -764,6 +803,24 @@ async function runPhase52CoordinationTests() {
         assert(req5History.length === 2, "8i. History logged for DONOR_MATCHING transition (total 2 entries)");
         assert(req5History[0].oldstatus === "CREATED" && req5History[0].newstatus === "DONOR_MATCHING", "8j. Correct old/new status in history");
 
+        // Hospital A verifies prescription & Requester accepts donor commitment before transit
+        await fetch(`${API_BASE}/bloodrequests/${requestId5}/prescription/verify`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokenHospA}` },
+            body: JSON.stringify({ status: "VERIFIED", remarks: "Verified for Suite 8" }),
+        });
+        const req5Delivery = await prisma.broadcastdeliveries.findFirst({
+            where: { requestid: requestId5, donorid: donorData.donorid },
+        });
+        await fetch(
+            `${API_BASE}/bloodrequests/${requestId5}/volunteers/${req5Delivery!.deliveryid}/decision`,
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokenReq}` },
+                body: JSON.stringify({ decision: "ACCEPTED" }),
+            }
+        );
+
         // Test transit status updates
         // Donor starts journey
         const startTransitRes = await fetch(`${API_BASE}/bloodrequests/${requestId5}/transit-status`, {
@@ -787,16 +844,16 @@ async function runPhase52CoordinationTests() {
         });
         assert(reachTransitRes.status === 200, "8l. Donor updated transit to REACHED_LOCATION");
 
-        // Complete donation via transit-status
+        // Assigned hospital confirms donation COMPLETED via transit-status
         const completeTransitRes = await fetch(`${API_BASE}/bloodrequests/${requestId5}/transit-status`, {
             method: "PATCH",
             headers: {
                 "Content-Type": "application/json",
-                Authorization: `Bearer ${tokenDonor}`,
+                Authorization: `Bearer ${tokenHospA}`,
             },
-            body: JSON.stringify({ status: "COMPLETED" }),
+            body: JSON.stringify({ status: "COMPLETED", donorUserId: donorUser.userid }),
         });
-        assert(completeTransitRes.status === 200, "8m. Donor updated transit to COMPLETED");
+        assert(completeTransitRes.status === 200, "8m. Hospital confirmed transit COMPLETED");
 
         // Verify request is now BLOOD_ARRANGED (NOT FULFILLED!)
         const req5AfterDonation = await prisma.bloodrequests.findUnique({ where: { requestid: requestId5 } });
@@ -859,15 +916,22 @@ async function runPhase52CoordinationTests() {
         console.log("--- Teardown: Safely cleaning up disposable test records ---");
         try {
             // Delete notifications for created requests
-            if (createdRequestIds.length > 0) {
+            const validReqIds = createdRequestIds.filter(Boolean);
+            if (validReqIds.length > 0) {
                 await prisma.notification.deleteMany({
-                    where: { requestid: { in: createdRequestIds } },
+                    where: { requestid: { in: validReqIds } },
+                });
+                await prisma.donationhistory.deleteMany({
+                    where: { requestid: { in: validReqIds } },
+                });
+                await prisma.prescription.deleteMany({
+                    where: { requestid: { in: validReqIds } },
                 });
                 await prisma.requeststatushistory.deleteMany({
-                    where: { requestid: { in: createdRequestIds } },
+                    where: { requestid: { in: validReqIds } },
                 });
                 await prisma.bloodrequests.deleteMany({
-                    where: { requestid: { in: createdRequestIds } },
+                    where: { requestid: { in: validReqIds } },
                 });
             }
 

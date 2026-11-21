@@ -628,6 +628,14 @@ async function runPhase3EmergencyBroadcastTests() {
     // TEST 13: Transit Milestone Synchronization
     // =========================================================================
     console.log("\n--- Test Group 13: Transit Milestones Relational Synchronization ---");
+    // Requester accepts Donor 1's volunteer commitment before donor can start journey
+    const acceptRes = await postJson(
+        `/bloodrequests/${emergencyRequestId}/volunteers/${d1DeliveryUpdated!.deliveryid}/decision`,
+        requesterToken,
+        { decision: "ACCEPTED" }
+    );
+    assert(acceptRes.status === 200, "Requester accepts Donor 1 commitment before transit");
+
     // Donor updates transit to STARTED
     const transitStartRes = await patchJson(`/bloodrequests/${emergencyRequestId}/transit-status`, donor1Token, {
         status: "STARTED"

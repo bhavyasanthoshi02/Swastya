@@ -197,7 +197,7 @@ async function main() {
             "2, 3, 4 & 12. Clinical changes blocked (400) after VERIFIED and DB records unchanged"
         );
 
-        // 7, 8, 9: Unrelated fields, omitted clinical fields, and unchanged clinical values succeed
+        // 7, 8, 9: Unrelated fields, omitted clinical fields, and unchanged clinical/patient values succeed
         const rUnchanged = await reqJson(
             "PUT",
             `/bloodrequests/${req1.requestid}`,
@@ -205,15 +205,17 @@ async function main() {
                 bloodgroup: "O_POSITIVE",
                 bloodcomponent: "RBC",
                 unitsrequired: 2,
+                patientname: `BA3 Patient ${tag}`,
                 notes: "Updated patient ward",
-                patientname: `BA3 Updated ${tag}`,
+                searchradius: 25,
             },
             reqToken
         );
         const rOmitted = await reqJson("PUT", `/bloodrequests/${req1.requestid}`, { notes: "Ward 4B" }, reqToken);
         assert(
             rUnchanged.status === 200 &&
-                rUnchanged.data?.patientname === `BA3 Updated ${tag}` &&
+                rUnchanged.data?.notes === "Updated patient ward" &&
+                rUnchanged.data?.searchradius === 25 &&
                 rOmitted.status === 200 &&
                 rOmitted.data?.notes === "Ward 4B",
             "7, 8 & 9. Unrelated fields, unchanged clinical values, and omitted clinical fields succeed (200)"
@@ -316,7 +318,7 @@ async function main() {
 
         const [resPutRace, resDonorRace] = await Promise.all([
             reqJson("PUT", `/bloodrequests/${req4.requestid}`, { bloodgroup: "AB_NEGATIVE" }, reqToken),
-            reqJson("POST", `/bloodrequests/${req4.requestid}/respond`, { screeningPassed: true }, donorToken),
+            reqJson("POST", `/bloodrequests/${req4.requestid}/respond`, { screeningAnswers: { drinksAlcohol: false, alcoholInPast24Hours: false, feelingHealthy: true, recentAntibioticsOrMedication: false, recentTattooOrSurgery: false, donatedInLast90Days: false, chronicIllness: false, isPregnantOrBreastfeeding: false } }, donorToken),
         ]);
         const req4After = await prisma.bloodrequests.findUnique({ where: { requestid: req4.requestid } });
         const del4Count = await prisma.broadcastdeliveries.count({ where: { requestid: req4.requestid, response: "ACCEPTED" } });

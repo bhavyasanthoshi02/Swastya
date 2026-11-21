@@ -7,6 +7,13 @@
     "dev": "tsx watch src/server.ts",
     "prisma:generate": "prisma generate",
     "build": "tsc",
+    "test:aud07": "tsx tests/test_aud07_regression.ts",
+    "test:aud08": "tsx tests/test_aud08_hospital_approval_and_revocation.ts",
+    "test:aud09": "tsx tests/test_aud09_bloodbank_assignment_privacy.ts",
+    "test:aud10": "tsx tests/test_aud10_idempotency_and_import_security.ts",
+    "test:aud11": "tsx tests/test_aud11_security_remediation.ts",
+    "test:aud12": "tsx tests/test_aud12_notification_privacy.ts",
+    "test:aud14": "tsx tests/test_aud14_final_security_remediation.ts",
     "start": "node dist/server.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },

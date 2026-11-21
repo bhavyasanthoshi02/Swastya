@@ -167,6 +167,7 @@ function setupPrismaSpies() {
                         {
                             deliveryid: "delivery-uuid-1",
                             transitstatus: mockState.transitStatus || "REACHED_LOCATION",
+                            acceptancestatus: "ACCEPTED",
                             startedat: null,
                             reachedat: null,
                             completedat: null,
@@ -224,6 +225,7 @@ function setupPrismaSpies() {
                             donorid: "donor-uuid-1",
                             donoruserid: donorUid,
                             response: "ACCEPTED",
+                            acceptancestatus: "ACCEPTED",
                             respondedat: new Date(),
                             transitstatus: "STARTED",
                             startedat: new Date(),

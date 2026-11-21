@@ -8,11 +8,12 @@ import { validateCoordinates, evaluateLocationDistance } from "../utils/distance
 import { isDonorCompatibleWithRecipient } from "../utils/bloodCompatibility";
 
 // Helper: sanitize blood request for donor feeds (protect patient privacy)
-function sanitizeRequestForDonor(req: any, hasResponded: boolean = false) {
+function sanitizeRequestForDonor(req: any, hasResponded: boolean = false, isAccepted: boolean = false) {
     const { patientcontact, patientphone, ...safe } = req;
     return {
         ...safe,
         patientcontact: null, // Patient contact protected for privacy on donor feeds
+        patientname: isAccepted ? req.patientname : null, // Patient name hidden until donor offer is ACCEPTED
         hasResponded,
     };
 }
@@ -625,7 +626,12 @@ router.get("/me/dashboard", authenticate, authorize("DONOR", "ADMIN"), async (re
         const donorLng = donor.longitude != null ? Number(donor.longitude) : null;
 
         const sanitizedMatchingRequests = matchingRequests.map((r) => {
-            const sanitized = sanitizeRequestForDonor(r, myRespondedSet.has(r.requestid));
+            const delivery = myDeliveryByRequest.get(r.requestid);
+            const sanitized = sanitizeRequestForDonor(
+                r,
+                myRespondedSet.has(r.requestid),
+                delivery?.acceptancestatus === "ACCEPTED"
+            );
             const reqLat = r.latitude != null
                 ? Number(r.latitude)
                 : (r.hospitals?.latitude != null
@@ -646,9 +652,12 @@ router.get("/me/dashboard", authenticate, authorize("DONOR", "ADMIN"), async (re
                 distanceKm = locEval.distanceKm;
                 distanceDisplay = locEval.distanceDisplay;
                 locationMatch = "COORDINATES";
-            } else if (r.hospitals?.city || r.requesters?.city) {
-                distanceDisplay = "Distance unavailable - City match";
-                locationMatch = "CITY_FALLBACK";
+            } else if (donor.city && (r.hospitals?.city || r.requesters?.city)) {
+                const reqCity = (r.hospitals?.city || r.requesters?.city || "").trim();
+                if (donor.city.trim().toLowerCase() === reqCity.toLowerCase()) {
+                    distanceDisplay = "Distance unavailable - City match";
+                    locationMatch = "CITY_FALLBACK";
+                }
             }
 
             delete (sanitized as any).latitude;
@@ -662,23 +671,23 @@ router.get("/me/dashboard", authenticate, authorize("DONOR", "ADMIN"), async (re
                 delete (sanitized.requesters as any).longitude;
             }
 
-            const delivery = myDeliveryByRequest.get(r.requestid);
+            const existingDelivery = myDeliveryByRequest.get(r.requestid);
             return {
                 ...sanitized,
                 distanceKm,
                 distanceDisplay,
                 locationMatch,
-                myCommitment: delivery
+                myCommitment: existingDelivery
                     ? {
-                        deliveryId: delivery.deliveryid,
-                        acceptanceStatus: delivery.acceptancestatus || "PENDING",
-                        acceptedAt: delivery.acceptedat,
-                        rejectedAt: delivery.rejectedat,
-                        transitStatus: delivery.transitstatus || "DONOR_FOUND",
-                        startedAt: delivery.startedat,
-                        reachedAt: delivery.reachedat,
-                        completedAt: delivery.completedat,
-                        receiptConfirmedAt: delivery.receiptconfirmedat,
+                        deliveryId: existingDelivery.deliveryid,
+                        acceptanceStatus: existingDelivery.acceptancestatus || "PENDING",
+                        acceptedAt: existingDelivery.acceptedat,
+                        rejectedAt: existingDelivery.rejectedat,
+                        transitStatus: existingDelivery.transitstatus || "DONOR_FOUND",
+                        startedAt: existingDelivery.startedat,
+                        reachedAt: existingDelivery.reachedat,
+                        completedAt: existingDelivery.completedat,
+                        receiptConfirmedAt: existingDelivery.receiptconfirmedat,
                     }
                     : null,
             };
@@ -688,7 +697,7 @@ router.get("/me/dashboard", authenticate, authorize("DONOR", "ADMIN"), async (re
             .filter((d) => Boolean(d.bloodrequests))
             .map((d) => {
                 const reqObj = d.bloodrequests;
-                const sanitized = sanitizeRequestForDonor(reqObj, true);
+                const sanitized = sanitizeRequestForDonor(reqObj, true, d.acceptancestatus === "ACCEPTED");
                 delete (sanitized as any).latitude;
                 delete (sanitized as any).longitude;
                 if (sanitized.hospitals) {
@@ -787,8 +796,8 @@ router.get("/me/matching-requests", authenticate, authorize("DONOR", "ADMIN"), a
                 compatibleGroups: [donor.bloodgroup],
                 donorLocation: {
                     hasCoordinates: donorLat !== null && donorLng !== null,
-                    city: donor.city,
-                    state: donor.state,
+                    city: donor.city && donor.city.trim() ? donor.city.trim() : null,
+                    state: donor.state && donor.state.trim() ? donor.state.trim() : null,
                 },
                 availabilityStatus: donor.availabilitystatus,
                 eligibility,
@@ -904,8 +913,8 @@ router.get("/me/matching-requests", authenticate, authorize("DONOR", "ADMIN"), a
                         donorCity.toLowerCase().includes(reqCity.toLowerCase()) ||
                         reqCity.toLowerCase().includes(donorCity.toLowerCase());
                 } else {
-                    // When neither coordinates nor specific cities conflict, retain in broad feed
-                    isCityMatch = true;
+                    // When location is missing or unavailable, do NOT silently match
+                    isCityMatch = false;
                 }
 
                 if (isCityMatch) {
@@ -1025,7 +1034,12 @@ router.get("/me/matching-requests", authenticate, authorize("DONOR", "ADMIN"), a
 
         // Format and sanitize output (strip patient contact and exact raw coordinates)
         const sanitizedRequests = paginated.map((item) => {
-            const sanitized = sanitizeRequestForDonor(item.request, myRespondedSet.has(item.request.requestid));
+            const delivery = myDeliveryByRequest.get(item.request.requestid);
+            const sanitized = sanitizeRequestForDonor(
+                item.request,
+                myRespondedSet.has(item.request.requestid),
+                delivery?.acceptancestatus === "ACCEPTED"
+            );
             // Remove raw coordinate numbers from payload to protect patient and facility precise geolocation
             delete (sanitized as any).latitude;
             delete (sanitized as any).longitude;
@@ -1038,7 +1052,6 @@ router.get("/me/matching-requests", authenticate, authorize("DONOR", "ADMIN"), a
                 delete (sanitized.requesters as any).longitude;
             }
 
-            const delivery = myDeliveryByRequest.get(item.request.requestid);
             return {
                 ...sanitized,
                 distanceKm: item.distanceKm,
@@ -1064,7 +1077,7 @@ router.get("/me/matching-requests", authenticate, authorize("DONOR", "ADMIN"), a
         const myCommitments = myAllDeliveries
             .filter((d) => Boolean(d.bloodrequests))
             .map((d) => {
-                const sanitized = sanitizeRequestForDonor(d.bloodrequests, true);
+                const sanitized = sanitizeRequestForDonor(d.bloodrequests, true, d.acceptancestatus === "ACCEPTED");
                 delete (sanitized as any).latitude;
                 delete (sanitized as any).longitude;
                 if (sanitized.hospitals) {
@@ -1100,8 +1113,8 @@ router.get("/me/matching-requests", authenticate, authorize("DONOR", "ADMIN"), a
                 : (RECIPIENT_COMPATIBILITY_MAP[donor.bloodgroup] || [donor.bloodgroup]),
             donorLocation: {
                 hasCoordinates: donorLat !== null && donorLng !== null,
-                city: donor.city,
-                state: donor.state,
+                city: donor.city && donor.city.trim() ? donor.city.trim() : null,
+                state: donor.state && donor.state.trim() ? donor.state.trim() : null,
             },
             total,
             page,

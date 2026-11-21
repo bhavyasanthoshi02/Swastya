@@ -8,8 +8,11 @@ export const getJwtSecret = (): string => {
     return secret;
 };
 
-export const generateToken = (userid: string, role: string): string => {
+export const DEFAULT_JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "24h";
+
+export const generateToken = (userid: string, role: string, expiresIn?: string | number): string => {
     const secret = getJwtSecret();
+    const tokenLifetime = expiresIn !== undefined ? expiresIn : (process.env.JWT_EXPIRES_IN || "24h");
     return jwt.sign(
         {
             userid,
@@ -17,7 +20,7 @@ export const generateToken = (userid: string, role: string): string => {
         },
         secret,
         {
-            expiresIn: "7d",
+            expiresIn: tokenLifetime as any,
         }
     );
 };

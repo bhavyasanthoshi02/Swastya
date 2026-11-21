@@ -18,6 +18,7 @@ export interface TriggerBroadcastOptions {
     triggerReason?: string;
     radiusKm?: number;
     expandRadius?: boolean;
+    isWorkerEscalation?: boolean;
 }
 
 export interface BroadcastResult {
@@ -53,7 +54,7 @@ export async function triggerEmergencyBroadcast(options: TriggerBroadcastOptions
         const request = lockedRows[0];
 
         // Clinical Safety Rule: Do not broadcast inactive, terminal, or arranged requests
-        const terminalStatuses = ["FULFILLED", "CANCELLED", "EXPIRED"];
+        const terminalStatuses = ["FULFILLED", "CANCELLED", "EXPIRED", "BLOOD_ARRANGED"];
         if (terminalStatuses.includes(request.status || "")) {
             return {
                 success: false,
@@ -63,6 +64,40 @@ export async function triggerEmergencyBroadcast(options: TriggerBroadcastOptions
                 terminal: true,
                 currentStatus: request.status,
             };
+        }
+
+        // A clinically rejected prescription makes all emergency broadcasting unsafe.
+        // Lock and recheck prescription status inside the broadcast transaction.
+        const lockedRxRows: any[] = await tx.$queryRawUnsafe(
+            `SELECT prescriptionid, status FROM prescription WHERE requestid = $1::uuid FOR UPDATE`,
+            requestId
+        );
+        if (lockedRxRows && lockedRxRows.length > 0) {
+            const rx = lockedRxRows[0];
+            if (rx.status === "REJECTED") {
+                return {
+                    success: false,
+                    message: "Cannot broadcast a blood requisition whose prescription has been rejected.",
+                    totalMatched: 0,
+                    totalNotified: 0,
+                };
+            }
+        }
+
+        // Clinical Governance: If request has an assigned hospital, require approvalstatus APPROVED
+        if (request.hospitalid) {
+            const hospRows: any[] = await tx.$queryRawUnsafe(
+                `SELECT hospitalid, approvalstatus FROM hospitals WHERE hospitalid = $1::uuid`,
+                request.hospitalid
+            );
+            if (!hospRows || hospRows.length === 0 || hospRows[0].approvalstatus !== "APPROVED") {
+                return {
+                    success: false,
+                    message: "Assigned hospital is not approved to coordinate blood requisitions.",
+                    totalMatched: 0,
+                    totalNotified: 0,
+                };
+            }
         }
 
         // Non-emergency check on creation: skip if not marked emergency or critical
@@ -81,14 +116,15 @@ export async function triggerEmergencyBroadcast(options: TriggerBroadcastOptions
         effectiveRadius = Math.max(1, Math.min(100, effectiveRadius));
 
         // 2. Concurrency & Deduplication check under the lock:
-        // If expanding radius, check if an ACTIVE genuine broadcast covering at least this radius was created recently (within last 10 minutes)
-        // If not expanding radius, check if ANY active genuine broadcast was created recently (within last 10 minutes)
+        // Prevent repeated manual radius increases from creating duplicate broadcasts during active cooldown (10 minutes)
+        // Automatic follow-up worker controls progressive radius expansion
+        const isWorker = Boolean(options.isWorkerEscalation) || String(triggerReason || "").startsWith("Automatic follow-up escalation");
         const recentActiveBroadcast = await tx.emergencybroadcasts.findFirst({
             where: {
                 requestid: requestId,
                 status: { in: ["ACTIVE", "DONOR_RESPONDED"] },
                 triggertype: { not: "DIRECT_VOLUNTEER" },
-                ...(expandRadius ? { radiuskm: { gte: effectiveRadius } } : {}),
+                ...(expandRadius && isWorker ? { radiuskm: { gte: effectiveRadius } } : {}),
                 createdat: {
                     gte: new Date(Date.now() - 10 * 60 * 1000),
                 },
@@ -97,24 +133,35 @@ export async function triggerEmergencyBroadcast(options: TriggerBroadcastOptions
         });
 
         if (recentActiveBroadcast) {
-            // Also ensure bloodrequests.searchradius in DB reflects at least this existing active broadcast radius
-            if ((request.searchradius || 0) < recentActiveBroadcast.radiuskm) {
-                await tx.bloodrequests.update({
-                    where: { requestid: requestId },
-                    data: { searchradius: recentActiveBroadcast.radiuskm },
-                });
+            // If manual expansion is attempted while cooldown is active, prevent duplicate broadcast
+            if (!isWorker || recentActiveBroadcast.radiuskm >= effectiveRadius) {
+                if ((request.searchradius || 0) < recentActiveBroadcast.radiuskm) {
+                    await tx.bloodrequests.update({
+                        where: { requestid: requestId },
+                        data: { searchradius: recentActiveBroadcast.radiuskm },
+                    });
+                }
+                return {
+                    success: true,
+                    message: "An active emergency broadcast is already ongoing for this requisition.",
+                    broadcastId: recentActiveBroadcast.broadcastid,
+                    radiusKm: recentActiveBroadcast.radiuskm,
+                    totalMatched: recentActiveBroadcast.totalmatched,
+                    totalNotified: recentActiveBroadcast.totalnotified,
+                    alreadyActive: true,
+                    isExisting: true,
+                };
             }
-            return {
-                success: true,
-                message: "An active emergency broadcast is already ongoing for this requisition.",
-                broadcastId: recentActiveBroadcast.broadcastid,
-                radiusKm: recentActiveBroadcast.radiuskm,
-                totalMatched: recentActiveBroadcast.totalmatched,
-                totalNotified: recentActiveBroadcast.totalnotified,
-                alreadyActive: true,
-                isExisting: true,
-            };
         }
+
+        // Atomically cancel prior active broadcasts before creating an expanded broadcast
+        await tx.emergencybroadcasts.updateMany({
+            where: {
+                requestid: requestId,
+                status: { in: ["ACTIVE", "DONOR_RESPONDED"] },
+            },
+            data: { status: "CANCELLED" },
+        });
 
         // Fetch hospital and requester details for location & notification rendering
         const fullRequest = await tx.bloodrequests.findUnique({
@@ -337,7 +384,7 @@ export async function triggerEmergencyBroadcast(options: TriggerBroadcastOptions
                             matchtype: item.matchType,
                             distancekm: item.distanceKm !== null ? item.distanceKm : undefined,
                             deliverystatus: "FAILED",
-                            failuremessage: String(deliverError?.message || "In-app notification delivery error").slice(0, 500),
+                            failuremessage: "NOTIFICATION_DELIVERY_FAILED",
                             attemptcount: 1,
                         },
                     });
@@ -461,7 +508,7 @@ export async function getRequestBroadcastStatus(requestId: string) {
         distancekm: d.distancekm ? Number(d.distancekm) : null,
         deliverystatus: d.deliverystatus,
         attemptcount: d.attemptcount,
-        failuremessage: d.failuremessage || null,
+        failuremessage: d.failuremessage ? (["NOTIFICATION_DELIVERY_FAILED", "RETRY_EXHAUSTED"].includes(d.failuremessage) ? d.failuremessage : "NOTIFICATION_DELIVERY_FAILED") : null,
         response: d.response,
         respondedat: d.respondedat,
         transitstatus: d.transitstatus,

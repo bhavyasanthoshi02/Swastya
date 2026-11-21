@@ -236,6 +236,7 @@ async function main() {
                 matchtype: "DIRECT_VOLUNTEER",
                 deliverystatus: "RESPONDED",
                 response: "ACCEPTED",
+                acceptancestatus: "ACCEPTED",
                 respondedat: new Date(),
                 transitstatus: "DONOR_FOUND",
             },
@@ -249,6 +250,7 @@ async function main() {
                 matchtype: "DIRECT_VOLUNTEER",
                 deliverystatus: "RESPONDED",
                 response: "ACCEPTED",
+                acceptancestatus: "ACCEPTED",
                 respondedat: new Date(),
                 transitstatus: "DONOR_FOUND",
             },
@@ -258,11 +260,11 @@ async function main() {
         const rInvalid = await reqJson("PATCH", `/bloodrequests/${reqA.requestid}/transit-status`, { status: "FLYING", donorUserId: donor1User.userid }, hospToken);
         assert(rInvalid.status === 400, "1. Invalid status string rejected with 400");
 
-        // 2. Requester cannot update donor transit (STARTED, REACHED_LOCATION, COMPLETED)
+        // 2. Requester cannot update donor transit (STARTED, REACHED_LOCATION); COMPLETED is blocked before REACHED_LOCATION
         const rReqStart = await reqJson("PATCH", `/bloodrequests/${reqA.requestid}/transit-status`, { status: "STARTED", donorUserId: donor1User.userid }, reqToken);
         const rReqReach = await reqJson("PATCH", `/bloodrequests/${reqA.requestid}/transit-status`, { status: "REACHED_LOCATION", donorUserId: donor1User.userid }, reqToken);
         const rReqComp = await reqJson("PATCH", `/bloodrequests/${reqA.requestid}/transit-status`, { status: "COMPLETED", donorUserId: donor1User.userid }, reqToken);
-        assert(rReqStart.status === 403 && rReqReach.status === 403 && rReqComp.status === 403, "2. Requester rejected (403) for all transit statuses");
+        assert(rReqStart.status === 403 && rReqReach.status === 403 && rReqComp.status === 400, "2. Requester rejected (403) for STARTED/REACHED_LOCATION and (400) for premature COMPLETED");
 
         // 3. Unassigned hospital cannot update transit
         const rOtherHosp = await reqJson("PATCH", `/bloodrequests/${reqA.requestid}/transit-status`, { status: "STARTED", donorUserId: donor1User.userid }, otherHospToken);
@@ -366,6 +368,7 @@ async function main() {
                 matchtype: "DIRECT_VOLUNTEER",
                 deliverystatus: "RESPONDED",
                 response: "ACCEPTED",
+                acceptancestatus: "ACCEPTED",
                 respondedat: new Date(),
                 transitstatus: "DONOR_FOUND",
             },

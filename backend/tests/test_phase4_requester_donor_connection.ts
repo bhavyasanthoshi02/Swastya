@@ -123,28 +123,33 @@ async function runPhase4IntegrationTests() {
 
         assert(Boolean(userReqA && userReqB && userDonor && donorRecord), "0. Setup: Disposable Requester A, Requester B, and eligible Donor accounts created");
 
-        // --- STEP 1: Requester A creates a blood request ---
+        // --- STEP 1: Requester A creates a blood request (with mandatory prescription upload) ---
         const futureTime = new Date(Date.now() + 48 * 3600 * 1000).toISOString();
+        const formData = new FormData();
+        formData.append("patientname", "Phase4 Test Patient");
+        formData.append("patientage", "38");
+        formData.append("patientgender", "FEMALE");
+        formData.append("patientcontact", "9000000001");
+        formData.append("bloodgroup", "O_POSITIVE");
+        formData.append("bloodcomponent", "WHOLE_BLOOD");
+        formData.append("unitsrequired", "2");
+        formData.append("urgencylevel", "HIGH");
+        formData.append("isemergency", "false");
+        formData.append("searchradius", "10");
+        formData.append("requiredby", futureTime);
+        formData.append("notes", "Voluntary whole blood needed for scheduled surgical procedure");
+        formData.append(
+            "prescription",
+            new Blob([Buffer.from("%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n")], { type: "application/pdf" }),
+            "prescription.pdf"
+        );
+
         const createRes = await fetch(`${API_BASE}/bloodrequests`, {
             method: "POST",
             headers: {
                 Authorization: `Bearer ${tokenReqA}`,
-                "Content-Type": "application/json",
             },
-            body: JSON.stringify({
-                patientname: "Phase4 Test Patient",
-                patientage: 38,
-                patientgender: "FEMALE",
-                patientcontact: "9000000001",
-                bloodgroup: "O_POSITIVE",
-                bloodcomponent: "WHOLE_BLOOD",
-                unitsrequired: 2,
-                urgencylevel: "HIGH",
-                isemergency: false,
-                searchradius: 10,
-                requiredby: futureTime,
-                notes: "Voluntary whole blood needed for scheduled surgical procedure",
-            }),
+            body: formData,
         });
 
         assert(createRes.status === 201, "1. Requester creates blood request: HTTP 201 returned");
@@ -188,6 +193,18 @@ async function runPhase4IntegrationTests() {
                 Authorization: `Bearer ${tokenDonor}`,
                 "Content-Type": "application/json",
             },
+            body: JSON.stringify({
+                screeningAnswers: {
+                    drinksAlcohol: false,
+                    alcoholInPast24Hours: false,
+                    feelingHealthy: true,
+                    recentAntibioticsOrMedication: false,
+                    recentTattooOrSurgery: false,
+                    donatedInLast90Days: false,
+                    chronicIllness: false,
+                    isPregnantOrBreastfeeding: false,
+                },
+            }),
         });
         assert(respondRes.status === 200, "5. Donor Response: POST /bloodrequests/:id/respond returns HTTP 200");
         const respondData = await respondRes.json();
@@ -201,6 +218,18 @@ async function runPhase4IntegrationTests() {
                 Authorization: `Bearer ${tokenDonor}`,
                 "Content-Type": "application/json",
             },
+            body: JSON.stringify({
+                screeningAnswers: {
+                    drinksAlcohol: false,
+                    alcoholInPast24Hours: false,
+                    feelingHealthy: true,
+                    recentAntibioticsOrMedication: false,
+                    recentTattooOrSurgery: false,
+                    donatedInLast90Days: false,
+                    chronicIllness: false,
+                    isPregnantOrBreastfeeding: false,
+                },
+            }),
         });
         assert(dupRespondRes.status === 400, "6. Deduplication: Duplicate volunteer response rejected with HTTP 400");
         const dupData = await dupRespondRes.json();
@@ -286,6 +315,7 @@ async function runPhase4IntegrationTests() {
         try {
             if (createdRequest?.requestid) {
                 await prisma.notification.deleteMany({ where: { requestid: createdRequest.requestid } });
+                await prisma.prescription.deleteMany({ where: { requestid: createdRequest.requestid } });
                 await prisma.requeststatushistory.deleteMany({ where: { requestid: createdRequest.requestid } });
                 await prisma.bloodrequests.deleteMany({ where: { requestid: createdRequest.requestid } });
             }

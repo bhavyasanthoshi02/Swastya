@@ -220,6 +220,7 @@ async function main() {
                 matchtype: "DIRECT_VOLUNTEER",
                 deliverystatus: "RESPONDED",
                 response: "ACCEPTED",
+                acceptancestatus: "ACCEPTED",
                 respondedat: new Date(Date.now() - 2000),
                 transitstatus: "REACHED_LOCATION",
             },
@@ -233,22 +234,89 @@ async function main() {
                 matchtype: "DIRECT_VOLUNTEER",
                 deliverystatus: "RESPONDED",
                 response: "ACCEPTED",
+                acceptancestatus: "ACCEPTED",
                 respondedat: new Date(Date.now() - 1000),
                 transitstatus: "REACHED_LOCATION",
             },
         });
 
-        // 1. Unauthorized DONOR / REQUESTER cannot confirm COMPLETED or create verified history
+        // 1. Unauthorized DONOR COMPLETED and REQUESTER STARTED/REACHED_LOCATION rejected with 403;
+        //    REQUESTER COMPLETED before donor reaches hospital (DONOR_FOUND) rejected with 400
         const rDonorComplete = await reqJson("PATCH", `/bloodrequests/${req1.requestid}/transit-status`, { status: "COMPLETED" }, d1Token);
-        const rReqComplete = await reqJson("PATCH", `/bloodrequests/${req1.requestid}/transit-status`, { status: "COMPLETED", donorUserId: donor1User.userid }, reqToken);
-        assert(rDonorComplete.status === 403 && rReqComplete.status === 403, "1. Unauthorized donor/requester COMPLETED rejected with 403");
+        const rReqStart = await reqJson("PATCH", `/bloodrequests/${req1.requestid}/transit-status`, { status: "STARTED", donorUserId: donor1User.userid }, reqToken);
+        const rReqReach = await reqJson("PATCH", `/bloodrequests/${req1.requestid}/transit-status`, { status: "REACHED_LOCATION", donorUserId: donor1User.userid }, reqToken);
+        assert(
+            rDonorComplete.status === 403 && rReqStart.status === 403 && rReqReach.status === 403,
+            "1. Donor COMPLETED (403) and requester STARTED/REACHED_LOCATION (403) rejected"
+        );
+
+        const reqBeforeArrival = await prisma.bloodrequests.create({
+            data: {
+                createdbyuserid: reqUser.userid,
+                requesterid: requester.requesterid,
+                hospitalid: hospital.hospitalid,
+                patientname: "Patient Before Arrival",
+                patientage: 35,
+                patientgender: "FEMALE",
+                patientcontact: "9999900011",
+                bloodgroup: "O_POSITIVE",
+                bloodcomponent: "RBC",
+                unitsrequired: 1,
+                urgencylevel: "HIGH",
+                status: "DONOR_MATCHING",
+                isemergency: false,
+                requiredby: new Date(Date.now() + 86400000),
+            },
+        });
+        createdRequestIds.push(reqBeforeArrival.requestid);
+        const bcBeforeArrival = await prisma.emergencybroadcasts.create({
+            data: {
+                requestid: reqBeforeArrival.requestid,
+                triggeredbyuserid: reqUser.userid,
+                triggertype: "DIRECT_VOLUNTEER",
+                radiuskm: 10,
+                status: "DONOR_RESPONDED",
+                totalmatched: 1,
+                totalnotified: 0,
+                totalresponded: 1,
+            },
+        });
+        await prisma.broadcastdeliveries.create({
+            data: {
+                broadcastid: bcBeforeArrival.broadcastid,
+                requestid: reqBeforeArrival.requestid,
+                donorid: donor1.donorid,
+                donoruserid: donor1User.userid,
+                matchtype: "DIRECT_VOLUNTEER",
+                deliverystatus: "RESPONDED",
+                response: "ACCEPTED",
+                acceptancestatus: "ACCEPTED",
+                respondedat: new Date(),
+                transitstatus: "DONOR_FOUND",
+            },
+        });
+        const rReqPrematureComplete = await reqJson("PATCH", `/bloodrequests/${reqBeforeArrival.requestid}/transit-status`, { status: "COMPLETED", donorUserId: donor1User.userid }, reqToken);
+        assert(rReqPrematureComplete.status === 400, "1a. Requester COMPLETED before donor reaches hospital rejected with 400");
+
         const hCountAfterUnauth = await prisma.donationhistory.count({ where: { requestid: req1.requestid } });
         const d1Before = await prisma.donors.findUnique({ where: { donorid: donor1.donorid } });
-        assert(hCountAfterUnauth === 0 && d1Before?.lastdonationdate === null, "1b. No history or cooldown created on unauthorized attempt");
+        assert(hCountAfterUnauth === 0 && d1Before?.lastdonationdate === null, "1b. No history or cooldown created on unauthorized/premature attempts");
 
-        // 2. Authorized hospital completes Donor 1 -> creates 1 verified history entry, updates Donor 1 lastdonationdate, leaves Donor 2 untouched
+        // 1c. Owning requester confirms receipt (COMPLETED) at REACHED_LOCATION -> 200, creates PENDING history (not VERIFIED, no cooldown)
+        const rReqConfirm = await reqJson("PATCH", `/bloodrequests/${req1.requestid}/transit-status`, { status: "COMPLETED", donorUserId: donor1User.userid }, reqToken);
+        const d1PendingHist = await prisma.donationhistory.findMany({ where: { donorid: donor1.donorid, requestid: req1.requestid } });
+        const d1AfterReqConfirm = await prisma.donors.findUnique({ where: { donorid: donor1.donorid } });
+        assert(
+            rReqConfirm.status === 200 &&
+                d1PendingHist.length === 1 &&
+                d1PendingHist[0].verificationstatus === "PENDING" &&
+                d1AfterReqConfirm?.lastdonationdate === null,
+            "1c. Requester COMPLETED at REACHED_LOCATION returns 200 and records PENDING history without VERIFIED status or cooldown"
+        );
+
+        // 2. Authorized hospital completes/verifies Donor 1 -> upgrades history to VERIFIED, updates Donor 1 lastdonationdate, leaves Donor 2 untouched
         const rHospComplete1 = await reqJson("PATCH", `/bloodrequests/${req1.requestid}/transit-status`, { status: "COMPLETED", donorUserId: donor1User.userid }, hospToken);
-        assert(rHospComplete1.status === 200 && rHospComplete1.data?.donationRecorded === true, "2. Hospital completion for Donor 1 returns 200 with donationRecorded=true");
+        assert(rHospComplete1.status === 200, "2. Hospital completion/verification for Donor 1 returns 200");
 
         const d1Hist = await prisma.donationhistory.findMany({ where: { donorid: donor1.donorid, requestid: req1.requestid } });
         assert(
@@ -296,7 +364,7 @@ async function main() {
         });
         createdRequestIds.push(req2.requestid);
 
-        const rCooldownReject = await reqJson("POST", `/bloodrequests/${req2.requestid}/respond`, { screeningPassed: true }, d1Token);
+        const rCooldownReject = await reqJson("POST", `/bloodrequests/${req2.requestid}/respond`, { screeningAnswers: { drinksAlcohol: false, alcoholInPast24Hours: false, feelingHealthy: true, recentAntibioticsOrMedication: false, recentTattooOrSurgery: false, donatedInLast90Days: false, chronicIllness: false, isPregnantOrBreastfeeding: false } }, d1Token);
         assert(
             rCooldownReject.status === 400 && String(rCooldownReject.data?.message || "").includes("90-day cooldown"),
             "4. Donor 1 with recent completion is rejected by 90-day cooldown on new request"
@@ -331,8 +399,12 @@ async function main() {
         createdRequestIds.push(req3.requestid);
 
         // Donor 3 volunteers via real HTTP endpoint and advances to REACHED_LOCATION
-        const rD3Vol = await reqJson("POST", `/bloodrequests/${req3.requestid}/respond`, { screeningPassed: true }, d3Token);
+        const rD3Vol = await reqJson("POST", `/bloodrequests/${req3.requestid}/respond`, { screeningAnswers: { drinksAlcohol: false, alcoholInPast24Hours: false, feelingHealthy: true, recentAntibioticsOrMedication: false, recentTattooOrSurgery: false, donatedInLast90Days: false, chronicIllness: false, isPregnantOrBreastfeeding: false } }, d3Token);
         assert(rD3Vol.status === 200, "6a. Donor 3 volunteers on Request 3");
+        await prisma.broadcastdeliveries.updateMany({
+            where: { requestid: req3.requestid, donorid: donor3.donorid },
+            data: { acceptancestatus: "ACCEPTED" },
+        });
         await reqJson("PATCH", `/bloodrequests/${req3.requestid}/transit-status`, { status: "STARTED", donorUserId: donor3User.userid }, hospToken);
         await reqJson("PATCH", `/bloodrequests/${req3.requestid}/transit-status`, { status: "REACHED_LOCATION", donorUserId: donor3User.userid }, hospToken);
 
@@ -392,8 +464,12 @@ async function main() {
         });
         createdRequestIds.push(req4.requestid);
 
-        const rD3Vol4 = await reqJson("POST", `/bloodrequests/${req4.requestid}/respond`, { screeningPassed: true }, d3Token);
+        const rD3Vol4 = await reqJson("POST", `/bloodrequests/${req4.requestid}/respond`, { screeningAnswers: { drinksAlcohol: false, alcoholInPast24Hours: false, feelingHealthy: true, recentAntibioticsOrMedication: false, recentTattooOrSurgery: false, donatedInLast90Days: false, chronicIllness: false, isPregnantOrBreastfeeding: false } }, d3Token);
         assert(rD3Vol4.status === 200, "7a. Donor 3 also volunteers on Request 4 before either completes");
+        await prisma.broadcastdeliveries.updateMany({
+            where: { requestid: req4.requestid, donorid: donor3.donorid },
+            data: { acceptancestatus: "ACCEPTED" },
+        });
         await reqJson("PATCH", `/bloodrequests/${req4.requestid}/transit-status`, { status: "STARTED", donorUserId: donor3User.userid }, hospToken);
         await reqJson("PATCH", `/bloodrequests/${req4.requestid}/transit-status`, { status: "REACHED_LOCATION", donorUserId: donor3User.userid }, hospToken);
 
@@ -511,6 +587,7 @@ async function main() {
                 matchtype: "DIRECT_VOLUNTEER",
                 deliverystatus: "RESPONDED",
                 response: "ACCEPTED",
+                acceptancestatus: "ACCEPTED",
                 respondedat: new Date(),
                 transitstatus: "REACHED_LOCATION",
             },

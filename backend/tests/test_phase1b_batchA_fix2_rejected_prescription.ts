@@ -178,7 +178,7 @@ async function main() {
         const notifsBeforeRej = await prisma.notification.count({ where: { requestid: reqRej.requestid } });
         const delsBeforeRej = await prisma.broadcastdeliveries.count({ where: { requestid: reqRej.requestid, response: "ACCEPTED" } });
 
-        const rRejVol = await reqJson("POST", `/bloodrequests/${reqRej.requestid}/respond`, { screeningPassed: true }, d1Token);
+        const rRejVol = await reqJson("POST", `/bloodrequests/${reqRej.requestid}/respond`, { screeningAnswers: { drinksAlcohol: false, alcoholInPast24Hours: false, feelingHealthy: true, recentAntibioticsOrMedication: false, recentTattooOrSurgery: false, donatedInLast90Days: false, chronicIllness: false, isPregnantOrBreastfeeding: false } }, d1Token);
         const notifsAfterRej = await prisma.notification.count({ where: { requestid: reqRej.requestid } });
         const delsAfterRej = await prisma.broadcastdeliveries.count({ where: { requestid: reqRej.requestid, response: "ACCEPTED" } });
         const bcastAfterRej = await prisma.emergencybroadcasts.findUnique({ where: { broadcastid: bcastRej.broadcastId } });
@@ -237,14 +237,14 @@ async function main() {
             },
         });
 
-        const rVerVol = await reqJson("POST", `/bloodrequests/${reqVer.requestid}/respond`, { screeningPassed: true }, d1Token);
+        const rVerVol = await reqJson("POST", `/bloodrequests/${reqVer.requestid}/respond`, { screeningAnswers: { drinksAlcohol: false, alcoholInPast24Hours: false, feelingHealthy: true, recentAntibioticsOrMedication: false, recentTattooOrSurgery: false, donatedInLast90Days: false, chronicIllness: false, isPregnantOrBreastfeeding: false } }, d1Token);
         const dvVer = await prisma.emergencybroadcasts.findFirst({ where: { requestid: reqVer.requestid } });
         assert(
             rVerVol.status === 200 && dvVer?.triggertype === "DIRECT_VOLUNTEER" && dvVer?.totalresponded === 1,
             "5 & 8. VERIFIED prescription allows volunteering and DIRECT_VOLUNTEER totalresponded=1"
         );
 
-        const rVerDup = await reqJson("POST", `/bloodrequests/${reqVer.requestid}/respond`, { screeningPassed: true }, d1Token);
+        const rVerDup = await reqJson("POST", `/bloodrequests/${reqVer.requestid}/respond`, { screeningAnswers: { drinksAlcohol: false, alcoholInPast24Hours: false, feelingHealthy: true, recentAntibioticsOrMedication: false, recentTattooOrSurgery: false, donatedInLast90Days: false, chronicIllness: false, isPregnantOrBreastfeeding: false } }, d1Token);
         assert(rVerDup.status === 400, "6. Duplicate response remains protected (400)");
 
         const bcastVer1 = await triggerEmergencyBroadcast({
@@ -306,11 +306,11 @@ async function main() {
                 { status: "REJECTED", remarks: "Invalid signature" },
                 hospToken
             ),
-            reqJson("POST", `/bloodrequests/${reqConc.requestid}/respond`, { screeningPassed: true }, d2Token),
+            reqJson("POST", `/bloodrequests/${reqConc.requestid}/respond`, { screeningAnswers: { drinksAlcohol: false, alcoholInPast24Hours: false, feelingHealthy: true, recentAntibioticsOrMedication: false, recentTattooOrSurgery: false, donatedInLast90Days: false, chronicIllness: false, isPregnantOrBreastfeeding: false } }, d2Token),
         ]);
 
         // After concurrent race settles, prescription is REJECTED; any SUBSEQUENT donor response MUST be blocked (400)
-        const rPostRace = await reqJson("POST", `/bloodrequests/${reqConc.requestid}/respond`, { screeningPassed: true }, d1Token);
+        const rPostRace = await reqJson("POST", `/bloodrequests/${reqConc.requestid}/respond`, { screeningAnswers: { drinksAlcohol: false, alcoholInPast24Hours: false, feelingHealthy: true, recentAntibioticsOrMedication: false, recentTattooOrSurgery: false, donatedInLast90Days: false, chronicIllness: false, isPregnantOrBreastfeeding: false } }, d1Token);
         assert(
             resReject.status === 200 &&
                 (resVolConc.status === 400 || resVolConc.status === 200) &&

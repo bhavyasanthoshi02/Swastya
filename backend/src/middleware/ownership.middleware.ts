@@ -12,11 +12,6 @@ export const checkHospitalOwnership = async (
             return res.status(401).json({ success: false, message: "Authentication required" });
         }
 
-        // Admin can access everything
-        if (user.role === "ADMIN") {
-            return next();
-        }
-
         const hospitalId = (req.params.hospitalId || req.params.id) as string;
 
         const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -25,6 +20,11 @@ export const checkHospitalOwnership = async (
                 success: false,
                 message: "Hospital not found",
             });
+        }
+
+        // Admin can access everything
+        if (user.role === "ADMIN") {
+            return next();
         }
 
         const hospital = await prisma.hospitals.findUnique({
@@ -278,18 +278,33 @@ export const requireApprovedBloodBank = async (
         if (!user) {
             return res.status(401).json({ success: false, message: "Authentication required" });
         }
-        if (user.role === "ADMIN" || user.role !== "BLOOD_BANK") {
+        if (user.role !== "BLOOD_BANK" && user.role !== "ADMIN") {
             return next();
         }
 
-        const bloodBank =
-            (req as any).bloodBank ||
-            (await prisma.bloodbanks.findUnique({
+        const targetBloodBankId = (req.params?.bloodBankId || req.params?.id) as string | undefined;
+        let bloodBank = (req as any).bloodBank;
+        if (
+            !bloodBank &&
+            targetBloodBankId &&
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetBloodBankId)
+        ) {
+            bloodBank = await prisma.bloodbanks.findUnique({
+                where: { bloodbankid: targetBloodBankId },
+                select: { bloodbankid: true, approvalstatus: true, userid: true },
+            });
+        }
+        if (!bloodBank && user.role === "BLOOD_BANK") {
+            bloodBank = await prisma.bloodbanks.findUnique({
                 where: { userid: user.userid },
-                select: { bloodbankid: true, approvalstatus: true },
-            }));
+                select: { bloodbankid: true, approvalstatus: true, userid: true },
+            });
+        }
 
         if (!bloodBank) {
+            if (user.role === "ADMIN") {
+                return next();
+            }
             return res.status(403).json({
                 success: false,
                 message: "Registered blood bank profile required for clinical operations",

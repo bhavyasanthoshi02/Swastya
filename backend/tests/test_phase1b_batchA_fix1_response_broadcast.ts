@@ -150,7 +150,7 @@ async function main() {
         });
         createdRequestIds.push(reqDV.requestid);
 
-        const rDV1 = await reqJson("POST", `/bloodrequests/${reqDV.requestid}/respond`, { screeningPassed: true }, d1Token);
+        const rDV1 = await reqJson("POST", `/bloodrequests/${reqDV.requestid}/respond`, { screeningAnswers: { drinksAlcohol: false, alcoholInPast24Hours: false, feelingHealthy: true, recentAntibioticsOrMedication: false, recentTattooOrSurgery: false, donatedInLast90Days: false, chronicIllness: false, isPregnantOrBreastfeeding: false } }, d1Token);
         const dvBroadcastAfter1 = await prisma.emergencybroadcasts.findFirst({ where: { requestid: reqDV.requestid } });
         assert(
             rDV1.status === 200 && dvBroadcastAfter1?.triggertype === "DIRECT_VOLUNTEER" && dvBroadcastAfter1?.totalresponded === 1,
@@ -158,7 +158,7 @@ async function main() {
             `status=${rDV1.status}, totalresponded=${dvBroadcastAfter1?.totalresponded}`
         );
 
-        const rDVDup = await reqJson("POST", `/bloodrequests/${reqDV.requestid}/respond`, { screeningPassed: true }, d1Token);
+        const rDVDup = await reqJson("POST", `/bloodrequests/${reqDV.requestid}/respond`, { screeningAnswers: { drinksAlcohol: false, alcoholInPast24Hours: false, feelingHealthy: true, recentAntibioticsOrMedication: false, recentTattooOrSurgery: false, donatedInLast90Days: false, chronicIllness: false, isPregnantOrBreastfeeding: false } }, d1Token);
         const dvBroadcastAfterDup = await prisma.emergencybroadcasts.findFirst({ where: { requestid: reqDV.requestid } });
         assert(
             rDVDup.status === 400 && dvBroadcastAfterDup?.totalresponded === 1,
@@ -206,7 +206,7 @@ async function main() {
         });
         assert(emBcast.success === true && emBcast.totalNotified === 3, "2a. Emergency broadcast notified 3 donors");
 
-        const rEmD1 = await reqJson("POST", `/bloodrequests/${reqEm.requestid}/respond`, { screeningPassed: true }, d1Token);
+        const rEmD1 = await reqJson("POST", `/bloodrequests/${reqEm.requestid}/respond`, { screeningAnswers: { drinksAlcohol: false, alcoholInPast24Hours: false, feelingHealthy: true, recentAntibioticsOrMedication: false, recentTattooOrSurgery: false, donatedInLast90Days: false, chronicIllness: false, isPregnantOrBreastfeeding: false } }, d1Token);
         const emBcastAfter1 = await prisma.emergencybroadcasts.findUnique({ where: { broadcastid: emBcast.broadcastId } });
         assert(
             rEmD1.status === 200 && emBcastAfter1?.totalresponded === 1 && emBcastAfter1?.status === "DONOR_RESPONDED",
@@ -229,9 +229,9 @@ async function main() {
 
         // 6. Concurrent responses (d2 & d3 + duplicate d1) do not double-count
         const [rConcD2, rConcD3, rConcD1Dup] = await Promise.all([
-            reqJson("POST", `/bloodrequests/${reqEm.requestid}/respond`, { screeningPassed: true }, d2Token),
-            reqJson("POST", `/bloodrequests/${reqEm.requestid}/respond`, { screeningPassed: true }, d3Token),
-            reqJson("POST", `/bloodrequests/${reqEm.requestid}/respond`, { screeningPassed: true }, d1Token),
+            reqJson("POST", `/bloodrequests/${reqEm.requestid}/respond`, { screeningAnswers: { drinksAlcohol: false, alcoholInPast24Hours: false, feelingHealthy: true, recentAntibioticsOrMedication: false, recentTattooOrSurgery: false, donatedInLast90Days: false, chronicIllness: false, isPregnantOrBreastfeeding: false } }, d2Token),
+            reqJson("POST", `/bloodrequests/${reqEm.requestid}/respond`, { screeningAnswers: { drinksAlcohol: false, alcoholInPast24Hours: false, feelingHealthy: true, recentAntibioticsOrMedication: false, recentTattooOrSurgery: false, donatedInLast90Days: false, chronicIllness: false, isPregnantOrBreastfeeding: false } }, d3Token),
+            reqJson("POST", `/bloodrequests/${reqEm.requestid}/respond`, { screeningAnswers: { drinksAlcohol: false, alcoholInPast24Hours: false, feelingHealthy: true, recentAntibioticsOrMedication: false, recentTattooOrSurgery: false, donatedInLast90Days: false, chronicIllness: false, isPregnantOrBreastfeeding: false } }, d1Token),
         ]);
         const emBcastAfterConc = await prisma.emergencybroadcasts.findUnique({ where: { broadcastid: emBcast.broadcastId } });
         assert(
@@ -299,7 +299,7 @@ async function main() {
             },
         });
 
-        const rOldResp = await reqJson("POST", `/bloodrequests/${reqMulti.requestid}/respond`, { screeningPassed: true }, d1Token);
+        const rOldResp = await reqJson("POST", `/bloodrequests/${reqMulti.requestid}/respond`, { screeningAnswers: { drinksAlcohol: false, alcoholInPast24Hours: false, feelingHealthy: true, recentAntibioticsOrMedication: false, recentTattooOrSurgery: false, donatedInLast90Days: false, chronicIllness: false, isPregnantOrBreastfeeding: false } }, d1Token);
         const bcOldAfter = await prisma.emergencybroadcasts.findUnique({ where: { broadcastid: bcOld.broadcastid } });
         const bcNewAfter = await prisma.emergencybroadcasts.findUnique({ where: { broadcastid: bcNew.broadcastid } });
         assert(

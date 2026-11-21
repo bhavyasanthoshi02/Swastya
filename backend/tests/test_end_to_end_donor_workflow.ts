@@ -164,7 +164,7 @@ async function runTests() {
 
         const screeningPayload = {
             estimatedArrival: "30 mins",
-            screening: {
+            screeningAnswers: {
                 drinksAlcohol: false,
                 alcoholInPast24Hours: false,
                 feelingHealthy: true,

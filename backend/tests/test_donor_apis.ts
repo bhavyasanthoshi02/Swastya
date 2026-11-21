@@ -58,26 +58,103 @@ async function runLiveTests() {
     const port = (server.address() as any).port;
     console.log(`Test server running on port ${port}`);
 
-    // Retrieve the real test donor from the actual PostgreSQL database
-    const realDonor = await prisma.donors.findFirst({
-        where: {
+    const tag = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const createdUserIds: string[] = [];
+    const createdRequestIds: string[] = [];
+
+    // Seed deterministic active donors and an active blood request
+    const primaryDonorUser = await prisma.users.create({
+        data: {
+            name: "Deterministic Donor One",
+            email: `donor_api_1_${tag}@swastya.org`,
+            password: "hashedpassword123",
+            phonenumber: "9800011001",
+            role: "DONOR",
+            isactive: true,
+            emailverified: true,
+        },
+    });
+    createdUserIds.push(primaryDonorUser.userid);
+
+    const realDonor = await prisma.donors.create({
+        data: {
+            userid: primaryDonorUser.userid,
             bloodgroup: "O_NEGATIVE",
+            dateofbirth: new Date("1995-05-15"),
+            gender: "MALE",
+            weight: 72,
+            address: "10 Donor Plaza",
+            city: "Mumbai",
+            state: "Maharashtra",
+            pincode: "400001",
+            availabilitystatus: "AVAILABLE",
+            iseligible: true,
+            lastdonationdate: null,
         },
-        include: {
-            users: true,
+        include: { users: true },
+    });
+
+    const otherDonorUser = await prisma.users.create({
+        data: {
+            name: "Deterministic Donor Two",
+            email: `donor_api_2_${tag}@swastya.org`,
+            password: "hashedpassword123",
+            phonenumber: "9800011002",
+            role: "DONOR",
+            isactive: true,
+            emailverified: true,
+        },
+    });
+    createdUserIds.push(otherDonorUser.userid);
+
+    const otherDonor = await prisma.donors.create({
+        data: {
+            userid: otherDonorUser.userid,
+            bloodgroup: "O_POSITIVE",
+            dateofbirth: new Date("1996-06-16"),
+            gender: "FEMALE",
+            weight: 60,
+            address: "20 Donor Plaza",
+            city: "Mumbai",
+            state: "Maharashtra",
+            pincode: "400001",
+            availabilitystatus: "AVAILABLE",
+            iseligible: true,
+            lastdonationdate: null,
         },
     });
 
-    assert.ok(realDonor, "Pre-condition failed: Real O_NEGATIVE donor record must exist in DB");
-    console.log(`Using real donor from DB: ID ${realDonor.donorid}, Blood Group: ${realDonor.bloodgroup}, User: ${realDonor.users.name} (${realDonor.users.email})`);
-
-    // Another donor for cross-donor authorization check
-    const otherDonor = await prisma.donors.findFirst({
-        where: {
-            donorid: { not: realDonor.donorid },
+    const reqOwnerUser = await prisma.users.create({
+        data: {
+            name: "Deterministic Req Owner",
+            email: `donor_api_req_${tag}@swastya.org`,
+            password: "hashedpassword123",
+            phonenumber: "9800011003",
+            role: "REQUESTER",
+            isactive: true,
+            emailverified: true,
         },
     });
-    assert.ok(otherDonor, "Pre-condition failed: At least two donor records must exist in DB");
+    createdUserIds.push(reqOwnerUser.userid);
+
+    const seededReq = await prisma.bloodrequests.create({
+        data: {
+            createdbyuserid: reqOwnerUser.userid,
+            patientname: "Donor API Test Patient",
+            patientage: 40,
+            patientgender: "MALE",
+            patientcontact: "9800011009",
+            bloodgroup: "O_POSITIVE",
+            bloodcomponent: "WHOLE_BLOOD",
+            unitsrequired: 1,
+            urgencylevel: "HIGH",
+            status: "VERIFIED",
+            requiredby: new Date(Date.now() + 86400000),
+        },
+    });
+    createdRequestIds.push(seededReq.requestid);
+
+    console.log(`Using seeded donor in DB: ID ${realDonor.donorid}, Blood Group: ${realDonor.bloodgroup}, User: ${realDonor.users.name} (${realDonor.users.email})`);
 
     const donorToken = generateToken(realDonor.userid, realDonor.users.role);
     const otherDonorToken = generateToken(otherDonor.userid, "DONOR");
@@ -146,8 +223,8 @@ async function runLiveTests() {
         assert.strictEqual(res.body.success, true);
         assert.strictEqual(res.body.donorBloodGroup, "O_NEGATIVE");
         assert.ok(res.body.total >= 1);
-        const match = res.body.requests[0];
-        assert.ok(match.requestid);
+        const match = res.body.requests.find((r: any) => r.requestid === seededReq.requestid);
+        assert.ok(match, "Seeded O_POSITIVE request must appear in O_NEGATIVE donor matching feed");
         assert.strictEqual(match.bloodgroup, "O_POSITIVE"); // O- donor matches O+ patient!
     });
 
@@ -215,16 +292,22 @@ async function runLiveTests() {
 
     // 7. GET /notifications
     await test("7. GET /notifications retrieves real user notifications with unread counter", async () => {
-        // Find user with notification in DB
-        const notif = await prisma.notification.findFirst();
-        assert.ok(notif, "Notification must exist in DB");
+        const notif = await prisma.notification.create({
+            data: {
+                userid: primaryDonorUser.userid,
+                requestid: seededReq.requestid,
+                type: "MATCH",
+                title: "Deterministic Notification Check",
+                message: "Test notification for GET /notifications",
+                isread: false,
+            },
+        });
 
-        const notifUserToken = generateToken(notif.userid, "REQUESTER");
         const res = await makeRequest(server, {
             path: "/notifications",
             method: "GET",
             headers: {
-                Authorization: `Bearer ${notifUserToken}`,
+                Authorization: `Bearer ${donorToken}`,
             },
         });
         assert.strictEqual(res.statusCode, 200);
@@ -262,8 +345,7 @@ async function runLiveTests() {
 
     // 9. POST /bloodrequests/:id/respond
     await test("9. POST /bloodrequests/:id/respond creates coordination notification for request owner", async () => {
-        const reqRecord = await prisma.bloodrequests.findFirst();
-        assert.ok(reqRecord, "Blood request must exist in DB");
+        const reqRecord = seededReq;
 
         // Clean up any previous test run response for idempotency
         await prisma.notification.deleteMany({
@@ -273,13 +355,29 @@ async function runLiveTests() {
             },
         });
 
-        const res = await makeRequest(server, {
-            path: `/bloodrequests/${reqRecord.requestid}/respond`,
-            method: "POST",
-            headers: {
-                Authorization: `Bearer ${donorToken}`,
+        const res = await makeRequest(
+            server,
+            {
+                path: `/bloodrequests/${reqRecord.requestid}/respond`,
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${donorToken}`,
+                    "Content-Type": "application/json",
+                },
             },
-        });
+            {
+                screeningAnswers: {
+                    drinksAlcohol: false,
+                    alcoholInPast24Hours: false,
+                    feelingHealthy: true,
+                    recentAntibioticsOrMedication: false,
+                    recentTattooOrSurgery: false,
+                    donatedInLast90Days: false,
+                    chronicIllness: false,
+                    isPregnantOrBreastfeeding: false,
+                },
+            }
+        );
         assert.strictEqual(res.statusCode, 200);
         assert.strictEqual(res.body.success, true);
         assert.strictEqual(res.body.requestId, reqRecord.requestid);
@@ -295,6 +393,19 @@ async function runLiveTests() {
         assert.ok(createdNotif);
         assert.strictEqual(createdNotif.userid, reqRecord.createdbyuserid);
     });
+
+    try {
+        if (createdRequestIds.length > 0) {
+            await prisma.notification.deleteMany({ where: { requestid: { in: createdRequestIds } } });
+            await prisma.bloodrequests.deleteMany({ where: { requestid: { in: createdRequestIds } } });
+        }
+        if (createdUserIds.length > 0) {
+            await prisma.notification.deleteMany({ where: { userid: { in: createdUserIds } } });
+            await prisma.users.deleteMany({ where: { userid: { in: createdUserIds } } });
+        }
+    } catch (cleanupErr) {
+        console.error("Cleanup warning:", cleanupErr);
+    }
 
     server.close();
     await prisma.$disconnect();

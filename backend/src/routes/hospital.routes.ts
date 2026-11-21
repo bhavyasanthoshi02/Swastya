@@ -235,34 +235,69 @@ router.put("/me", authenticate, authorize("HOSPITAL", "ADMIN"), async (req: Requ
             parsedApproval = approvalstatus;
         }
 
-        const updatedHospital = await prisma.hospitals.update({
-            where: {
-                hospitalid: existingHospital.hospitalid,
-            },
-            data: {
-                hospitalname: hospitalname !== undefined ? String(hospitalname).trim() : existingHospital.hospitalname,
-                contactpersonname: contactpersonname !== undefined ? String(contactpersonname).trim() : existingHospital.contactpersonname,
-                contactpersonphone: contactpersonphone !== undefined ? String(contactpersonphone).trim() : existingHospital.contactpersonphone,
-                address: address !== undefined ? String(address).trim() : existingHospital.address,
-                city: city !== undefined ? String(city).trim() : existingHospital.city,
-                state: state !== undefined ? String(state).trim() : existingHospital.state,
-                pincode: pincode !== undefined ? String(pincode).trim() : existingHospital.pincode,
-                latitude: latitude !== undefined ? latitude : existingHospital.latitude,
-                longitude: longitude !== undefined ? longitude : existingHospital.longitude,
-                approvalstatus: parsedApproval !== undefined ? parsedApproval : existingHospital.approvalstatus,
-                updatedat: new Date(),
-            },
-            include: {
-                users: {
-                    select: {
-                        userid: true,
-                        name: true,
-                        email: true,
-                        phonenumber: true,
-                        role: true,
+        const isRevocation = existingHospital.approvalstatus === "APPROVED" && parsedApproval !== undefined && parsedApproval !== "APPROVED";
+
+        const updatedHospital = await prisma.$transaction(async (tx) => {
+            const updated = await tx.hospitals.update({
+                where: {
+                    hospitalid: existingHospital.hospitalid,
+                },
+                data: {
+                    hospitalname: hospitalname !== undefined ? String(hospitalname).trim() : existingHospital.hospitalname,
+                    contactpersonname: contactpersonname !== undefined ? String(contactpersonname).trim() : existingHospital.contactpersonname,
+                    contactpersonphone: contactpersonphone !== undefined ? String(contactpersonphone).trim() : existingHospital.contactpersonphone,
+                    address: address !== undefined ? String(address).trim() : existingHospital.address,
+                    city: city !== undefined ? String(city).trim() : existingHospital.city,
+                    state: state !== undefined ? String(state).trim() : existingHospital.state,
+                    pincode: pincode !== undefined ? String(pincode).trim() : existingHospital.pincode,
+                    latitude: latitude !== undefined ? latitude : existingHospital.latitude,
+                    longitude: longitude !== undefined ? longitude : existingHospital.longitude,
+                    approvalstatus: parsedApproval !== undefined ? parsedApproval : existingHospital.approvalstatus,
+                    updatedat: new Date(),
+                },
+                include: {
+                    users: {
+                        select: {
+                            userid: true,
+                            name: true,
+                            email: true,
+                            phonenumber: true,
+                            role: true,
+                        },
                     },
                 },
-            },
+            });
+
+            if (isRevocation) {
+                const activeReqRows: any[] = await tx.$queryRawUnsafe(
+                    `SELECT requestid FROM bloodrequests WHERE hospitalid = $1::uuid AND status NOT IN ('FULFILLED', 'CANCELLED', 'EXPIRED', 'BLOOD_ARRANGED')`,
+                    existingHospital.hospitalid
+                );
+                if (activeReqRows && activeReqRows.length > 0) {
+                    const reqIds = activeReqRows.map((r: any) => r.requestid);
+                    if (typeof (tx as any).emergencybroadcasts?.updateMany === "function") {
+                        await (tx as any).emergencybroadcasts.updateMany({
+                            where: { requestid: { in: reqIds }, status: { in: ["ACTIVE", "DONOR_RESPONDED"] } },
+                            data: { status: "CANCELLED" },
+                        });
+                    }
+                    if (typeof (tx as any).emergencyschedulerjobs?.updateMany === "function") {
+                        await (tx as any).emergencyschedulerjobs.updateMany({
+                            where: {
+                                requestid: { in: reqIds },
+                                status: { in: ["PENDING", "PROCESSING"] },
+                            },
+                            data: {
+                                status: "CANCELLED",
+                                lasterror: "HOSPITAL_APPROVAL_REVOKED",
+                                lockeduntil: null,
+                            },
+                        });
+                    }
+                }
+            }
+
+            return updated;
         });
 
         return res.status(200).json({
@@ -465,8 +500,30 @@ async function createHospitalBloodRequestCore(hospital: any, user: any, body: an
         return res.status(400).json({ success: false, message: "Patient name cannot exceed 100 characters" });
     }
 
-    const age = typeof body.patientage === "number" ? body.patientage : parseInt(body.patientage, 10);
-    if (isNaN(age) || age <= 0 || age > 125) {
+    const parseStrictBoundedInt = (value: unknown, min: number, max: number): number | null => {
+        if (value === undefined || value === null || typeof value === "boolean") {
+            return null;
+        }
+        let parsed: number;
+        if (typeof value === "number") {
+            if (!Number.isInteger(value)) return null;
+            parsed = value;
+        } else if (typeof value === "string") {
+            const trimmed = value.trim();
+            if (!/^-?\d+$/.test(trimmed)) return null;
+            parsed = Number(trimmed);
+            if (!Number.isSafeInteger(parsed)) return null;
+        } else {
+            return null;
+        }
+        if (parsed < min || parsed > max) {
+            return null;
+        }
+        return parsed;
+    };
+
+    const age = parseStrictBoundedInt(body.patientage, 1, 125);
+    if (age === null) {
         return res.status(400).json({ success: false, message: "Valid patient age (1-125) is required" });
     }
 
@@ -494,9 +551,9 @@ async function createHospitalBloodRequestCore(hospital: any, user: any, body: an
         return res.status(400).json({ success: false, message: "Valid blood component is required" });
     }
 
-    const units = typeof body.unitsrequired === "number" ? body.unitsrequired : parseInt(body.unitsrequired, 10);
-    if (isNaN(units) || units < 1 || units > 100) {
-        return res.status(400).json({ success: false, message: "Units required must be between 1 and 100" });
+    const units = parseStrictBoundedInt(body.unitsrequired, 1, 50);
+    if (units === null) {
+        return res.status(400).json({ success: false, message: "Units required must be an integer between 1 and 50" });
     }
 
     const validUrgency = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
@@ -517,9 +574,13 @@ async function createHospitalBloodRequestCore(hospital: any, user: any, body: an
         return res.status(400).json({ success: false, message: "Required-by date and time cannot be in the past" });
     }
 
-    const radius = body.searchradius ? parseInt(body.searchradius, 10) : 15;
-    if (isNaN(radius) || radius < 1 || radius > 100) {
-        return res.status(400).json({ success: false, message: "Valid search radius (1-100 km) is required" });
+    let radius = 15;
+    if (body.searchradius !== undefined) {
+        const parsedRadius = parseStrictBoundedInt(body.searchradius, 1, 100);
+        if (parsedRadius === null) {
+            return res.status(400).json({ success: false, message: "Valid search radius (1-100 km) is required" });
+        }
+        radius = parsedRadius;
     }
 
     const isEmergency = body.isemergency !== undefined
@@ -552,6 +613,19 @@ async function createHospitalBloodRequestCore(hospital: any, user: any, body: an
 
     // Atomic transaction: Create blood request, status history, and confirmation notification
     const bloodRequest = await prisma.$transaction(async (tx) => {
+        // Enforce transactional row lock to guarantee hospital is approved and prevent concurrent revocation
+        const hospRows: any[] = await tx.$queryRawUnsafe(
+            `SELECT hospitalid, approvalstatus FROM hospitals WHERE hospitalid = $1::uuid FOR SHARE`,
+            hospital.hospitalid
+        );
+        const lockedHosp = hospRows?.[0];
+        if (!lockedHosp || lockedHosp.approvalstatus !== "APPROVED") {
+            throw Object.assign(
+                new Error("The specified hospital is not approved to coordinate blood requisitions"),
+                { statusCode: 400 }
+            );
+        }
+
         const created = await tx.bloodrequests.create({
             data: {
                 createdbyuserid: user.userid,
@@ -632,7 +706,7 @@ async function createHospitalBloodRequestCore(hospital: any, user: any, body: an
                 requestid: created.requestid,
                 type: notification_type.REQUEST,
                 title: "Hospital Blood Requisition Created",
-                message: `Requisition for patient ${created.patientname} (${created.bloodgroup}, ${created.unitsrequired} unit(s)) successfully registered at ${hospital.hospitalname}.`,
+                message: `Requisition (${created.bloodgroup}, ${created.unitsrequired} unit(s)) successfully registered at ${hospital.hospitalname}.`,
                 isread: false,
             },
         });
@@ -659,6 +733,14 @@ router.post("/me/bloodrequests", authenticate, authorize("HOSPITAL", "ADMIN"), r
             return res.status(403).json({
                 success: false,
                 message: "Hospital profile not found for this account. Requisition creation requires a linked hospital profile.",
+            });
+        }
+
+        if (hospital.approvalstatus !== "APPROVED") {
+            return res.status(403).json({
+                success: false,
+                message: `Hospital facility is ${hospital.approvalstatus}. Only APPROVED facilities may perform clinical operations.`,
+                approvalstatus: hospital.approvalstatus,
             });
         }
 
@@ -746,6 +828,13 @@ router.post(
             const user = (req as any).user;
             const hospitalId = req.params.hospitalId as string;
 
+            if (!hospitalId || !UUID_REGEX.test(hospitalId)) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Hospital not found",
+                });
+            }
+
             const hospital = await prisma.hospitals.findUnique({
                 where: { hospitalid: hospitalId },
             });
@@ -754,6 +843,13 @@ router.post(
                 return res.status(404).json({
                     success: false,
                     message: "Hospital not found",
+                });
+            }
+
+            if (hospital.approvalstatus !== "APPROVED") {
+                return res.status(400).json({
+                    success: false,
+                    message: "The specified hospital is not approved to coordinate blood requisitions",
                 });
             }
 
@@ -951,34 +1047,70 @@ router.put(
                 approvalstatus,
             } = req.body;
 
-            const hospital = await prisma.hospitals.update({
-                where: {
-                    hospitalid: hospitalId,
-                },
-                data: {
-                    hospitalname: hospitalname !== undefined ? String(hospitalname).trim() : existing.hospitalname,
-                    contactpersonname: contactpersonname !== undefined ? String(contactpersonname).trim() : existing.contactpersonname,
-                    contactpersonphone: contactpersonphone !== undefined ? String(contactpersonphone).trim() : existing.contactpersonphone,
-                    address: address !== undefined ? String(address).trim() : existing.address,
-                    city: city !== undefined ? String(city).trim() : existing.city,
-                    state: state !== undefined ? String(state).trim() : existing.state,
-                    pincode: pincode !== undefined ? String(pincode).trim() : existing.pincode,
-                    latitude: latitude !== undefined ? latitude : existing.latitude,
-                    longitude: longitude !== undefined ? longitude : existing.longitude,
-                    approvalstatus: user.role === "ADMIN" && approvalstatus !== undefined ? approvalstatus : existing.approvalstatus,
-                    updatedat: new Date(),
-                },
-                include: {
-                    users: {
-                        select: {
-                            userid: true,
-                            name: true,
-                            email: true,
-                            phonenumber: true,
-                            role: true,
+            const targetApproval = user.role === "ADMIN" && approvalstatus !== undefined ? approvalstatus : existing.approvalstatus;
+            const isRevocation = existing.approvalstatus === "APPROVED" && targetApproval !== "APPROVED";
+
+            const hospital = await prisma.$transaction(async (tx) => {
+                const updated = await tx.hospitals.update({
+                    where: {
+                        hospitalid: hospitalId,
+                    },
+                    data: {
+                        hospitalname: hospitalname !== undefined ? String(hospitalname).trim() : existing.hospitalname,
+                        contactpersonname: contactpersonname !== undefined ? String(contactpersonname).trim() : existing.contactpersonname,
+                        contactpersonphone: contactpersonphone !== undefined ? String(contactpersonphone).trim() : existing.contactpersonphone,
+                        address: address !== undefined ? String(address).trim() : existing.address,
+                        city: city !== undefined ? String(city).trim() : existing.city,
+                        state: state !== undefined ? String(state).trim() : existing.state,
+                        pincode: pincode !== undefined ? String(pincode).trim() : existing.pincode,
+                        latitude: latitude !== undefined ? latitude : existing.latitude,
+                        longitude: longitude !== undefined ? longitude : existing.longitude,
+                        approvalstatus: targetApproval,
+                        updatedat: new Date(),
+                    },
+                    include: {
+                        users: {
+                            select: {
+                                userid: true,
+                                name: true,
+                                email: true,
+                                phonenumber: true,
+                                role: true,
+                            },
                         },
                     },
-                },
+                });
+
+                if (isRevocation) {
+                    const activeReqRows: any[] = await tx.$queryRawUnsafe(
+                        `SELECT requestid FROM bloodrequests WHERE hospitalid = $1::uuid AND status NOT IN ('FULFILLED', 'CANCELLED', 'EXPIRED', 'BLOOD_ARRANGED')`,
+                        hospitalId
+                    );
+                    if (activeReqRows && activeReqRows.length > 0) {
+                        const reqIds = activeReqRows.map((r: any) => r.requestid);
+                        if (typeof (tx as any).emergencybroadcasts?.updateMany === "function") {
+                            await (tx as any).emergencybroadcasts.updateMany({
+                                where: { requestid: { in: reqIds }, status: { in: ["ACTIVE", "DONOR_RESPONDED"] } },
+                                data: { status: "CANCELLED" },
+                            });
+                        }
+                        if (typeof (tx as any).emergencyschedulerjobs?.updateMany === "function") {
+                            await (tx as any).emergencyschedulerjobs.updateMany({
+                                where: {
+                                    requestid: { in: reqIds },
+                                    status: { in: ["PENDING", "PROCESSING"] },
+                                },
+                                data: {
+                                    status: "CANCELLED",
+                                    lasterror: "HOSPITAL_APPROVAL_REVOKED",
+                                    lockeduntil: null,
+                                },
+                            });
+                        }
+                    }
+                }
+
+                return updated;
             });
 
             return res.status(200).json(hospital);

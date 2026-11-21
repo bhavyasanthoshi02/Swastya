@@ -7,7 +7,8 @@ import { authorize } from "../middleware/role.middleware";
 import { checkBloodBankOwnership, requireApprovedBloodBank } from "../middleware/ownership.middleware";
 import { getJwtSecret } from "../utils/jwt";
 import { approval_status, blood_group, blood_component, inventory_operation_type } from "../generated/prisma/enums";
-import { UnitTraceabilityService } from "../services/unitTraceability.service";
+import { UnitTraceabilityService, validateTtiPanelAndOverallStatus } from "../services/unitTraceability.service";
+import { buildScopedIdempotencyKey } from "../utils/idempotency";
 
 const router = Router();
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -55,8 +56,12 @@ async function validateClinicalSignOffUsers(
     const [tester, verifier, bloodBank] = await Promise.all([
         prisma.users.findUnique({ where: { userid: testedByUserId }, select: { userid: true, role: true, isactive: true } }),
         prisma.users.findUnique({ where: { userid: verifiedByUserId }, select: { userid: true, role: true, isactive: true } }),
-        prisma.bloodbanks.findUnique({ where: { bloodbankid: bloodBankId }, select: { userid: true } }),
+        prisma.bloodbanks.findUnique({ where: { bloodbankid: bloodBankId }, select: { userid: true, approvalstatus: true } }),
     ]);
+
+    if (!bloodBank || bloodBank.approvalstatus !== "APPROVED") {
+        return { ok: false, status: 403, message: "Blood bank facility is not APPROVED for clinical operations" };
+    }
 
     const allowedRoles = new Set(["BLOOD_BANK", "ADMIN"]);
     if (
@@ -475,9 +480,10 @@ router.post(
             });
             const requestHash = crypto.createHash("sha256").update(canonicalPayload).digest("hex");
 
-            // 9. Pre-transaction Idempotency Fast Path
+            // 9. Pre-transaction Idempotency Fast Path (Scoped by bloodBankId + operation + idempotencyKey)
+            const scopedIdempotencyKey = buildScopedIdempotencyKey(bloodBankId, "STOCK_ADDITION", idempotencyKey);
             const existingTx = await prisma.inventoryledger.findUnique({
-                where: { idempotencykey: idempotencyKey },
+                where: { idempotencykey: scopedIdempotencyKey },
             });
             if (existingTx) {
                 if (existingTx.requesthash !== requestHash) {
@@ -552,7 +558,7 @@ router.post(
                             previousreserved: prevReserved,
                             newreserved: prevReserved,
                             reason: cleanReason,
-                            idempotencykey: idempotencyKey,
+                            idempotencykey: scopedIdempotencyKey,
                             requesthash: requestHash,
                             responsecode: responseCode,
                             responsebody: responsePayload,
@@ -569,7 +575,7 @@ router.post(
                     for (let attempt = 0; attempt < 3; attempt++) {
                         await new Promise((resolve) => setTimeout(resolve, 50));
                         const committed = await prisma.inventoryledger.findUnique({
-                            where: { idempotencykey: idempotencyKey },
+                            where: { idempotencykey: scopedIdempotencyKey },
                         });
                         if (committed) {
                             if (committed.requesthash !== requestHash) {
@@ -685,9 +691,10 @@ router.patch(
             });
             const requestHash = crypto.createHash("sha256").update(canonicalPayload).digest("hex");
 
-            // 7. Pre-transaction Idempotency Fast Path
+            // 7. Pre-transaction Idempotency Fast Path (Scoped by bloodBankId + operation + idempotencyKey)
+            const scopedIdempotencyKey = buildScopedIdempotencyKey(bloodBankId, "STOCK_ADJUSTMENT", idempotencyKey);
             const existingTx = await prisma.inventoryledger.findUnique({
-                where: { idempotencykey: idempotencyKey },
+                where: { idempotencykey: scopedIdempotencyKey },
             });
             if (existingTx) {
                 if (existingTx.requesthash !== requestHash) {
@@ -778,7 +785,7 @@ router.patch(
                             previousreserved: prevReserved,
                             newreserved: prevReserved,
                             reason: cleanReason,
-                            idempotencykey: idempotencyKey,
+                            idempotencykey: scopedIdempotencyKey,
                             requesthash: requestHash,
                             responsecode: 200,
                             responsebody: responsePayload,
@@ -801,7 +808,7 @@ router.patch(
                     for (let attempt = 0; attempt < 3; attempt++) {
                         await new Promise((resolve) => setTimeout(resolve, 50));
                         const committed = await prisma.inventoryledger.findUnique({
-                            where: { idempotencykey: idempotencyKey },
+                            where: { idempotencykey: scopedIdempotencyKey },
                         });
                         if (committed) {
                             if (committed.requesthash !== requestHash) {
@@ -1461,9 +1468,30 @@ router.post(
                 return res.status(403).json({ success: false, message: "Access denied: blood unit belongs to another blood bank" });
             }
 
+            // 1. Reject client-supplied verifiedByUserId (two-person sign-off requires independent verifier authentication)
+            const rawVerifiedBy = req.body?.verifiedByUserId ?? req.body?.verifiedbyuserid;
+            if (rawVerifiedBy !== undefined && rawVerifiedBy !== null && String(rawVerifiedBy).trim() !== "") {
+                return res.status(403).json({
+                    success: false,
+                    message:
+                        "Client-supplied verifiedByUserId is prohibited: two-person clinical sign-off requires independent verifier authentication via the verification endpoint",
+                });
+            }
+
+            // 2. Reject client-supplied testedByUserId spoofing; derive testedByUserId exclusively from authenticated tester's JWT
+            const rawTestedBy = req.body?.testedByUserId ?? req.body?.testedbyuserid;
+            if (rawTestedBy !== undefined && rawTestedBy !== null && String(rawTestedBy).trim() !== "") {
+                if (String(rawTestedBy).trim() !== user.userid) {
+                    return res.status(403).json({
+                        success: false,
+                        message:
+                            "Tester spoofing prohibited: testedByUserId must derive exclusively from the authenticated tester's JWT",
+                    });
+                }
+            }
+            const testedByUserId: string = user.userid;
+
             let {
-                testedByUserId,
-                verifiedByUserId,
                 hivResult,
                 hbvResult,
                 hcvResult,
@@ -1477,16 +1505,16 @@ router.post(
                 medicalofficername,
                 testkitdetails,
                 notes,
-            } = req.body;
+            } = req.body || {};
 
             if (testresults && typeof testresults === "object") {
-                if (!hivResult && testresults.hiv) hivResult = testresults.hiv;
-                if (!hbvResult && testresults.hbv) hbvResult = testresults.hbv;
-                if (!hcvResult && testresults.hcv) hcvResult = testresults.hcv;
-                if (!syphilisResult && testresults.syphilis) syphilisResult = testresults.syphilis;
-                if (!malariaResult && testresults.malaria) malariaResult = testresults.malaria;
+                if (hivResult === undefined && testresults.hiv !== undefined) hivResult = testresults.hiv;
+                if (hbvResult === undefined && testresults.hbv !== undefined) hbvResult = testresults.hbv;
+                if (hcvResult === undefined && testresults.hcv !== undefined) hcvResult = testresults.hcv;
+                if (syphilisResult === undefined && testresults.syphilis !== undefined) syphilisResult = testresults.syphilis;
+                if (malariaResult === undefined && testresults.malaria !== undefined) malariaResult = testresults.malaria;
             }
-            if (!overallStatus && overallstatus) overallStatus = overallstatus;
+            if (overallStatus === undefined && overallstatus !== undefined) overallStatus = overallstatus;
             if (!laboratoryRemarks) {
                 const remarksParts: string[] = [];
                 if (labtechnicianname) remarksParts.push(`Technician: ${labtechnicianname}`);
@@ -1496,27 +1524,7 @@ router.post(
                 if (remarksParts.length > 0) laboratoryRemarks = remarksParts.join(" | ");
             }
 
-            if (!testedByUserId) {
-                testedByUserId = user.userid;
-            }
-            if (!verifiedByUserId) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Explicit verifiedByUserId is required for clinical dual sign-off",
-                });
-            }
-
-            const signOffCheck = await validateClinicalSignOffUsers(testedByUserId, verifiedByUserId, bloodBankId);
-            if (!signOffCheck.ok) {
-                return res.status(signOffCheck.status).json({
-                    success: false,
-                    message: signOffCheck.message,
-                });
-            }
-
             if (
-                !testedByUserId ||
-                !verifiedByUserId ||
                 !hivResult ||
                 !hbvResult ||
                 !hcvResult ||
@@ -1526,34 +1534,161 @@ router.post(
             ) {
                 return res.status(400).json({
                     success: false,
-                    message: "All 5 screening panel results (HIV, HBV, HCV, Syphilis, Malaria), overallStatus, and dual-signoff users are required",
+                    message: "All 5 screening panel results (HIV, HBV, HCV, Syphilis, Malaria) and overallStatus are required",
                 });
             }
 
-            const result = await UnitTraceabilityService.recordScreeningClearance({
-                unitId,
-                actorUserId: user.userid,
-                testedByUserId,
-                verifiedByUserId,
+            // 3. Strict 5-panel TTI marker & overallStatus consistency validation
+            const ttiCheck = validateTtiPanelAndOverallStatus({
                 hivResult,
                 hbvResult,
                 hcvResult,
                 syphilisResult,
                 malariaResult,
                 overallStatus,
+            });
+            if (!ttiCheck.ok) {
+                return res.status(ttiCheck.statusCode).json({
+                    success: false,
+                    message: ttiCheck.message,
+                });
+            }
+
+            const result = await UnitTraceabilityService.recordScreeningSubmission({
+                unitId,
+                bloodBankId,
+                actorUserId: user.userid,
+                testedByUserId,
+                hivResult: ttiCheck.hivResult,
+                hbvResult: ttiCheck.hbvResult,
+                hcvResult: ttiCheck.hcvResult,
+                syphilisResult: ttiCheck.syphilisResult,
+                malariaResult: ttiCheck.malariaResult,
+                overallStatus: ttiCheck.overallStatus,
                 laboratoryRemarks,
             });
 
             return res.status(200).json(result);
         } catch (error: any) {
-            console.error("Error recording screening clearance:", error);
+            console.error("Error recording screening submission:", error);
             const status = error.statusCode || 500;
             return res.status(status).json({
                 success: false,
-                message: error.message || "Failed to record screening clearance",
+                message: error.message || "Failed to record screening submission",
             });
         }
     }
+);
+
+/*
+ * STEP 2: INDEPENDENT CLINICAL VERIFICATION OF TTI SCREENING
+ * POST /bloodbanks/:bloodBankId/units/:unitId/screening/verify
+ * POST /bloodbanks/:bloodBankId/units/:unitId/screening/:screeningId/verify
+ */
+const handleVerifyUnitScreening = async (req: Request, res: Response) => {
+    try {
+        const user = (req as any).user;
+        const bloodBankId = (Array.isArray(req.params.bloodBankId) ? req.params.bloodBankId[0] : req.params.bloodBankId) as string;
+        const unitId = (Array.isArray(req.params.unitId) ? req.params.unitId[0] : req.params.unitId) as string;
+        const paramScreeningId = req.params.screeningId
+            ? ((Array.isArray(req.params.screeningId) ? req.params.screeningId[0] : req.params.screeningId) as string)
+            : undefined;
+        const bodyScreeningId = req.body?.screeningId ?? req.body?.screeningid;
+        const screeningId = paramScreeningId || (bodyScreeningId ? String(bodyScreeningId).trim() : undefined);
+
+        if (!UUID_REGEX.test(unitId)) {
+            return res.status(404).json({ success: false, message: "Blood unit not found" });
+        }
+        if (screeningId !== undefined && !UUID_REGEX.test(screeningId)) {
+            return res.status(400).json({ success: false, message: "Invalid screeningId UUID format" });
+        }
+
+        // Reject client-supplied testedByUserId or mismatched verifiedByUserId spoofing
+        const rawTestedBy = req.body?.testedByUserId ?? req.body?.testedbyuserid;
+        if (rawTestedBy !== undefined && rawTestedBy !== null && String(rawTestedBy).trim() !== "") {
+            return res.status(403).json({
+                success: false,
+                message: "Cannot supply or override testedByUserId during independent clinical verification",
+            });
+        }
+
+        const rawVerifiedBy = req.body?.verifiedByUserId ?? req.body?.verifiedbyuserid;
+        if (rawVerifiedBy !== undefined && rawVerifiedBy !== null && String(rawVerifiedBy).trim() !== "") {
+            if (String(rawVerifiedBy).trim() !== user.userid) {
+                return res.status(403).json({
+                    success: false,
+                    message:
+                        "Verifier spoofing prohibited: verifiedByUserId must derive exclusively from the authenticated verifier's JWT",
+                });
+            }
+        }
+
+        const ownedUnit = await prisma.inventoryunits.findUnique({
+            where: { unitid: unitId },
+            select: { unitid: true, bloodbankid: true },
+        });
+        if (!ownedUnit) {
+            return res.status(404).json({ success: false, message: "Blood unit not found" });
+        }
+        if (ownedUnit.bloodbankid !== bloodBankId) {
+            return res.status(403).json({ success: false, message: "Access denied: blood unit belongs to another blood bank" });
+        }
+
+        const laboratoryRemarks = req.body?.laboratoryRemarks ?? req.body?.notes ?? req.body?.remarks;
+
+        const result = await UnitTraceabilityService.verifyScreeningClearance({
+            unitId,
+            bloodBankId,
+            screeningId,
+            verifierUserId: user.userid,
+            laboratoryRemarks: laboratoryRemarks ? String(laboratoryRemarks).trim() : undefined,
+        });
+
+        return res.status(200).json(result);
+    } catch (error: any) {
+        console.error("Error verifying screening clearance:", error);
+        const status = error.statusCode || 500;
+        return res.status(status).json({
+            success: false,
+            message: error.message || "Failed to verify screening clearance",
+        });
+    }
+};
+
+router.post(
+    "/:bloodBankId/units/:unitId/screening/verify",
+    authenticate,
+    authorize("BLOOD_BANK", "ADMIN"),
+    checkBloodBankOwnership,
+    requireApprovedBloodBank,
+    handleVerifyUnitScreening
+);
+
+router.patch(
+    "/:bloodBankId/units/:unitId/screening/verify",
+    authenticate,
+    authorize("BLOOD_BANK", "ADMIN"),
+    checkBloodBankOwnership,
+    requireApprovedBloodBank,
+    handleVerifyUnitScreening
+);
+
+router.post(
+    "/:bloodBankId/units/:unitId/screening/:screeningId/verify",
+    authenticate,
+    authorize("BLOOD_BANK", "ADMIN"),
+    checkBloodBankOwnership,
+    requireApprovedBloodBank,
+    handleVerifyUnitScreening
+);
+
+router.patch(
+    "/:bloodBankId/units/:unitId/screening/:screeningId/verify",
+    authenticate,
+    authorize("BLOOD_BANK", "ADMIN"),
+    checkBloodBankOwnership,
+    requireApprovedBloodBank,
+    handleVerifyUnitScreening
 );
 
 /*
@@ -1610,6 +1745,102 @@ router.get(
     }
 );
 
+/**
+ * AUD-09 Privacy Projection:
+ * Replaces unrestricted database object exposure with minimal, role-specific projections.
+ * - When assignment is NOT ACCEPTED (PENDING_ACCEPTANCE, DECLINED, CANCELLED):
+ *   Prescription fileurl, file metadata, patient contact details, patient name, notes, and private hospital fields are strictly omitted.
+ * - When assignment is ACCEPTED:
+ *   Only fields genuinely required for clinical blood bank workflow (patientname for crossmatch bag labeling, hospital delivery address & liaison contact) are revealed.
+ *   Patient personal contact details (patientcontact) and private hospital fields (registration number, user id, internal coordinates) remain strictly excluded across all statuses.
+ */
+function projectAssignmentForBloodBank(assignment: any) {
+    if (!assignment) return null;
+    const isAccepted = assignment.assignmentstatus === "ACCEPTED";
+    const req = assignment.bloodrequests;
+
+    let projectedRequest: any = undefined;
+    if (req) {
+        let projectedHospital: any = undefined;
+        if (req.hospitals) {
+            projectedHospital = {
+                hospitalid: req.hospitals.hospitalid,
+                hospitalname: req.hospitals.hospitalname,
+                city: req.hospitals.city,
+                state: req.hospitals.state,
+                ...(isAccepted
+                    ? {
+                          address: req.hospitals.address,
+                          contactpersonname: req.hospitals.contactpersonname,
+                          contactpersonphone: req.hospitals.contactpersonphone,
+                      }
+                    : {}),
+            };
+        }
+
+        let projectedPrescription: any = undefined;
+        if (req.prescription) {
+            projectedPrescription = {
+                status: req.prescription.status,
+                ...(isAccepted
+                    ? {
+                          doctorname: req.prescription.doctorname,
+                          hospitalname: req.prescription.hospitalname,
+                          verificationdate: req.prescription.verificationdate,
+                          fileurl: req.prescription.fileurl,
+                      }
+                    : {}),
+            };
+        }
+
+        projectedRequest = {
+            requestid: req.requestid,
+            bloodgroup: req.bloodgroup,
+            bloodcomponent: req.bloodcomponent,
+            unitsrequired: req.unitsrequired,
+            urgencylevel: req.urgencylevel,
+            isemergency: req.isemergency,
+            requiredby: req.requiredby,
+            status: req.status,
+            patientage: req.patientage,
+            patientgender: req.patientgender,
+            ...(isAccepted
+                ? {
+                      patientname: req.patientname,
+                      notes: req.notes,
+                  }
+                : {}),
+            ...(projectedHospital ? { hospitals: projectedHospital } : {}),
+            ...(projectedPrescription ? { prescription: projectedPrescription } : {}),
+        };
+    }
+
+    return {
+        assignmentid: assignment.assignmentid,
+        requestid: assignment.requestid,
+        bloodbankid: assignment.bloodbankid,
+        assignmentstatus: assignment.assignmentstatus,
+        assignedat: assignment.assignedat,
+        respondedat: assignment.respondedat,
+        declinereason: assignment.declinereason,
+        assignedby: assignment.assignedby
+            ? {
+                  userid: assignment.assignedby.userid,
+                  name: assignment.assignedby.name,
+                  role: assignment.assignedby.role,
+              }
+            : null,
+        respondedby: assignment.respondedby
+            ? {
+                  userid: assignment.respondedby.userid,
+                  name: assignment.respondedby.name,
+                  role: assignment.respondedby.role,
+              }
+            : null,
+        ...(projectedRequest ? { bloodrequests: projectedRequest } : {}),
+    };
+}
+
 /*
  * LIST REQUISITION ASSIGNMENTS FOR BLOOD BANK
  * GET /bloodbanks/:bloodBankId/assignments
@@ -1645,13 +1876,67 @@ router.get(
 
             return res.status(200).json({
                 success: true,
-                assignments,
+                assignments: assignments.map(projectAssignmentForBloodBank),
             });
         } catch (error: any) {
             console.error("Error fetching assignments:", error);
             return res.status(500).json({
                 success: false,
                 message: "Failed to fetch requisition assignments",
+            });
+        }
+    }
+);
+
+/*
+ * GET SINGLE REQUISITION ASSIGNMENT FOR BLOOD BANK
+ * GET /bloodbanks/:bloodBankId/assignments/:assignmentId
+ */
+router.get(
+    "/:bloodBankId/assignments/:assignmentId",
+    authenticate,
+    authorize("BLOOD_BANK", "ADMIN"),
+    checkBloodBankOwnership,
+    requireApprovedBloodBank,
+    async (req: Request, res: Response) => {
+        try {
+            const bloodBankId = (Array.isArray(req.params.bloodBankId) ? req.params.bloodBankId[0] : req.params.bloodBankId) as string;
+            const assignmentId = (Array.isArray(req.params.assignmentId) ? req.params.assignmentId[0] : req.params.assignmentId) as string;
+
+            if (!UUID_REGEX.test(assignmentId)) {
+                return res.status(404).json({ success: false, message: "Requisition assignment not found" });
+            }
+
+            const assignment = await prisma.requisitionassignments.findFirst({
+                where: {
+                    assignmentid: assignmentId,
+                    bloodbankid: bloodBankId,
+                },
+                include: {
+                    bloodrequests: {
+                        include: {
+                            hospitals: true,
+                            prescription: true,
+                        },
+                    },
+                    assignedby: { select: SAFE_USER_SELECT },
+                    respondedby: { select: SAFE_USER_SELECT },
+                },
+            });
+
+            if (!assignment) {
+                return res.status(404).json({ success: false, message: "Requisition assignment not found for this blood bank" });
+            }
+
+            return res.status(200).json({
+                success: true,
+                assignment: projectAssignmentForBloodBank(assignment),
+            });
+        } catch (error: any) {
+            console.error("Error fetching assignment:", error);
+            return res.status(500).json({
+                success: false,
+                message: "Failed to fetch requisition assignment",
             });
         }
     }
@@ -1785,6 +2070,46 @@ router.post(
     }
 );
 
+function projectReservationForBloodBank(res: any) {
+    if (!res) return null;
+    let projectedRequest: any = undefined;
+    if (res.bloodrequests) {
+        const req = res.bloodrequests;
+        let projectedHospital: any = undefined;
+        if (req.hospitals) {
+            projectedHospital = {
+                hospitalid: req.hospitals.hospitalid,
+                hospitalname: req.hospitals.hospitalname,
+                city: req.hospitals.city,
+                state: req.hospitals.state,
+                address: req.hospitals.address,
+                contactpersonname: req.hospitals.contactpersonname,
+                contactpersonphone: req.hospitals.contactpersonphone,
+            };
+        }
+        projectedRequest = {
+            requestid: req.requestid,
+            patientname: req.patientname,
+            patientage: req.patientage,
+            patientgender: req.patientgender,
+            bloodgroup: req.bloodgroup,
+            bloodcomponent: req.bloodcomponent,
+            unitsrequired: req.unitsrequired,
+            urgencylevel: req.urgencylevel,
+            isemergency: req.isemergency,
+            requiredby: req.requiredby,
+            status: req.status,
+            notes: req.notes,
+            ...(projectedHospital ? { hospitals: projectedHospital } : {}),
+        };
+    }
+
+    return {
+        ...res,
+        bloodrequests: projectedRequest,
+    };
+}
+
 /*
  * LIST RESERVATIONS FOR BLOOD BANK
  * GET /bloodbanks/:bloodBankId/reservations
@@ -1823,7 +2148,7 @@ router.get(
 
             return res.status(200).json({
                 success: true,
-                reservations,
+                reservations: reservations.map(projectReservationForBloodBank),
             });
         } catch (error: any) {
             console.error("Error listing reservations:", error);
@@ -1895,6 +2220,7 @@ router.post(
 
             const result = await UnitTraceabilityService.recordCrossmatch({
                 reservationItemId,
+                bloodBankId,
                 actorUserId: user.userid,
                 testedByUserId,
                 verifiedByUserId,
@@ -1975,6 +2301,7 @@ router.post(
 
             const result = await UnitTraceabilityService.dispatchReservation({
                 reservationId,
+                bloodBankId,
                 actorUserId: user.userid,
                 courierName,
                 trackingId,
@@ -2047,7 +2374,8 @@ router.post(
                 reservationId,
                 user.userid,
                 reason.trim(),
-                idempotencyKey
+                idempotencyKey,
+                bloodBankId
             );
 
             return res.status(200).json(result);
@@ -2101,7 +2429,19 @@ router.post(
                 });
             }
 
-            const result = await UnitTraceabilityService.discardUnit(unitId, user.userid, reason.trim());
+            const rawIdempotencyKey = req.headers["idempotency-key"];
+            const idempotencyKey =
+                typeof rawIdempotencyKey === "string" && rawIdempotencyKey.trim()
+                    ? rawIdempotencyKey.trim()
+                    : undefined;
+
+            const result = await UnitTraceabilityService.discardUnit(
+                unitId,
+                user.userid,
+                reason.trim(),
+                bloodBankId,
+                idempotencyKey
+            );
 
             return res.status(200).json(result);
         } catch (error: any) {

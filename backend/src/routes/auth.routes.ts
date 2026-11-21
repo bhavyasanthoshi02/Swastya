@@ -59,7 +59,10 @@ const normalizePublicRole = (r?: string): user_role | null => {
 };
 
 router.get("/test", (_req, res) => {
-    res.json({
+    if (process.env.NODE_ENV === "production") {
+        return res.status(404).json({ success: false, message: "Not found" });
+    }
+    return res.json({
         message: "Auth route working",
     });
 });
@@ -597,30 +600,28 @@ router.post("/login", async (req: Request, res: Response) => {
             },
         });
 
-        if (!user) {
-            return res.status(404).json({
+        // Constant-time dummy hash to prevent timing-based user enumeration
+        const DUMMY_HASH = "$2b$10$CwTycUXWue0Thq9StjUM0uJ8w0R/9k7Y0vR5M6d3mJ1Gk8n6U8y1a";
+        const passwordHashToCompare = user ? user.password : DUMMY_HASH;
+        const isPasswordValid = await bcrypt.compare(password, passwordHashToCompare);
+
+        // Constant error response for both non-existent users and incorrect passwords (prevents account enumeration)
+        if (!user || !isPasswordValid) {
+            console.warn(
+                `[AUTH] Failed login attempt for email: ${email.trim().toLowerCase()} - Reason: ${!user ? "USER_NOT_FOUND" : "INVALID_PASSWORD"}`
+            );
+            return res.status(401).json({
                 success: false,
-                message: "User not found",
+                message: "Invalid email or password",
             });
         }
 
+        // Account activation check (only evaluated after valid credential verification)
         if (!user.isactive) {
             return res.status(403).json({
                 success: false,
                 message: "Account is inactive or pending activation.",
                 pendingActivation: user.emailverified === false,
-            });
-        }
-
-        const isPasswordValid = await bcrypt.compare(
-            password,
-            user.password
-        );
-
-        if (!isPasswordValid) {
-            return res.status(401).json({
-                success: false,
-                message: "Invalid password",
             });
         }
 
@@ -648,11 +649,20 @@ router.post("/login", async (req: Request, res: Response) => {
 
 /*
  * VERIFY ACTIVATION TOKEN
- * GET /auth/verify-activation-token
+ * POST /auth/verify-activation-token
+ * Body: { token: string }
+ * Note: Query parameters are strictly prohibited to prevent token leakage in URL history / server logs.
  */
-router.get("/verify-activation-token", async (req: Request, res: Response) => {
+router.post("/verify-activation-token", async (req: Request, res: Response) => {
     try {
-        const rawToken = req.query.token as string;
+        if (req.query.token) {
+            return res.status(400).json({
+                success: false,
+                message: "Activation token must be provided in request body, not as URL query parameter",
+            });
+        }
+
+        const rawToken = req.body?.token;
         if (!rawToken || typeof rawToken !== "string") {
             return res.status(400).json({
                 success: false,
@@ -724,14 +734,29 @@ router.get("/verify-activation-token", async (req: Request, res: Response) => {
     }
 });
 
+// Reject GET with query parameters to enforce body transmission
+router.get("/verify-activation-token", (_req: Request, res: Response) => {
+    return res.status(400).json({
+        success: false,
+        message: "Transmitting activation tokens via URL query parameters is prohibited. Use POST /auth/verify-activation-token with token in request body.",
+    });
+});
+
 /*
  * ACTIVATE DONOR ACCOUNT
- * POST /auth/activate-donor
- * Secure account onboarding where the donor establishes their own personal password.
+ * POST /auth/activate-donor and POST /auth/activate
+ * Secure account onboarding where the donor establishes their own personal password via request body.
  */
-router.post("/activate-donor", async (req: Request, res: Response) => {
+const handleDonorActivation = async (req: Request, res: Response) => {
     try {
-        const { token: rawToken, password } = req.body;
+        if (req.query.token) {
+            return res.status(400).json({
+                success: false,
+                message: "Activation token must be provided in request body, not as URL query parameter",
+            });
+        }
+
+        const { token: rawToken, password } = req.body || {};
 
         if (!rawToken || typeof rawToken !== "string") {
             return res.status(400).json({
@@ -850,6 +875,9 @@ router.post("/activate-donor", async (req: Request, res: Response) => {
             message: "Failed to activate donor account",
         });
     }
-});
+};
+
+router.post("/activate-donor", handleDonorActivation);
+router.post("/activate", handleDonorActivation);
 
 export default router;

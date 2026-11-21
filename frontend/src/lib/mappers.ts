@@ -286,10 +286,10 @@ export function mapBackendDonorToProfile(
   const name = user?.name || donor?.users?.name || "Voluntary Donor";
   const email = user?.email || donor?.users?.email || "donor@swastya.org";
   const phone = user?.phonenumber || donor?.users?.phonenumber || "+91 Phone on file";
-  const city = donor?.city || "Bengaluru";
-  const state = donor?.state || "Karnataka";
-  const pincode = donor?.pincode || "560001";
-  const location = `${city}, ${state} (${pincode})`;
+  const city = donor?.city ? String(donor.city).trim() : "";
+  const state = donor?.state ? String(donor.state).trim() : "";
+  const pincode = donor?.pincode ? String(donor.pincode).trim() : "";
+  const location = city ? `${city}${state ? `, ${state}` : ""}${pincode ? ` (${pincode})` : ""}` : (donor?.address ? String(donor.address).trim() : "Location unavailable");
 
   const availability = mapAvailabilityToDisplay(donor?.availabilitystatus);
 
