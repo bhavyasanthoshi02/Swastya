@@ -31,6 +31,11 @@ model bloodbanks {
   requisitionassignments requisitionassignments[]
   bloodreservations  bloodreservations[]
   unitdispositionhistory unitdispositionhistory[]
+  equipment          equipment[]
+  equipmentcalibrations equipmentcalibrations[]
+  equipmentmaintenance equipmentmaintenance[]
+  equipmentbreakdowns equipmentbreakdowns[]
+  equipmentstatushistory equipmentstatushistory[]
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -53,6 +58,7 @@ model bloodrequests {
   longitude            Decimal?               @db.Decimal(9, 6)
   requiredby           DateTime               @db.Timestamp(6)
   status               request_status?        @default(CREATED)
+  isdraft              Boolean?               @default(false)
   notes                String?
   createdat            DateTime?              @default(now()) @db.Timestamp(6)
   updatedat            DateTime?              @default(now()) @db.Timestamp(6)
@@ -71,6 +77,8 @@ model bloodrequests {
   requisitionassignments requisitionassignments[]
   bloodreservations    bloodreservations[]
   clinicalcrossmatches clinicalcrossmatches[]
+  requestdocuments     requestdocuments[]
+  documentverifications documentverifications[]
 
   @@index([status], map: "idx_bloodrequests_status")
 }
@@ -387,6 +395,16 @@ model users {
   clinicalcrossmatches_testedby clinicalcrossmatches[] @relation("CrossmatchTestedBy")
   clinicalcrossmatches_verifiedby clinicalcrossmatches[] @relation("CrossmatchVerifiedBy")
   unitdispositionhistory_actor unitdispositionhistory[] @relation("DispositionActor")
+  requestdocuments requestdocuments[]
+  documentverifications_reviewed documentverifications[] @relation("VerificationReviewer")
+  documentreviewaudit documentreviewaudit[]
+  equipment_created       equipment[]               @relation("equipment_creator")
+  calibrations_created    equipmentcalibrations[]   @relation("calibration_creator")
+  calibrations_verified   equipmentcalibrations[]   @relation("calibration_verifier")
+  maintenance_created     equipmentmaintenance[]    @relation("maintenance_creator")
+  breakdowns_reported     equipmentbreakdowns[]     @relation("breakdown_reporter")
+  breakdowns_resolved     equipmentbreakdowns[]     @relation("breakdown_resolver")
+  equipmentstatushistory  equipmentstatushistory[]  @relation("status_changed_by")
 
   @@index([email], map: "idx_users_email")
 }
@@ -617,6 +635,239 @@ model unitdispositionhistory {
   actor              users          @relation("DispositionActor", fields: [actoruserid], references: [userid], onDelete: Restrict, onUpdate: NoAction, map: "fk_disposition_actor")
 }
 
+model requestdocuments {
+  documentid       String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  requestid        String        @db.Uuid
+  documenttype     String        @db.VarChar(50)
+  documentname     String        @db.VarChar(255)
+  ismandatory      Boolean       @default(true)
+  filepath         String
+  originalfilename String        @db.VarChar(255)
+  mimetype         String        @db.VarChar(100)
+  filesize         Int
+  version          Int           @default(1)
+  filehash         String?       @db.VarChar(64)
+  uploadedbyuserid String        @db.Uuid
+  uploadedat       DateTime?     @default(now()) @db.Timestamp(6)
+  updatedat        DateTime?     @default(now()) @db.Timestamp(6)
+  bloodrequests    bloodrequests @relation(fields: [requestid], references: [requestid], onDelete: Cascade, onUpdate: NoAction, map: "fk_document_request")
+  users            users         @relation(fields: [uploadedbyuserid], references: [userid], onDelete: NoAction, onUpdate: NoAction, map: "fk_document_uploader")
+  documentverifications documentverifications[]
+
+  @@unique([requestid, documenttype], map: "uq_request_documenttype")
+  @@index([requestid], map: "idx_requestdocuments_request")
+}
+
+model documentverifications {
+  verificationid      String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  requestid           String               @db.Uuid
+  documentid          String               @db.Uuid
+  documentversion     Int                  @default(1)
+  documenttype        String               @db.VarChar(50)
+  filehash            String?              @db.VarChar(64)
+  verificationstatus  String               @default("NEEDS_REVIEW") @db.VarChar(30)
+  ocrconfidence       Decimal?             @db.Decimal(5, 2)
+  extracteddata       Json
+  discrepancies       Json
+  summary             String?
+  processingerror     String?
+  iscurrentversion    Boolean              @default(true)
+  reviewerdecision    String?              @db.VarChar(50)
+  reviewerremarks     String?
+  reviewedbyuserid    String?              @db.Uuid
+  reviewedat          DateTime?            @db.Timestamp(6)
+  createdat           DateTime?            @default(now()) @db.Timestamp(6)
+  updatedat           DateTime?            @default(now()) @db.Timestamp(6)
+
+  bloodrequests       bloodrequests        @relation(fields: [requestid], references: [requestid], onDelete: Cascade, onUpdate: NoAction, map: "fk_verification_request")
+  requestdocuments    requestdocuments     @relation(fields: [documentid], references: [documentid], onDelete: Cascade, onUpdate: NoAction, map: "fk_verification_document")
+  reviewedby          users?               @relation("VerificationReviewer", fields: [reviewedbyuserid], references: [userid], onDelete: NoAction, onUpdate: NoAction, map: "fk_verification_reviewer")
+  reviewaudits        documentreviewaudit[]
+
+  @@index([requestid], map: "idx_docverifications_request")
+  @@index([documentid], map: "idx_docverifications_document")
+  @@index([iscurrentversion], map: "idx_docverifications_current")
+}
+
+model documentreviewaudit {
+  auditid             String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  verificationid      String               @db.Uuid
+  documentid          String               @db.Uuid
+  documentversion     Int                  @default(1)
+  requestid           String               @db.Uuid
+  revieweruserid      String               @db.Uuid
+  previousstatus      String               @db.VarChar(30)
+  newstatus           String               @db.VarChar(30)
+  decision            String               @db.VarChar(50)
+  remarks             String?
+  createdat           DateTime?            @default(now()) @db.Timestamp(6)
+
+  verification        documentverifications @relation(fields: [verificationid], references: [verificationid], onDelete: NoAction, onUpdate: NoAction, map: "fk_audit_verification")
+  reviewer            users                @relation(fields: [revieweruserid], references: [userid], onDelete: NoAction, onUpdate: NoAction, map: "fk_audit_reviewer")
+
+  @@index([verificationid], map: "idx_docaudit_verification")
+  @@index([requestid], map: "idx_docaudit_request")
+}
+
+model equipment {
+  equipmentid             String                       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bloodbankid             String                       @db.Uuid
+  assetnumber             String                       @db.VarChar(100)
+  equipmentname           String                       @db.VarChar(255)
+  category                String                       @db.VarChar(100)
+  manufacturer            String?                      @db.VarChar(100)
+  modelnumber             String?                      @db.VarChar(100)
+  serialnumber            String?                      @db.VarChar(100)
+  installationdate        DateTime?                    @db.Date
+  warrantyexpirydate      DateTime?                    @db.Date
+  location                String?                      @db.VarChar(100)
+  department              String?                      @db.VarChar(100)
+  responsibleperson       String?                      @db.VarChar(100)
+  operationalstatus       equipment_operational_status @default(OPERATIONAL)
+  iscalibrationrequired   Boolean                      @default(true)
+  calibrationintervaldays Int?
+  lastcalibrationdate     DateTime?                    @db.Date
+  nextcalibrationdate     DateTime?                    @db.Date
+  calibrationstatus       equipment_calibration_status @default(NOT_APPLICABLE)
+  ismaintenancerequired   Boolean                      @default(true)
+  maintenanceintervaldays Int?
+  lastmaintenancedate     DateTime?                    @db.Date
+  nextmaintenancedate     DateTime?                    @db.Date
+  maintenancestatus       equipment_maintenance_status @default(NOT_APPLICABLE)
+  notes                   String?
+  createdbyuserid         String                       @db.Uuid
+  createdat               DateTime?                    @default(now()) @db.Timestamp(6)
+  updatedat               DateTime?                    @default(now()) @db.Timestamp(6)
+
+  bloodbanks              bloodbanks                   @relation(fields: [bloodbankid], references: [bloodbankid], onDelete: Cascade, onUpdate: NoAction, map: "fk_equipment_bloodbank")
+  createdbyuser           users                        @relation("equipment_creator", fields: [createdbyuserid], references: [userid], onDelete: NoAction, onUpdate: NoAction, map: "fk_equipment_creator")
+  calibrations            equipmentcalibrations[]
+  maintenance             equipmentmaintenance[]
+  breakdowns              equipmentbreakdowns[]
+  statushistory           equipmentstatushistory[]
+
+  @@unique([bloodbankid, assetnumber], map: "uq_equipment_bloodbank_asset")
+  @@index([bloodbankid], map: "idx_equipment_bloodbank")
+  @@index([operationalstatus], map: "idx_equipment_operationalstatus")
+  @@index([calibrationstatus], map: "idx_equipment_calibrationstatus")
+}
+
+model equipmentcalibrations {
+  calibrationid         String                          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  equipmentid           String                          @db.Uuid
+  bloodbankid           String                          @db.Uuid
+  scheduleddate         DateTime?                       @db.Date
+  performeddate         DateTime                        @db.Date
+  nextduedate           DateTime?                       @db.Date
+  performedby           String                          @db.VarChar(100)
+  serviceprovider       String?                         @db.VarChar(100)
+  certificatefilepath   String?                         @db.VarChar(500)
+  certificatefilename   String?                         @db.VarChar(255)
+  result                calibration_result
+  standardsused         String?                         @db.VarChar(255)
+  readings              String?
+  remarks               String?
+  verificationstatus    calibration_verification_status @default(PENDING)
+  verifiedbyuserid      String?                         @db.Uuid
+  verifiedat            DateTime?                       @db.Timestamp(6)
+  createdbyuserid       String                          @db.Uuid
+  createdat             DateTime?                       @default(now()) @db.Timestamp(6)
+
+  equipment             equipment                       @relation(fields: [equipmentid], references: [equipmentid], onDelete: Cascade, onUpdate: NoAction, map: "fk_calibration_equipment")
+  bloodbanks            bloodbanks                      @relation(fields: [bloodbankid], references: [bloodbankid], onDelete: Cascade, onUpdate: NoAction, map: "fk_calibration_bloodbank")
+  createdbyuser         users                           @relation("calibration_creator", fields: [createdbyuserid], references: [userid], onDelete: NoAction, onUpdate: NoAction, map: "fk_calibration_creator")
+  verifiedbyuser        users?                          @relation("calibration_verifier", fields: [verifiedbyuserid], references: [userid], onDelete: NoAction, onUpdate: NoAction, map: "fk_calibration_verifier")
+
+  @@index([equipmentid], map: "idx_calibration_equipment")
+  @@index([bloodbankid], map: "idx_calibration_bloodbank")
+}
+
+model equipmentmaintenance {
+  maintenanceid         String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  equipmentid           String                      @db.Uuid
+  bloodbankid           String                      @db.Uuid
+  maintenancetype       maintenance_type
+  status                maintenance_record_status   @default(SCHEDULED)
+  scheduleddate         DateTime                    @db.Date
+  completeddate         DateTime?                   @db.Date
+  assignedto            String?                     @db.VarChar(100)
+  serviceprovider       String?                     @db.VarChar(100)
+  workdetails           String?
+  partsreplaced         String?
+  downtimehours         Decimal?                    @db.Decimal(6, 2)
+  cost                  Decimal?                    @db.Decimal(10, 2)
+  reportfilepath        String?                     @db.VarChar(500)
+  reportfilename        String?                     @db.VarChar(255)
+  createdbyuserid       String                      @db.Uuid
+  createdat             DateTime?                   @default(now()) @db.Timestamp(6)
+  updatedat             DateTime?                   @default(now()) @db.Timestamp(6)
+
+  equipment             equipment                   @relation(fields: [equipmentid], references: [equipmentid], onDelete: Cascade, onUpdate: NoAction, map: "fk_maintenance_equipment")
+  bloodbanks            bloodbanks                  @relation(fields: [bloodbankid], references: [bloodbankid], onDelete: Cascade, onUpdate: NoAction, map: "fk_maintenance_bloodbank")
+  createdbyuser         users                       @relation("maintenance_creator", fields: [createdbyuserid], references: [userid], onDelete: NoAction, onUpdate: NoAction, map: "fk_maintenance_creator")
+
+  @@index([equipmentid], map: "idx_maintenance_equipment")
+  @@index([bloodbankid], map: "idx_maintenance_bloodbank")
+  @@index([status], map: "idx_maintenance_status")
+}
+
+model equipmentbreakdowns {
+  breakdownid           String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  equipmentid           String             @db.Uuid
+  bloodbankid           String             @db.Uuid
+  reportedat            DateTime?          @default(now()) @db.Timestamp(6)
+  reportedbyuserid      String             @db.Uuid
+  issue                 String             @db.VarChar(255)
+  description           String?
+  severity              breakdown_severity @default(MAJOR)
+  status                breakdown_status   @default(REPORTED)
+  impactonstorage       Boolean            @default(false)
+  sopactiontaken        String?
+  resolutiondetails     String?
+  resolvedat            DateTime?          @db.Timestamp(6)
+  resolvedbyuserid      String?            @db.Uuid
+  createdat             DateTime?          @default(now()) @db.Timestamp(6)
+
+  equipment             equipment          @relation(fields: [equipmentid], references: [equipmentid], onDelete: Cascade, onUpdate: NoAction, map: "fk_breakdown_equipment")
+  bloodbanks            bloodbanks         @relation(fields: [bloodbankid], references: [bloodbankid], onDelete: Cascade, onUpdate: NoAction, map: "fk_breakdown_bloodbank")
+  reportedbyuser        users              @relation("breakdown_reporter", fields: [reportedbyuserid], references: [userid], onDelete: NoAction, onUpdate: NoAction, map: "fk_breakdown_reporter")
+  resolvedbyuser        users?             @relation("breakdown_resolver", fields: [resolvedbyuserid], references: [userid], onDelete: NoAction, onUpdate: NoAction, map: "fk_breakdown_resolver")
+
+  @@index([equipmentid], map: "idx_breakdown_equipment")
+  @@index([bloodbankid], map: "idx_breakdown_bloodbank")
+  @@index([status], map: "idx_breakdown_status")
+}
+
+model equipmentstatushistory {
+  historyid             String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  equipmentid           String             @db.Uuid
+  bloodbankid           String             @db.Uuid
+  previousstatus        String             @db.VarChar(50)
+  newstatus             String             @db.VarChar(50)
+  reason                String
+  changedbyuserid       String             @db.Uuid
+  createdat             DateTime?          @default(now()) @db.Timestamp(6)
+
+  equipment             equipment          @relation(fields: [equipmentid], references: [equipmentid], onDelete: Cascade, onUpdate: NoAction, map: "fk_statushistory_equipment")
+  bloodbanks            bloodbanks         @relation(fields: [bloodbankid], references: [bloodbankid], onDelete: Cascade, onUpdate: NoAction, map: "fk_statushistory_bloodbank")
+  changedbyuser         users              @relation("status_changed_by", fields: [changedbyuserid], references: [userid], onDelete: NoAction, onUpdate: NoAction, map: "fk_statushistory_user")
+
+  @@index([equipmentid], map: "idx_statushistory_equipment")
+}
+
+model equipmentcategories {
+  categoryid                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bloodbankid                String?   @db.Uuid
+  categoryname               String    @db.VarChar(100)
+  description                String?
+  defaultcalibrationinterval Int?
+  defaultmaintenanceinterval Int?
+  isactive                   Boolean   @default(true)
+  createdat                  DateTime? @default(now()) @db.Timestamp(6)
+
+  @@index([bloodbankid], map: "idx_eqcat_bloodbank")
+}
+
 enum approval_status {
   PENDING
   APPROVED
@@ -674,6 +925,7 @@ enum prescription_status {
 }
 
 enum request_status {
+  DRAFT
   CREATED
   VERIFIED
   HOSPITAL_REVIEW
@@ -704,4 +956,64 @@ enum verification_status {
   PENDING
   VERIFIED
   REJECTED
+}
+
+enum equipment_operational_status {
+  OPERATIONAL
+  UNDER_MAINTENANCE
+  OUT_OF_SERVICE
+  RETIRED
+}
+
+enum equipment_calibration_status {
+  UP_TO_DATE
+  DUE_SOON
+  OVERDUE
+  NOT_APPLICABLE
+  PENDING_VERIFICATION
+}
+
+enum equipment_maintenance_status {
+  UP_TO_DATE
+  DUE_SOON
+  OVERDUE
+  NOT_APPLICABLE
+}
+
+enum calibration_result {
+  PASSED
+  FAILED
+  PASSED_WITH_CONDITIONS
+}
+
+enum calibration_verification_status {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum maintenance_type {
+  PREVENTIVE
+  CORRECTIVE
+}
+
+enum maintenance_record_status {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  OVERDUE
+  CANCELLED
+}
+
+enum breakdown_severity {
+  CRITICAL
+  MAJOR
+  MINOR
+}
+
+enum breakdown_status {
+  REPORTED
+  ASSIGNED
+  IN_REPAIR
+  RESOLVED
 }

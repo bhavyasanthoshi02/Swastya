@@ -122,3 +122,44 @@ export function getPrescriptionStorageDir(): string {
     }
     return dir;
 }
+
+/**
+ * Ensures private storage directory for request supporting documents exists.
+ */
+export function getRequestDocumentStorageDir(): string {
+    const dir = path.resolve(process.cwd(), "uploads", "request_documents");
+    if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+    }
+    return dir;
+}
+
+/**
+ * Ensures private storage directory for equipment calibration certificates & maintenance reports exists.
+ */
+export function getEquipmentDocumentStorageDir(): string {
+    const dir = path.resolve(process.cwd(), "uploads", "equipment_documents");
+    if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+    }
+    return dir;
+}
+
+/**
+ * Validates a request document buffer using file signatures (magic bytes),
+ * size check (max 5 MB), and allowed extensions (PDF, JPG, JPEG, PNG).
+ */
+export function validateDocumentFile(
+    fileBuffer: Buffer,
+    originalName: string,
+    declaredMimeType?: string
+): FileValidationResult {
+    const result = validatePrescriptionFile(fileBuffer, originalName, declaredMimeType);
+    if (!result.valid && result.error?.includes("Prescription")) {
+        return {
+            ...result,
+            error: result.error.replace("Prescription file", "Document file"),
+        };
+    }
+    return result;
+}

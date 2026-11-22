@@ -36,8 +36,22 @@ import {
   Users,
   CheckSquare,
   Square,
+  UploadCloud,
+  FileCheck,
+  Trash2,
+  Paperclip,
+  AlertTriangle,
 } from "lucide-react";
-import { api, BloodRequestItem, MatchedDonorItem } from "@/lib/api";
+import {
+  api,
+  BloodRequestItem,
+  MatchedDonorItem,
+  RequestCompletenessResponse,
+  DocumentChecklistItem,
+  DocumentVerificationReportItem,
+  RequisitionVerificationReportResponse,
+  VerificationDiscrepancy,
+} from "@/lib/api";
 import { generateIdempotencyKey } from "@/lib/idempotency";
 import {
   mapBloodGroupToDisplay,
@@ -131,6 +145,28 @@ export default function HospitalRequestDetailsPage() {
   const [isEditingNotes, setIsEditingNotes] = useState(false);
   const [editedNotes, setEditedNotes] = useState("");
   const [isSavingNotes, setIsSavingNotes] = useState(false);
+
+  // Document Completeness & Smart Document Checker State
+  const [docCompleteness, setDocCompleteness] = useState<RequestCompletenessResponse | null>(null);
+  const [isLoadingDocs, setIsLoadingDocs] = useState(false);
+  const [docUploadError, setDocUploadError] = useState<string | null>(null);
+  const [isSubmittingDraft, setIsSubmittingDraft] = useState(false);
+
+  // Feature 2: AI Document Verification & Review State
+  const [verificationReports, setVerificationReports] = useState<Record<string, DocumentVerificationReportItem>>({});
+  const [overallVerification, setOverallVerification] = useState<RequisitionVerificationReportResponse | null>(null);
+  const [verifyingDocId, setVerifyingDocId] = useState<string | null>(null);
+  const [inspectModalDoc, setInspectModalDoc] = useState<{
+    item: DocumentChecklistItem;
+    report?: DocumentVerificationReportItem;
+  } | null>(null);
+  const [reviewerDecision, setReviewerDecision] = useState<
+    "VERIFIED_MANUAL" | "CORRECTION_REQUIRED" | "ADDITIONAL_INFO_REQUIRED" | "ESCALATED"
+  >("VERIFIED_MANUAL");
+  const [reviewerRemarks, setReviewerRemarks] = useState("");
+  const [isSubmittingDecision, setIsSubmittingDecision] = useState(false);
+  const [decisionError, setDecisionError] = useState<string | null>(null);
+  const [decisionSuccess, setDecisionSuccess] = useState<string | null>(null);
 
   // Blood Bank Requisition Assignment State
   const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
@@ -503,10 +539,172 @@ export default function HospitalRequestDetailsPage() {
     }
   }, [requestId]);
 
+  const fetchVerificationReports = useCallback(async () => {
+    if (!requestId) return;
+    try {
+      const res = await api.hospital.getVerificationReport(requestId);
+      if (res && res.success) {
+        setOverallVerification(res);
+        const map: Record<string, DocumentVerificationReportItem> = {};
+        res.reports?.forEach((r) => {
+          if (r.documentId) {
+            map[r.documentId] = r;
+          }
+        });
+        setVerificationReports(map);
+      }
+    } catch {
+      // Non-blocking if reports aren't generated yet
+    }
+  }, [requestId]);
+
+  const fetchDocuments = useCallback(async () => {
+    if (!requestId) return;
+    try {
+      setIsLoadingDocs(true);
+      const res = await api.hospital.getRequestDocuments(requestId);
+      if (res && res.success) {
+        setDocCompleteness(res);
+      }
+      await fetchVerificationReports();
+    } catch {
+      // Non-blocking
+    } finally {
+      setIsLoadingDocs(false);
+    }
+  }, [requestId, fetchVerificationReports]);
+
+  const handleRunVerification = async (documentId: string) => {
+    if (!requestId || !documentId || verifyingDocId) return;
+    try {
+      setVerifyingDocId(documentId);
+      setDocUploadError(null);
+      const res = await api.hospital.verifyDocument(requestId, documentId);
+      if (res && res.success && res.report) {
+        setVerificationReports((prev) => ({
+          ...prev,
+          [documentId]: res.report,
+        }));
+        setInspectModalDoc((prev) =>
+          prev && prev.item.document?.documentid === documentId
+            ? { ...prev, report: res.report }
+            : prev
+        );
+        await fetchVerificationReports();
+      }
+    } catch (err: any) {
+      setDocUploadError(err?.message || "Failed to execute AI document verification.");
+    } finally {
+      setVerifyingDocId(null);
+    }
+  };
+
+  const handleOpenInspectModal = (item: DocumentChecklistItem) => {
+    const report = item.document ? verificationReports[item.document.documentid] : undefined;
+    setInspectModalDoc({ item, report });
+    setReviewerDecision("VERIFIED_MANUAL");
+    setReviewerRemarks("");
+    setDecisionError(null);
+    setDecisionSuccess(null);
+  };
+
+  const handleSubmitReviewerDecision = async () => {
+    if (!requestId || !inspectModalDoc?.item.document?.documentid || isSubmittingDecision) return;
+    try {
+      setIsSubmittingDecision(true);
+      setDecisionError(null);
+      setDecisionSuccess(null);
+
+      const res = await api.bloodRequests.submitReviewerDecision(
+        requestId,
+        inspectModalDoc.item.document.documentid,
+        {
+          decision: reviewerDecision,
+          remarks: reviewerRemarks.trim() || undefined,
+        }
+      );
+
+      if (res && res.success) {
+        setDecisionSuccess("Official reviewer decision recorded and added to audit trail.");
+        await fetchVerificationReports();
+        if (res.verification) {
+          setVerificationReports((prev) => ({
+            ...prev,
+            [inspectModalDoc.item.document!.documentid]: res.verification,
+          }));
+          setInspectModalDoc((prev) =>
+            prev ? { ...prev, report: res.verification } : null
+          );
+        }
+      }
+    } catch (err: any) {
+      setDecisionError(err?.message || "Failed to record reviewer decision.");
+    } finally {
+      setIsSubmittingDecision(false);
+    }
+  };
+
+  const handleUploadOrReplaceDoc = async (documentType: string, file: File) => {
+    try {
+      setDocUploadError(null);
+      if (file.size > 5 * 1024 * 1024) {
+        setDocUploadError(`File size exceeds 5 MB limit (${(file.size / (1024 * 1024)).toFixed(2)} MB).`);
+        return;
+      }
+      const ext = "." + file.name.split(".").pop()?.toLowerCase();
+      if (![".pdf", ".jpg", ".jpeg", ".png"].includes(ext)) {
+        setDocUploadError(`Invalid file format "${ext}". Allowed formats are: PDF, JPG, PNG.`);
+        return;
+      }
+      const res = await api.hospital.uploadRequestDocument(requestId, documentType, file);
+      if (res?.success) {
+        setActionSuccess("Supporting document uploaded successfully.");
+        await fetchDocuments();
+        await fetchRequestDetails(true);
+      }
+    } catch (err: any) {
+      setDocUploadError(err?.message || "Failed to upload document.");
+    }
+  };
+
+  const handleDeleteDoc = async (documentId: string) => {
+    try {
+      setDocUploadError(null);
+      const res = await api.hospital.deleteRequestDocument(requestId, documentId);
+      if (res?.success) {
+        setActionSuccess("Document removed.");
+        await fetchDocuments();
+        await fetchRequestDetails(true);
+      }
+    } catch (err: any) {
+      setDocUploadError(err?.message || "Failed to remove document.");
+    }
+  };
+
+  const handleSubmitDraftRequisition = async () => {
+    try {
+      setIsSubmittingDraft(true);
+      setDocUploadError(null);
+      const res = await api.hospital.submitDraftRequest(requestId);
+      if (res?.success) {
+        setActionSuccess("Blood requisition submitted successfully! Broadcast is now active.");
+        await fetchRequestDetails(true);
+        await fetchDocuments();
+        await fetchBroadcastStatus();
+      }
+    } catch (err: any) {
+      setDocUploadError(err?.message || "Cannot submit blood request. All mandatory documents must be uploaded.");
+    } finally {
+      setIsSubmittingDraft(false);
+    }
+  };
+
   useEffect(() => {
     fetchRequestDetails();
     fetchBroadcastStatus();
-  }, [fetchRequestDetails, fetchBroadcastStatus]);
+    fetchDocuments();
+    fetchVerificationReports();
+  }, [fetchRequestDetails, fetchBroadcastStatus, fetchDocuments, fetchVerificationReports]);
 
   // Handle status update submission
   const handleStatusSubmit = async (e: React.FormEvent) => {
@@ -796,6 +994,43 @@ export default function HospitalRequestDetailsPage() {
           >
             &times;
           </button>
+        </div>
+      )}
+
+      {/* Draft Requisition Banner */}
+      {(request.status === "DRAFT" || request.isdraft) && (
+        <div className="p-4 rounded-2xl bg-amber-50/70 border border-amber-200/80 shadow-2xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+          <div className="flex items-start gap-2.5">
+            <AlertCircle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+            <div className="space-y-0.5">
+              <span className="font-bold text-amber-900 block text-sm">
+                Draft Blood Requisition (Not Yet Broadcast)
+              </span>
+              <p className="text-amber-800">
+                This requisition is saved as a draft. Upload all mandatory supporting documents below to enable submission and donor broadcast.
+              </p>
+            </div>
+          </div>
+          {docCompleteness?.isComplete && (
+            <button
+              type="button"
+              onClick={handleSubmitDraftRequisition}
+              disabled={isSubmittingDraft}
+              className="px-4 py-2 rounded-xl bg-[#053845] hover:bg-[#317786] text-white font-semibold shadow-xs transition-colors shrink-0 flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+            >
+              {isSubmittingDraft ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Submitting...</span>
+                </>
+              ) : (
+                <>
+                  <Check className="w-3.5 h-3.5" />
+                  <span>Submit &amp; Broadcast Requisition</span>
+                </>
+              )}
+            </button>
+          )}
         </div>
       )}
 
@@ -1249,6 +1484,284 @@ export default function HospitalRequestDetailsPage() {
 
         {/* RIGHT COLUMN: Clinical Actions, Prescription, Notes, Details */}
         <div className="space-y-5">
+          {/* Supporting Clinical Documents Card (Smart Document Checker) */}
+          <section className="bg-white rounded-2xl border border-[#F3E9D1] p-5 shadow-2xs space-y-3.5">
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[#F3E9D1]/70">
+              <div className="flex items-center gap-2">
+                <FileText className="w-4 h-4 text-[#317786]" />
+                <h2 className="font-serif text-base font-bold text-[#053845]">
+                  Supporting Clinical Documents
+                </h2>
+              </div>
+
+              {docCompleteness && (
+                <span
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                    docCompleteness.isComplete
+                      ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                      : "bg-amber-50 text-amber-800 border border-amber-200"
+                  }`}
+                >
+                  {docCompleteness.isComplete ? (
+                    <FileCheck className="w-3.5 h-3.5 text-emerald-600" />
+                  ) : (
+                    <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
+                  )}
+                  <span>
+                    {docCompleteness.completionPercentage}% Complete
+                  </span>
+                </span>
+              )}
+            </div>
+
+            {/* Error Banner */}
+            {docUploadError && (
+              <div className="p-2.5 rounded-xl bg-[#fdf2f2] border border-[#A2363A]/30 text-xs text-[#A2363A] flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{docUploadError}</span>
+              </div>
+            )}
+
+            {/* Checklist */}
+            <div className="space-y-3 text-xs">
+              {isLoadingDocs && !docCompleteness ? (
+                <div className="py-4 flex items-center justify-center gap-2 text-slate-500">
+                  <Loader2 className="w-4 h-4 animate-spin text-[#317786]" />
+                  <span>Loading document checklist...</span>
+                </div>
+              ) : docCompleteness?.checklist && docCompleteness.checklist.length > 0 ? (
+                docCompleteness.checklist.map((item) => {
+                  const docVerif = item.document
+                    ? verificationReports[item.document.documentid]
+                    : undefined;
+
+                  return (
+                    <div
+                      key={item.documentType}
+                      className={`p-3.5 rounded-xl border transition-colors ${
+                        item.isUploaded
+                          ? "bg-emerald-50/30 border-emerald-200/80"
+                          : item.isMandatory
+                          ? "bg-amber-50/30 border-amber-200/80"
+                          : "bg-[#FAF6EE]/50 border-[#F3E9D1]"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2.5">
+                        <div className="space-y-1 min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-semibold text-xs text-[#053845]">
+                              {item.documentName}
+                            </span>
+                            {item.isMandatory ? (
+                              <span className="text-[9px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider bg-[#A2363A]/10 text-[#A2363A]">
+                                Mandatory
+                              </span>
+                            ) : (
+                              <span className="text-[9px] px-1.5 py-0.5 rounded font-medium bg-slate-100 text-slate-600">
+                                Optional
+                              </span>
+                            )}
+                            {item.isUploaded ? (
+                              <span className="text-[10px] text-emerald-700 font-semibold bg-emerald-100/70 px-1.5 py-0.5 rounded">
+                                Uploaded {item.document?.version ? `(v${item.document.version})` : ""}
+                              </span>
+                            ) : (
+                              <span className="text-[10px] text-amber-700 font-medium bg-amber-100/70 px-1.5 py-0.5 rounded">
+                                Missing
+                              </span>
+                            )}
+
+                            {/* AI Verification Status Pill */}
+                            {docVerif ? (
+                              <span
+                                className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
+                                  docVerif.verificationStatus === "CONSISTENT"
+                                    ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                                    : docVerif.verificationStatus === "MISMATCH"
+                                    ? "bg-rose-50 text-[#A2363A] border-rose-300 font-bold"
+                                    : docVerif.verificationStatus === "PROCESSING_FAILED"
+                                    ? "bg-slate-100 text-slate-700 border-slate-300"
+                                    : "bg-amber-50 text-amber-800 border-amber-300 font-medium"
+                                }`}
+                              >
+                                {docVerif.verificationStatus === "CONSISTENT" && (
+                                  <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                )}
+                                {docVerif.verificationStatus === "MISMATCH" && (
+                                  <ShieldAlert className="w-3 h-3 text-[#A2363A]" />
+                                )}
+                                {docVerif.verificationStatus === "NEEDS_REVIEW" && (
+                                  <AlertCircle className="w-3 h-3 text-amber-600" />
+                                )}
+                                {docVerif.verificationStatus === "PROCESSING_FAILED" && (
+                                  <AlertTriangle className="w-3 h-3 text-slate-500" />
+                                )}
+                                <span>
+                                  {docVerif.verificationStatus === "CONSISTENT"
+                                    ? "AI Consistent"
+                                    : docVerif.verificationStatus === "MISMATCH"
+                                    ? "Discrepancy"
+                                    : docVerif.verificationStatus === "PROCESSING_FAILED"
+                                    ? "OCR Failed"
+                                    : "Needs Review"}
+                                </span>
+                              </span>
+                            ) : item.isUploaded && item.document ? (
+                              <button
+                                type="button"
+                                disabled={verifyingDocId === item.document.documentid}
+                                onClick={() => handleRunVerification(item.document!.documentid)}
+                                className="inline-flex items-center gap-1 text-[10px] font-semibold text-[#053845] bg-[#317786]/15 hover:bg-[#317786]/25 px-2 py-0.5 rounded-full border border-[#317786]/30 cursor-pointer disabled:opacity-50 transition-colors"
+                              >
+                                {verifyingDocId === item.document.documentid ? (
+                                  <Loader2 className="w-3 h-3 animate-spin text-[#317786]" />
+                                ) : (
+                                  <Sparkles className="w-3 h-3 text-[#317786]" />
+                                )}
+                                <span>Run AI Check</span>
+                              </button>
+                            ) : null}
+
+                            {/* Reviewer Decision Tag (if recorded) */}
+                            {docVerif?.reviewerDecision && (
+                              <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+                                Review: {docVerif.reviewerDecision.replace(/_/g, " ")}
+                              </span>
+                            )}
+                          </div>
+
+                          {item.document ? (
+                            <div className="flex items-center gap-2 text-[11px] text-slate-600 pt-0.5">
+                              <Paperclip className="w-3 h-3 text-slate-400 shrink-0" />
+                              <span className="truncate max-w-[160px] font-medium">
+                                {item.document.originalfilename}
+                              </span>
+                              <span className="text-slate-400">
+                                ({(item.document.filesize / 1024).toFixed(0)} KB)
+                              </span>
+                              {item.document.filehash && (
+                                <span className="text-[10px] text-slate-400 font-mono hidden sm:inline" title={item.document.filehash}>
+                                  [{item.document.filehash.substring(0, 8)}...]
+                                </span>
+                              )}
+                            </div>
+                          ) : (
+                            <p className="text-[11px] text-slate-500">{item.description}</p>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {/* Inspect Verification Details Modal Button */}
+                          {item.document && (
+                            <button
+                              type="button"
+                              onClick={() => handleOpenInspectModal(item)}
+                              className="p-1.5 rounded-lg border border-[#F3E9D1] bg-[#FAF6EE] hover:bg-white text-[#053845] transition-colors cursor-pointer"
+                              title="Inspect AI verification and clinical comparison"
+                            >
+                              <Eye className="w-3.5 h-3.5 text-[#317786]" />
+                            </button>
+                          )}
+
+                          {/* Re-verify Button */}
+                          {item.document && docVerif && (
+                            <button
+                              type="button"
+                              disabled={verifyingDocId === item.document.documentid}
+                              onClick={() => handleRunVerification(item.document!.documentid)}
+                              className="p-1.5 rounded-lg border border-[#F3E9D1] bg-white hover:bg-[#FAF6EE] text-slate-600 transition-colors cursor-pointer disabled:opacity-50"
+                              title="Re-run AI verification"
+                            >
+                              {verifyingDocId === item.document.documentid ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin text-[#317786]" />
+                              ) : (
+                                <RefreshCw className="w-3.5 h-3.5" />
+                              )}
+                            </button>
+                          )}
+
+                          {item.document && (
+                            <a
+                              href={api.hospital.getDocumentDownloadUrl(requestId, item.document.documentid)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="p-1.5 rounded-lg border border-[#F3E9D1] bg-white hover:bg-[#FAF6EE] text-[#053845] transition-colors"
+                              title="Download / View document"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                            </a>
+                          )}
+
+                          <label
+                            className="p-1.5 rounded-lg border border-[#F3E9D1] bg-white hover:bg-[#FAF6EE] text-[#317786] transition-colors cursor-pointer"
+                            title={item.isUploaded ? "Replace document (increments version)" : "Upload document"}
+                          >
+                            <UploadCloud className="w-3.5 h-3.5" />
+                            <input
+                              type="file"
+                              accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
+                              className="hidden"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) handleUploadOrReplaceDoc(item.documentType, file);
+                                e.target.value = "";
+                              }}
+                            />
+                          </label>
+
+                          {item.document && !item.isMandatory && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteDoc(item.document!.documentid)}
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-[#A2363A] transition-colors cursor-pointer"
+                              title="Delete optional document"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                <p className="text-slate-500 text-xs">No document requirements defined.</p>
+              )}
+            </div>
+
+            {/* If Draft, provide submit action */}
+            {(request.status === "DRAFT" || request.isdraft) && (
+              <div className="pt-2 border-t border-[#F3E9D1]/70">
+                <button
+                  type="button"
+                  onClick={handleSubmitDraftRequisition}
+                  disabled={!docCompleteness?.isComplete || isSubmittingDraft}
+                  className={`w-full py-2.5 px-4 rounded-xl text-xs font-semibold shadow-2xs transition-colors flex items-center justify-center gap-2 cursor-pointer ${
+                    docCompleteness?.isComplete
+                      ? "bg-[#053845] hover:bg-[#317786] text-white"
+                      : "bg-slate-200 text-slate-400 cursor-not-allowed"
+                  }`}
+                >
+                  {isSubmittingDraft ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Submitting Requisition...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Check className="w-3.5 h-3.5" />
+                      <span>
+                        {docCompleteness?.isComplete
+                          ? "Submit & Broadcast Requisition"
+                          : "Upload Mandatory Docs to Submit"}
+                      </span>
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+          </section>
+
           {/* Blood Bank Requisition & Assignment Card */}
           <section className="bg-white rounded-2xl border border-[#F3E9D1] p-5 shadow-2xs space-y-3.5">
             <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[#F3E9D1]/70">
@@ -2451,6 +2964,506 @@ export default function HospitalRequestDetailsPage() {
                   </span>
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Feature 2: AI Document Verification & Review Modal */}
+      {inspectModalDoc && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl border border-[#F3E9D1] shadow-2xl max-w-2xl w-full p-5 sm:p-6 space-y-4 max-h-[90vh] flex flex-col">
+            {/* Modal Header */}
+            <div className="flex items-start justify-between pb-3 border-b border-[#F3E9D1]/80 shrink-0">
+              <div className="space-y-0.5 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Sparkles className="w-4 h-4 text-[#317786]" />
+                  <h3 className="font-serif text-base font-bold text-[#053845] truncate">
+                    AI Document Verification
+                  </h3>
+                  <span className="text-xs px-2 py-0.5 rounded-md font-semibold bg-[#FAF6EE] text-[#053845] border border-[#F3E9D1]">
+                    {inspectModalDoc.item.documentName}
+                  </span>
+                  {inspectModalDoc.report && (
+                    <span className="text-[10px] font-mono text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
+                      v{inspectModalDoc.report.documentVersion}
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-slate-500">
+                  {inspectModalDoc.item.document?.originalfilename}
+                  {inspectModalDoc.report?.fileHash && (
+                    <span className="ml-2 font-mono text-[10px] text-slate-400">
+                      SHA-256: {inspectModalDoc.report.fileHash.slice(0, 16)}...
+                    </span>
+                  )}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setInspectModalDoc(null)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+                aria-label="Close modal"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body (Scrollable) */}
+            <div className="overflow-y-auto space-y-4 pr-1 text-xs">
+              {/* Mandatory AI Assistive Clinical Disclaimer */}
+              <div className="p-3.5 rounded-xl bg-amber-50/90 border border-amber-200 text-amber-900 text-xs flex items-start gap-2.5">
+                <AlertCircle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-bold block text-xs text-amber-950">
+                    Clinical Advisory &amp; Review Protocol
+                  </span>
+                  <p className="text-amber-800 leading-relaxed text-[11px] mt-0.5">
+                    This AI verification system operates locally and assists clinical reviewers by extracting text and identifying potential discrepancies. It is <strong>NOT an autonomous clinical approval system</strong> and does not replace medical judgment. Authorized hospital or blood bank staff must physically verify all clinical documents and confirm compatibility prior to transfusion.
+                  </p>
+                </div>
+              </div>
+
+              {/* Status and OCR Metrics Bar */}
+              <div className="p-3 rounded-xl bg-[#FAF6EE]/70 border border-[#F3E9D1] flex flex-wrap items-center justify-between gap-2.5">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-semibold text-slate-600">Verification Result:</span>
+                  {inspectModalDoc.report ? (
+                    <span
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border ${
+                        inspectModalDoc.report.verificationStatus === "CONSISTENT"
+                          ? "bg-emerald-50 text-emerald-800 border-emerald-300"
+                          : inspectModalDoc.report.verificationStatus === "MISMATCH"
+                          ? "bg-rose-50 text-[#A2363A] border-rose-300"
+                          : inspectModalDoc.report.verificationStatus === "PROCESSING_FAILED"
+                          ? "bg-slate-100 text-slate-700 border-slate-300"
+                          : "bg-amber-50 text-amber-800 border-amber-300"
+                      }`}
+                    >
+                      {inspectModalDoc.report.verificationStatus === "CONSISTENT" && (
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                      )}
+                      {inspectModalDoc.report.verificationStatus === "MISMATCH" && (
+                        <ShieldAlert className="w-3.5 h-3.5 text-[#A2363A]" />
+                      )}
+                      {inspectModalDoc.report.verificationStatus === "NEEDS_REVIEW" && (
+                        <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
+                      )}
+                      {inspectModalDoc.report.verificationStatus === "PROCESSING_FAILED" && (
+                        <AlertTriangle className="w-3.5 h-3.5 text-slate-500" />
+                      )}
+                      <span>
+                        {inspectModalDoc.report.verificationStatus === "CONSISTENT"
+                          ? "Consistent with Requisition"
+                          : inspectModalDoc.report.verificationStatus === "MISMATCH"
+                          ? "Discrepancy Flagged"
+                          : inspectModalDoc.report.verificationStatus === "PROCESSING_FAILED"
+                          ? "OCR Extraction Failed"
+                          : "Manual Review Required"}
+                      </span>
+                    </span>
+                  ) : (
+                    <span className="text-slate-400 italic">Not yet analyzed</span>
+                  )}
+
+                  {inspectModalDoc.report && (
+                    <span
+                      className="text-[11px] font-medium text-slate-600 bg-white px-2.5 py-0.5 rounded border border-slate-200"
+                      title="Character recognition and decipherability score from document text streams/OCR. Does NOT represent clinical accuracy."
+                    >
+                      Character Recognition Score: {inspectModalDoc.report.ocrConfidence}%
+                    </span>
+                  )}
+                </div>
+
+                {inspectModalDoc.item.document && (
+                  <button
+                    type="button"
+                    disabled={verifyingDocId === inspectModalDoc.item.document.documentid}
+                    onClick={() => handleRunVerification(inspectModalDoc.item.document!.documentid)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#053845] hover:bg-[#317786] text-white font-semibold cursor-pointer disabled:opacity-50 transition-colors"
+                  >
+                    {verifyingDocId === inspectModalDoc.item.document.documentid ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <RefreshCw className="w-3.5 h-3.5" />
+                    )}
+                    <span>
+                      {inspectModalDoc.report ? "Re-Run Verification" : "Execute AI Verification"}
+                    </span>
+                  </button>
+                )}
+              </div>
+
+              {/* Discrepancy Warnings (if any) */}
+              {inspectModalDoc.report?.discrepancies &&
+              inspectModalDoc.report.discrepancies.length > 0 ? (
+                <div className="space-y-2">
+                  <h4 className="font-semibold text-slate-800 flex items-center gap-1.5">
+                    <ShieldAlert className="w-4 h-4 text-[#A2363A]" />
+                    <span>Identified Discrepancies ({inspectModalDoc.report.discrepancies.length})</span>
+                  </h4>
+                  <div className="space-y-2">
+                    {inspectModalDoc.report.discrepancies.map((disc, idx) => {
+                      const isCritical =
+                        disc.severity === "HIGH" || disc.field.toLowerCase().includes("blood");
+
+                      return (
+                        <div
+                          key={idx}
+                          className={`p-3 rounded-xl border ${
+                            isCritical
+                              ? "bg-rose-50/70 border-rose-300 text-rose-950"
+                              : "bg-amber-50/70 border-amber-300 text-amber-950"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2 pb-1 border-b border-rose-200/50">
+                            <span className="font-bold text-xs uppercase tracking-wide">
+                              {disc.field === "bloodGroup" ? "Blood Group Discrepancy" : disc.field}
+                            </span>
+                            <span
+                              className={`text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider ${
+                                isCritical
+                                  ? "bg-[#A2363A] text-white"
+                                  : "bg-amber-600 text-white"
+                              }`}
+                            >
+                              {disc.severity} Priority
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 text-[11px]">
+                            <div>
+                              <span className="text-slate-500 block">Expected (Requisition):</span>
+                              <strong className="text-slate-900 font-mono">
+                                {disc.expectedValue || "N/A"}
+                              </strong>
+                            </div>
+                            <div>
+                              <span className="text-slate-500 block">Extracted from Document:</span>
+                              <strong className="text-[#A2363A] font-mono">
+                                {disc.extractedValue || "NOT_FOUND"}
+                              </strong>
+                            </div>
+                          </div>
+                          <p className="mt-1.5 text-[11px] text-slate-700 italic">
+                            {disc.reason}
+                          </p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : inspectModalDoc.report?.verificationStatus === "CONSISTENT" ? (
+                <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>
+                    All extracted fields are consistent with the blood requisition. No clinical contradictions detected.
+                  </span>
+                </div>
+              ) : null}
+
+              {/* Side-by-Side Data Comparison Table */}
+              {inspectModalDoc.report && (
+                <div className="space-y-2">
+                  <h4 className="font-semibold text-slate-800 flex items-center gap-1.5">
+                    <FileText className="w-4 h-4 text-[#317786]" />
+                    <span>Cross-Document Clinical Field Comparison</span>
+                  </h4>
+
+                  <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-[#FAF6EE] text-slate-700 font-semibold border-b border-slate-200 text-[11px]">
+                        <tr>
+                          <th className="p-2.5">Clinical Field</th>
+                          <th className="p-2.5">Requisition Value</th>
+                          <th className="p-2.5">Extracted from Document</th>
+                          <th className="p-2.5 text-right">Match Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {/* Patient Name */}
+                        <tr>
+                          <td className="p-2.5 font-medium text-slate-600">Patient Name</td>
+                          <td className="p-2.5 font-semibold text-slate-800">{request?.patientname}</td>
+                          <td className="p-2.5 font-mono text-slate-700">
+                            {inspectModalDoc.report.extractedData?.patientName || "NOT_FOUND"}
+                          </td>
+                          <td className="p-2.5 text-right">
+                            {inspectModalDoc.report.extractedData?.patientName ? (
+                              inspectModalDoc.report.discrepancies?.some(
+                                (d) => d.field.toLowerCase().includes("patient")
+                              ) ? (
+                                <span className="text-[#A2363A] font-semibold">Mismatch</span>
+                              ) : (
+                                <span className="text-emerald-700 font-semibold">Match</span>
+                              )
+                            ) : (
+                              <span className="text-slate-400">Not Found</span>
+                            )}
+                          </td>
+                        </tr>
+
+                        {/* Blood Group */}
+                        <tr>
+                          <td className="p-2.5 font-medium text-slate-600">Blood Group</td>
+                          <td className="p-2.5 font-bold text-[#053845]">
+                            {request?.bloodgroup ? mapBloodGroupToDisplay(request.bloodgroup) : "N/A"}
+                          </td>
+                          <td className="p-2.5 font-bold text-slate-800">
+                            {inspectModalDoc.report.extractedData?.bloodGroup
+                              ? mapBloodGroupToDisplay(inspectModalDoc.report.extractedData.bloodGroup)
+                              : "NOT_FOUND"}
+                          </td>
+                          <td className="p-2.5 text-right">
+                            {inspectModalDoc.report.extractedData?.bloodGroup ? (
+                              inspectModalDoc.report.discrepancies?.some(
+                                (d) => d.field.toLowerCase().includes("blood")
+                              ) ? (
+                                <span className="text-[#A2363A] font-bold">CRITICAL MISMATCH</span>
+                              ) : (
+                                <span className="text-emerald-700 font-bold">Match</span>
+                              )
+                            ) : (
+                              <span className="text-slate-400">Not Found</span>
+                            )}
+                          </td>
+                        </tr>
+
+                        {/* Blood Component */}
+                        <tr>
+                          <td className="p-2.5 font-medium text-slate-600">Component</td>
+                          <td className="p-2.5 font-semibold text-slate-800">
+                            {request?.bloodcomponent
+                              ? mapBloodComponentToDisplay(request.bloodcomponent)
+                              : "N/A"}
+                          </td>
+                          <td className="p-2.5 font-mono text-slate-700">
+                            {inspectModalDoc.report.extractedData?.bloodComponent || "NOT_FOUND"}
+                          </td>
+                          <td className="p-2.5 text-right">
+                            {inspectModalDoc.report.extractedData?.bloodComponent ? (
+                              inspectModalDoc.report.discrepancies?.some(
+                                (d) => d.field.toLowerCase().includes("component")
+                              ) ? (
+                                <span className="text-[#A2363A] font-semibold">Mismatch</span>
+                              ) : (
+                                <span className="text-emerald-700 font-semibold">Match</span>
+                              )
+                            ) : (
+                              <span className="text-slate-400">Not Found</span>
+                            )}
+                          </td>
+                        </tr>
+
+                        {/* Required Units */}
+                        <tr>
+                          <td className="p-2.5 font-medium text-slate-600">Units Required</td>
+                          <td className="p-2.5 font-semibold text-slate-800">
+                            {request?.unitsrequired ? `${request.unitsrequired} Units` : "N/A"}
+                          </td>
+                          <td className="p-2.5 font-mono text-slate-700">
+                            {inspectModalDoc.report.extractedData?.units != null
+                              ? `${inspectModalDoc.report.extractedData.units} Units`
+                              : "NOT_FOUND"}
+                          </td>
+                          <td className="p-2.5 text-right">
+                            {inspectModalDoc.report.extractedData?.units != null ? (
+                              inspectModalDoc.report.discrepancies?.some(
+                                (d) => d.field.toLowerCase().includes("unit")
+                              ) ? (
+                                <span className="text-[#A2363A] font-semibold">Mismatch</span>
+                              ) : (
+                                <span className="text-emerald-700 font-semibold">Match</span>
+                              )
+                            ) : (
+                              <span className="text-slate-400">Not Found</span>
+                            )}
+                          </td>
+                        </tr>
+
+                        {/* Document Date */}
+                        <tr>
+                          <td className="p-2.5 font-medium text-slate-600">Document Date</td>
+                          <td className="p-2.5 text-slate-500">
+                            Req: {formatDateTime(request?.createdat)}
+                          </td>
+                          <td className="p-2.5 font-mono text-slate-700">
+                            {inspectModalDoc.report.extractedData?.documentDate || "NOT_FOUND"}
+                          </td>
+                          <td className="p-2.5 text-right">
+                            {inspectModalDoc.report.extractedData?.documentDate ? (
+                              inspectModalDoc.report.discrepancies?.some(
+                                (d) => d.field.toLowerCase().includes("date")
+                              ) ? (
+                                <span className="text-[#A2363A] font-semibold">Future/Invalid</span>
+                              ) : (
+                                <span className="text-emerald-700 font-semibold">Recorded</span>
+                              )
+                            ) : (
+                              <span className="text-slate-400">Not Found</span>
+                            )}
+                          </td>
+                        </tr>
+
+                        {/* Physician / Facility */}
+                        <tr>
+                          <td className="p-2.5 font-medium text-slate-600">Physician / Facility</td>
+                          <td className="p-2.5 text-slate-500">
+                            {request?.hospitals?.hospitalname || "Hospital Facility"}
+                          </td>
+                          <td className="p-2.5 font-mono text-slate-700">
+                            {inspectModalDoc.report.extractedData?.doctorName ||
+                              inspectModalDoc.report.extractedData?.facilityName ||
+                              inspectModalDoc.report.extractedData?.labName ||
+                              "NOT_FOUND"}
+                          </td>
+                          <td className="p-2.5 text-right">
+                            <span className="text-slate-500">
+                              {inspectModalDoc.report.extractedData?.doctorName ? "Present" : "Not Found"}
+                            </span>
+                          </td>
+                        </tr>
+
+                        {/* Signature / Stamp Presence Indicator */}
+                        <tr>
+                          <td className="p-2.5 font-medium text-slate-600">Signature / Seal</td>
+                          <td className="p-2.5 text-slate-400">N/A</td>
+                          <td className="p-2.5 font-mono text-slate-700">
+                            {inspectModalDoc.report.extractedData?.signatureDetected
+                              ? "Presence Detected (Seal / Signature line)"
+                              : "Not Detected"}
+                          </td>
+                          <td className="p-2.5 text-right">
+                            <span className="text-[10px] text-slate-400">Indicator only</span>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Reviewer Decision & Audit Trail Section */}
+              <div className="pt-3 border-t border-slate-200 space-y-3">
+                <h4 className="font-semibold text-slate-800 flex items-center gap-1.5">
+                  <ShieldCheck className="w-4 h-4 text-[#317786]" />
+                  <span>Authorized Reviewer Decision &amp; Audit Log</span>
+                </h4>
+
+                {/* Show Recorded Reviewer Decision if present */}
+                {inspectModalDoc.report?.reviewerDecision && (
+                  <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold text-[#053845]">
+                        Decision: {inspectModalDoc.report.reviewerDecision.replace(/_/g, " ")}
+                      </span>
+                      {inspectModalDoc.report.reviewedAt && (
+                        <span className="text-slate-400 text-[11px]">
+                          {formatDateTime(inspectModalDoc.report.reviewedAt)}
+                        </span>
+                      )}
+                    </div>
+                    {inspectModalDoc.report.reviewerRemarks && (
+                      <p className="text-slate-600 italic text-[11px]">
+                        &quot;{inspectModalDoc.report.reviewerRemarks}&quot;
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {decisionSuccess && (
+                  <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>{decisionSuccess}</span>
+                  </div>
+                )}
+
+                {decisionError && (
+                  <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span>{decisionError}</span>
+                  </div>
+                )}
+
+                {/* Decision Form for authorized reviewers */}
+                <div className="space-y-2.5 bg-[#FAF6EE]/50 p-3.5 rounded-xl border border-[#F3E9D1]">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Official Reviewer Action
+                    </label>
+                    <select
+                      value={reviewerDecision}
+                      onChange={(e) =>
+                        setReviewerDecision(
+                          e.target.value as
+                            | "VERIFIED_MANUAL"
+                            | "CORRECTION_REQUIRED"
+                            | "ADDITIONAL_INFO_REQUIRED"
+                            | "ESCALATED"
+                        )
+                      }
+                      className="w-full text-xs p-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:border-[#317786]"
+                    >
+                      <option value="VERIFIED_MANUAL">
+                        Mark as Verified (Manual Clinical Check Passed)
+                      </option>
+                      <option value="CORRECTION_REQUIRED">
+                        Request Hospital Correction / Re-upload
+                      </option>
+                      <option value="ADDITIONAL_INFO_REQUIRED">
+                        Request Additional Supporting Clinical Info
+                      </option>
+                      <option value="ESCALATED">
+                        Escalate to Transfusion Committee / Head Reviewer
+                      </option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Reviewer Remarks &amp; Clinical Justification (Logged to Audit Trail)
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={reviewerRemarks}
+                      onChange={(e) => setReviewerRemarks(e.target.value)}
+                      placeholder="Enter clinical rationale, confirmation of physical cross-check, or correction details..."
+                      className="w-full text-xs p-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:border-[#317786]"
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2 pt-1">
+                    <button
+                      type="button"
+                      disabled={isSubmittingDecision}
+                      onClick={handleSubmitReviewerDecision}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold text-white bg-[#053845] hover:bg-[#317786] transition-colors cursor-pointer disabled:opacity-50 shadow-2xs"
+                    >
+                      {isSubmittingDecision ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <ShieldCheck className="w-3.5 h-3.5" />
+                      )}
+                      <span>Save Official Review Decision</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex items-center justify-between pt-3 border-t border-slate-100 shrink-0">
+              <span className="text-[11px] text-slate-400">
+                Audit Trail ID: {inspectModalDoc.report?.verificationId || "Pending Verification"}
+              </span>
+              <button
+                type="button"
+                onClick={() => setInspectModalDoc(null)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors cursor-pointer"
+              >
+                Close
+              </button>
             </div>
           </div>
         </div>
