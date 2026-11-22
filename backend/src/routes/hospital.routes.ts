@@ -8,6 +8,7 @@ import { checkHospitalOwnership, requireApprovedHospital } from "../middleware/o
 import { getJwtSecret } from "../utils/jwt";
 import { approval_status, blood_group, blood_component, notification_type, verification_status } from "../generated/prisma/enums";
 import { DonorImportService, normalizeBloodGroup } from "../services/donorImport.service";
+import { BloodDemandForecastService } from "../services/bloodDemandForecast.service";
 import { validateCoordinates } from "../utils/distance";
 
 const router = Router();
@@ -372,6 +373,94 @@ router.get("/me/dashboard", authenticate, authorize("HOSPITAL", "ADMIN"), async 
         });
     }
 });
+
+/*
+ * GET DEMAND FORECAST & TREND ANALYTICS FOR AUTHENTICATED HOSPITAL
+ * GET /hospitals/me/analytics/demand-forecast
+ */
+router.get(
+    "/me/analytics/demand-forecast",
+    authenticate,
+    authorize("HOSPITAL", "ADMIN"),
+    requireApprovedHospital,
+    async (req: Request, res: Response) => {
+        try {
+            const user = (req as any).user;
+            const hospital = await prisma.hospitals.findUnique({
+                where: { userid: user.userid },
+            });
+
+            if (!hospital) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Hospital facility profile not found",
+                });
+            }
+
+            const timeframeDays = req.query.timeframeDays ? parseInt(String(req.query.timeframeDays), 10) : 30;
+            const bloodGroup = req.query.bloodGroup as blood_group | undefined;
+            const bloodComponent = req.query.bloodComponent as blood_component | undefined;
+
+            const forecast = await BloodDemandForecastService.calculateDemandForecast({
+                facilityType: "HOSPITAL",
+                facilityId: hospital.hospitalid,
+                timeframeDays,
+                bloodGroup,
+                bloodComponent,
+            });
+
+            return res.status(200).json({
+                success: true,
+                data: forecast,
+            });
+        } catch (error: any) {
+            console.error("Error generating hospital demand forecast:", error);
+            return res.status(500).json({
+                success: false,
+                message: error.message || "Failed to generate blood demand forecast",
+            });
+        }
+    }
+);
+
+/*
+ * GET DEMAND FORECAST FOR SPECIFIC HOSPITAL (ADMIN OR OWNER)
+ * GET /hospitals/:hospitalId/analytics/demand-forecast
+ */
+router.get(
+    "/:hospitalId/analytics/demand-forecast",
+    authenticate,
+    authorize("HOSPITAL", "ADMIN"),
+    checkHospitalOwnership,
+    requireApprovedHospital,
+    async (req: Request, res: Response) => {
+        try {
+            const hospitalId = (Array.isArray(req.params.hospitalId) ? req.params.hospitalId[0] : req.params.hospitalId) as string;
+            const timeframeDays = req.query.timeframeDays ? parseInt(String(req.query.timeframeDays), 10) : 30;
+            const bloodGroup = req.query.bloodGroup as blood_group | undefined;
+            const bloodComponent = req.query.bloodComponent as blood_component | undefined;
+
+            const forecast = await BloodDemandForecastService.calculateDemandForecast({
+                facilityType: "HOSPITAL",
+                facilityId: hospitalId,
+                timeframeDays,
+                bloodGroup,
+                bloodComponent,
+            });
+
+            return res.status(200).json({
+                success: true,
+                data: forecast,
+            });
+        } catch (error: any) {
+            console.error("Error generating hospital demand forecast by ID:", error);
+            return res.status(500).json({
+                success: false,
+                message: error.message || "Failed to generate blood demand forecast",
+            });
+        }
+    }
+);
 
 /*
  * GET HOSPITAL DASHBOARD BY ID

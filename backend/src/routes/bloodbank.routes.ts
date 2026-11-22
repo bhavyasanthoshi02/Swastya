@@ -8,6 +8,8 @@ import { checkBloodBankOwnership, requireApprovedBloodBank } from "../middleware
 import { getJwtSecret } from "../utils/jwt";
 import { approval_status, blood_group, blood_component, inventory_operation_type } from "../generated/prisma/enums";
 import { UnitTraceabilityService, validateTtiPanelAndOverallStatus } from "../services/unitTraceability.service";
+import { BloodDemandForecastService } from "../services/bloodDemandForecast.service";
+import { BloodExpiryPredictionService } from "../services/bloodExpiryPrediction.service";
 import { buildScopedIdempotencyKey } from "../utils/idempotency";
 
 const router = Router();
@@ -325,6 +327,239 @@ router.put("/me", authenticate, authorize("BLOOD_BANK", "ADMIN"), async (req: Re
         return res.status(500).json({ success: false, message: "Failed to update blood bank profile" });
     }
 });
+
+/*
+ * GET DEMAND FORECAST & TREND ANALYTICS FOR AUTHENTICATED BLOOD BANK
+ * GET /bloodbanks/me/analytics/demand-forecast
+ */
+router.get(
+    "/me/analytics/demand-forecast",
+    authenticate,
+    authorize("BLOOD_BANK", "ADMIN"),
+    requireApprovedBloodBank,
+    async (req: Request, res: Response) => {
+        try {
+            const user = (req as any).user;
+            const bloodBank = await prisma.bloodbanks.findUnique({
+                where: { userid: user.userid },
+            });
+
+            if (!bloodBank) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Blood bank facility profile not found",
+                });
+            }
+
+            const timeframeDays = req.query.timeframeDays ? parseInt(String(req.query.timeframeDays), 10) : 30;
+            const bloodGroup = req.query.bloodGroup as blood_group | undefined;
+            const bloodComponent = req.query.bloodComponent as blood_component | undefined;
+
+            const forecast = await BloodDemandForecastService.calculateDemandForecast({
+                facilityType: "BLOOD_BANK",
+                facilityId: bloodBank.bloodbankid,
+                timeframeDays,
+                bloodGroup,
+                bloodComponent,
+            });
+
+            return res.status(200).json({
+                success: true,
+                data: forecast,
+            });
+        } catch (error: any) {
+            console.error("Error generating blood bank demand forecast:", error);
+            return res.status(500).json({
+                success: false,
+                message: error.message || "Failed to generate blood demand forecast",
+            });
+        }
+    }
+);
+
+/*
+ * GET DEMAND FORECAST FOR SPECIFIC BLOOD BANK (ADMIN OR OWNER)
+ * GET /bloodbanks/:bloodBankId/analytics/demand-forecast
+ */
+router.get(
+    "/:bloodBankId/analytics/demand-forecast",
+    authenticate,
+    authorize("BLOOD_BANK", "ADMIN"),
+    checkBloodBankOwnership,
+    requireApprovedBloodBank,
+    async (req: Request, res: Response) => {
+        try {
+            const bloodBankId = req.params.bloodBankId as string;
+            const timeframeDays = req.query.timeframeDays ? parseInt(String(req.query.timeframeDays), 10) : 30;
+            const bloodGroup = req.query.bloodGroup as blood_group | undefined;
+            const bloodComponent = req.query.bloodComponent as blood_component | undefined;
+
+            const forecast = await BloodDemandForecastService.calculateDemandForecast({
+                facilityType: "BLOOD_BANK",
+                facilityId: bloodBankId,
+                timeframeDays,
+                bloodGroup,
+                bloodComponent,
+            });
+
+            return res.status(200).json({
+                success: true,
+                data: forecast,
+            });
+        } catch (error: any) {
+            console.error("Error generating blood bank demand forecast by ID:", error);
+            return res.status(500).json({
+                success: false,
+                message: error.message || "Failed to generate blood demand forecast",
+            });
+        }
+    }
+);
+
+/*
+ * GET BLOOD EXPIRY & WASTAGE PREDICTION FOR AUTHENTICATED BLOOD BANK
+ * GET /bloodbanks/me/analytics/expiry-prediction
+ */
+router.get(
+    "/me/analytics/expiry-prediction",
+    authenticate,
+    authorize("BLOOD_BANK", "ADMIN"),
+    requireApprovedBloodBank,
+    async (req: Request, res: Response) => {
+        try {
+            const user = (req as any).user;
+            const bloodBank = await prisma.bloodbanks.findUnique({
+                where: { userid: user.userid },
+            });
+
+            if (!bloodBank) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Blood bank facility profile not found",
+                });
+            }
+
+            const bloodGroup = req.query.bloodGroup as blood_group | undefined;
+            const bloodComponent = req.query.bloodComponent as blood_component | undefined;
+
+            const prediction = await BloodExpiryPredictionService.calculateExpiryAndWastage({
+                bloodBankId: bloodBank.bloodbankid,
+                bloodGroup,
+                bloodComponent,
+            });
+
+            return res.status(200).json({
+                success: true,
+                data: prediction,
+            });
+        } catch (error: any) {
+            console.error("Error generating blood bank expiry prediction:", error);
+            return res.status(500).json({
+                success: false,
+                message: error.message || "Failed to generate blood expiry prediction",
+            });
+        }
+    }
+);
+
+/*
+ * GET BLOOD EXPIRY & WASTAGE PREDICTION FOR SPECIFIC BLOOD BANK (ADMIN OR OWNER)
+ * GET /bloodbanks/:bloodBankId/analytics/expiry-prediction
+ */
+router.get(
+    "/:bloodBankId/analytics/expiry-prediction",
+    authenticate,
+    authorize("BLOOD_BANK", "ADMIN"),
+    checkBloodBankOwnership,
+    requireApprovedBloodBank,
+    async (req: Request, res: Response) => {
+        try {
+            const bloodBankId = req.params.bloodBankId as string;
+            const bloodGroup = req.query.bloodGroup as blood_group | undefined;
+            const bloodComponent = req.query.bloodComponent as blood_component | undefined;
+
+            const prediction = await BloodExpiryPredictionService.calculateExpiryAndWastage({
+                bloodBankId,
+                bloodGroup,
+                bloodComponent,
+            });
+
+            return res.status(200).json({
+                success: true,
+                data: prediction,
+            });
+        } catch (error: any) {
+            console.error("Error generating blood bank expiry prediction by ID:", error);
+            return res.status(500).json({
+                success: false,
+                message: error.message || "Failed to generate blood expiry prediction",
+            });
+        }
+    }
+);
+
+/*
+ * VALIDATE UNIT CLINICAL ALLOCATION SAFETY (FEFO / TRANSFUSION COMPLIANCE)
+ * POST /bloodbanks/:bloodBankId/units/:unitId/validate-safety
+ */
+router.post(
+    "/:bloodBankId/units/:unitId/validate-safety",
+    authenticate,
+    authorize("BLOOD_BANK", "ADMIN"),
+    checkBloodBankOwnership,
+    async (req: Request, res: Response) => {
+        try {
+            const { bloodBankId, unitId } = req.params;
+
+            const unit = await prisma.inventoryunits.findFirst({
+                where: { unitid: unitId as string, bloodbankid: bloodBankId as string },
+            });
+
+            if (!unit) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Inventory unit not found in this blood bank",
+                });
+            }
+
+            const safetyResult = BloodExpiryPredictionService.validateUnitSafetyForAllocation({
+                unitbarcode: unit.unitbarcode,
+                expirydate: unit.expirydate,
+                status: unit.status,
+                ttiscreeningstatus: unit.ttiscreeningstatus,
+            });
+
+            if (!safetyResult.safe) {
+                return res.status(400).json({
+                    success: false,
+                    isSafe: false,
+                    message: safetyResult.error,
+                });
+            }
+
+            return res.status(200).json({
+                success: true,
+                isSafe: true,
+                message: "Unit is unexpired, TTI passed, and clinically safe for allocation under FEFO standards.",
+                unit: {
+                    unitid: unit.unitid,
+                    unitbarcode: unit.unitbarcode,
+                    bloodgroup: unit.bloodgroup,
+                    bloodcomponent: unit.bloodcomponent,
+                    expirydate: unit.expirydate,
+                    status: unit.status,
+                    ttiscreeningstatus: unit.ttiscreeningstatus,
+                },
+            });
+        } catch (error: any) {
+            console.error("Error validating unit safety:", error);
+            return res.status(500).json({
+                success: false,
+                message: error.message || "Failed to validate unit safety",
+            });
+        }
+    }
+);
 
 /*
  * GET BLOOD BANK INVENTORY OVERVIEW

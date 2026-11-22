@@ -16,6 +16,7 @@ import {
   Plus,
   Users,
   Truck,
+  TrendingUp,
 } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { api } from "@/lib/api";
@@ -178,6 +179,12 @@ export function HospitalTopNav({
       label: "Donor Registry",
       icon: Users,
       active: pathname.startsWith("/hospital/donors"),
+    },
+    {
+      href: "/hospital/insights",
+      label: "AI Insights",
+      icon: TrendingUp,
+      active: pathname.startsWith("/hospital/insights"),
     },
   ];
 

@@ -768,6 +768,22 @@ export const api = {
         recentRequests: BloodRequestItem[];
       }>("/hospitals/me/dashboard"),
 
+    getDemandForecast: (params?: {
+      timeframeDays?: number;
+      bloodGroup?: string;
+      bloodComponent?: string;
+    }) => {
+      const query = new URLSearchParams();
+      if (params?.timeframeDays) query.set("timeframeDays", String(params.timeframeDays));
+      if (params?.bloodGroup) query.set("bloodGroup", params.bloodGroup);
+      if (params?.bloodComponent) query.set("bloodComponent", params.bloodComponent);
+      const qs = query.toString() ? `?${query.toString()}` : "";
+      return api.get<{
+        success: boolean;
+        data: any;
+      }>(`/hospitals/me/analytics/demand-forecast${qs}`);
+    },
+
     getBloodRequests: () =>
       api.get<BloodRequestItem[]>("/hospitals/me/bloodrequests"),
 
@@ -1754,6 +1770,44 @@ export const api = {
           reconciled: boolean;
         };
       }>(`/bloodbanks/${bloodBankId}/inventory/reconciliation`),
+
+    getDemandForecast: (params?: {
+      timeframeDays?: number;
+      bloodGroup?: string;
+      bloodComponent?: string;
+    }) => {
+      const query = new URLSearchParams();
+      if (params?.timeframeDays) query.set("timeframeDays", String(params.timeframeDays));
+      if (params?.bloodGroup) query.set("bloodGroup", params.bloodGroup);
+      if (params?.bloodComponent) query.set("bloodComponent", params.bloodComponent);
+      const qs = query.toString() ? `?${query.toString()}` : "";
+      return api.get<{
+        success: boolean;
+        data: any;
+      }>(`/bloodbanks/me/analytics/demand-forecast${qs}`);
+    },
+
+    getExpiryPrediction: (params?: {
+      bloodGroup?: string;
+      bloodComponent?: string;
+    }) => {
+      const query = new URLSearchParams();
+      if (params?.bloodGroup) query.set("bloodGroup", params.bloodGroup);
+      if (params?.bloodComponent) query.set("bloodComponent", params.bloodComponent);
+      const qs = query.toString() ? `?${query.toString()}` : "";
+      return api.get<{
+        success: boolean;
+        data: any;
+      }>(`/bloodbanks/me/analytics/expiry-prediction${qs}`);
+    },
+
+    validateUnitSafety: (bloodBankId: string, unitId: string) =>
+      api.post<{
+        success: boolean;
+        isSafe: boolean;
+        message: string;
+        unit?: any;
+      }>(`/bloodbanks/${bloodBankId}/units/${unitId}/validate-safety`, {}),
   },
 
   bloodbanks: {

@@ -9,6 +9,7 @@ import {
   ClipboardList,
   FlaskConical,
   Truck,
+  TrendingUp,
   Building,
   Bell,
   LogOut,
@@ -184,6 +185,12 @@ export function BloodBankTopNav({
       label: "Dispatch",
       icon: Truck,
       active: pathname.startsWith("/bloodbank/dispatch"),
+    },
+    {
+      href: "/bloodbank/insights",
+      label: "AI Insights",
+      icon: TrendingUp,
+      active: pathname.startsWith("/bloodbank/insights"),
     },
   ];
 
