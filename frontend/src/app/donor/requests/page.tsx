@@ -36,6 +36,7 @@ export default function DonorBloodRequestsPage() {
   const [error, setError] = useState<string | null>(null);
   const [actionSuccessMessage, setActionSuccessMessage] = useState<string | null>(null);
   const [transitUpdatingId, setTransitUpdatingId] = useState<string | null>(null);
+  const [decliningId, setDecliningId] = useState<string | null>(null);
 
   const fetchMatchingRequests = async () => {
     try {
@@ -114,9 +115,29 @@ export default function DonorBloodRequestsPage() {
           res.message || "Your willingness to donate was recorded successfully."
         );
         setTimeout(() => setActionSuccessMessage(null), 4000);
+        await fetchMatchingRequests();
       }
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : "Failed to submit response. Please try again.");
+    }
+  };
+
+  const handleDecline = async (id: string) => {
+    const target = requests.find((r) => r.id === id || r.rawId === id);
+    const targetId = target?.rawId || id.replace(/^REQ-/, "");
+
+    try {
+      setDecliningId(id);
+      const res = await api.donor.declineRequest(targetId);
+      if (res.success) {
+        setActionSuccessMessage(res.message || "Blood request declined.");
+        setTimeout(() => setActionSuccessMessage(null), 4000);
+        await fetchMatchingRequests();
+      }
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "Failed to decline request. Please try again.");
+    } finally {
+      setDecliningId(null);
     }
   };
 
@@ -443,6 +464,8 @@ export default function DonorBloodRequestsPage() {
                     hasResponded={hasResponded}
                     isUpdating={transitUpdatingId === (req.rawId || req.id)}
                     onUpdateTransit={handleUpdateTransit}
+                    onDecline={handleDecline}
+                    isDeclining={decliningId === req.id || decliningId === req.rawId}
                   />
                 </div>
               </article>
@@ -456,6 +479,8 @@ export default function DonorBloodRequestsPage() {
         request={selectedRequest}
         onClose={() => setSelectedRequest(null)}
         onConfirmDonation={handleRespond}
+        onDecline={handleDecline}
+        isDeclining={selectedRequest ? (decliningId === selectedRequest.id || decliningId === selectedRequest.rawId) : false}
         hasResponded={selectedRequest ? respondedIds.includes(selectedRequest.id) : false}
         transitUpdatingId={transitUpdatingId}
         onUpdateTransit={handleUpdateTransit}

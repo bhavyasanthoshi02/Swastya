@@ -224,6 +224,7 @@ export function mapBackendRequestToPreview(req: any): RequestPreviewItem {
     prescriptionStatus: req.prescription?.status || undefined,
     requestStatus: req.status || undefined,
     hasResponded: Boolean(req.hasResponded),
+    isDeclined: Boolean(req.isDeclined || req.myCommitment?.response === "DECLINED" || req.myCommitment?.acceptanceStatus === "DECLINED"),
     myCommitment: req.myCommitment || null,
   };
 }

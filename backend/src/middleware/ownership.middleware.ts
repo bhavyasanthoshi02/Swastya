@@ -305,19 +305,16 @@ export const requireApprovedBloodBank = async (
         }
 
         if (!bloodBank) {
-            if (user.role === "ADMIN") {
-                return next();
-            }
             return res.status(403).json({
                 success: false,
                 message: "Registered blood bank profile required for clinical operations",
             });
         }
 
-        if (bloodBank.approvalstatus === "REJECTED") {
+        if (bloodBank.approvalstatus !== "APPROVED") {
             return res.status(403).json({
                 success: false,
-                message: "Blood bank facility is REJECTED. Rejected facilities cannot perform clinical operations.",
+                message: `Blood bank facility is ${bloodBank.approvalstatus}. Only APPROVED facilities may perform clinical operations.`,
                 approvalstatus: bloodBank.approvalstatus,
             });
         }

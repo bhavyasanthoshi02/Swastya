@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { prisma } from "../config/prisma";
-import { blood_group, blood_component, inventory_operation_type } from "../generated/prisma/enums";
+import { blood_group, blood_component, inventory_operation_type, notification_type } from "../generated/prisma/enums";
 import { buildScopedIdempotencyKey } from "../utils/idempotency";
 import {
     RBC_RECIPIENT_TO_DONOR_MAP,
@@ -255,6 +255,18 @@ export class UnitTraceabilityService {
 
         if (!units || units.length === 0) {
             throw new Error("At least one blood unit is required for intake");
+        }
+
+        const bb = await prisma.bloodbanks.findUnique({
+            where: { bloodbankid: bloodBankId },
+            select: { bloodbankid: true, approvalstatus: true },
+        });
+        if (!bb || bb.approvalstatus !== "APPROVED") {
+            const err: any = new Error(
+                `Blood bank facility is ${bb?.approvalstatus || "NOT_APPROVED"}. Only APPROVED facilities may perform clinical operations.`
+            );
+            err.statusCode = 403;
+            throw err;
         }
 
         // Verify duplicate barcodes in incoming payload
@@ -560,9 +572,9 @@ export class UnitTraceabilityService {
                 throw err;
             }
 
-            if (unit.facilityapprovalstatus === "REJECTED") {
+            if (unit.facilityapprovalstatus !== "APPROVED") {
                 const err: any = new Error(
-                    `Blood bank facility is REJECTED. Rejected facilities cannot perform clinical operations.`
+                    `Blood bank facility is ${unit.facilityapprovalstatus || "NOT_APPROVED"}. Only APPROVED facilities may perform clinical operations.`
                 );
                 err.statusCode = 403;
                 throw err;
@@ -814,9 +826,9 @@ export class UnitTraceabilityService {
                 throw err;
             }
 
-            if (unit.facilityapprovalstatus === "REJECTED") {
+            if (unit.facilityapprovalstatus !== "APPROVED") {
                 const err: any = new Error(
-                    `Blood bank facility is REJECTED. Rejected facilities cannot perform clinical operations.`
+                    `Blood bank facility is ${unit.facilityapprovalstatus || "NOT_APPROVED"}. Only APPROVED facilities may perform clinical operations.`
                 );
                 err.statusCode = 403;
                 throw err;
@@ -1123,7 +1135,7 @@ export class UnitTraceabilityService {
             let lockedRequests: any[] = [];
             if (effectiveHospitalId) {
                 lockedRequests = await tx.$queryRawUnsafe(
-                    `SELECT requestid, hospitalid, requesterid, createdbyuserid, status
+                    `SELECT requestid, hospitalid, requesterid, createdbyuserid, status, bloodgroup, bloodcomponent, unitsrequired
                      FROM bloodrequests
                      WHERE requestid = $1::uuid AND hospitalid = $2::uuid
                      FOR UPDATE`,
@@ -1148,7 +1160,7 @@ export class UnitTraceabilityService {
                 }
             } else {
                 lockedRequests = await tx.$queryRawUnsafe(
-                    `SELECT requestid, hospitalid, requesterid, createdbyuserid, status
+                    `SELECT requestid, hospitalid, requesterid, createdbyuserid, status, bloodgroup, bloodcomponent, unitsrequired
                      FROM bloodrequests
                      WHERE requestid = $1::uuid
                      FOR UPDATE`,
@@ -1217,7 +1229,7 @@ export class UnitTraceabilityService {
 
             // 4. Validate target blood bank under lock
             const bbRows: any[] = await tx.$queryRawUnsafe(
-                `SELECT bloodbankid, approvalstatus FROM bloodbanks WHERE bloodbankid = $1::uuid FOR SHARE`,
+                `SELECT bloodbankid, bloodbankname, approvalstatus FROM bloodbanks WHERE bloodbankid = $1::uuid FOR SHARE`,
                 bloodBankId
             );
             const targetBloodBank = bbRows?.[0];
@@ -1267,18 +1279,112 @@ export class UnitTraceabilityService {
                 });
             }
 
+            // 6. Check inventory availability for Automatic Insufficient Stock Decline
+            const PRISMA_TO_DB_BLOOD_GROUP: Record<string, string> = {
+                A_POSITIVE: "A+",
+                A_NEGATIVE: "A-",
+                B_POSITIVE: "B+",
+                B_NEGATIVE: "B-",
+                AB_POSITIVE: "AB+",
+                AB_NEGATIVE: "AB-",
+                O_POSITIVE: "O+",
+                O_NEGATIVE: "O-",
+            };
+            const DB_TO_PRISMA_BLOOD_GROUP: Record<string, blood_group> = {
+                "A+": blood_group.A_POSITIVE,
+                "A-": blood_group.A_NEGATIVE,
+                "B+": blood_group.B_POSITIVE,
+                "B-": blood_group.B_NEGATIVE,
+                "AB+": blood_group.AB_POSITIVE,
+                "AB-": blood_group.AB_NEGATIVE,
+                "O+": blood_group.O_POSITIVE,
+                "O-": blood_group.O_NEGATIVE,
+                A_POSITIVE: blood_group.A_POSITIVE,
+                A_NEGATIVE: blood_group.A_NEGATIVE,
+                B_POSITIVE: blood_group.B_POSITIVE,
+                B_NEGATIVE: blood_group.B_NEGATIVE,
+                AB_POSITIVE: blood_group.AB_POSITIVE,
+                AB_NEGATIVE: blood_group.AB_NEGATIVE,
+                O_POSITIVE: blood_group.O_POSITIVE,
+                O_NEGATIVE: blood_group.O_NEGATIVE,
+            };
+
+            const recipientPrismaGroup =
+                DB_TO_PRISMA_BLOOD_GROUP[request.bloodgroup] || (request.bloodgroup as blood_group);
+            const recipientComponent = request.bloodcomponent as blood_component;
+            const compatibleGroups = getSafeCompatibleDonorGroups(recipientComponent, recipientPrismaGroup).map(
+                (bg) => PRISMA_TO_DB_BLOOD_GROUP[bg] || bg
+            );
+
+            let eligibleCount: number | null = null;
+            try {
+                const stockRows: any[] = await tx.$queryRawUnsafe(
+                    `SELECT COUNT(*)::int AS count
+                     FROM inventoryunits u
+                     JOIN inventory inv ON u.inventoryid = inv.inventoryid
+                     WHERE u.bloodbankid = $1::uuid
+                       AND u.bloodcomponent = $2::blood_component
+                       AND u.bloodgroup = ANY($3::blood_group[])
+                       AND u.status = 'AVAILABLE'
+                       AND u.ttiscreeningstatus = 'PASSED'
+                       AND u.expirydate > CURRENT_TIMESTAMP
+                       AND inv.islegacyreconciled = true`,
+                    bloodBankId,
+                    recipientComponent,
+                    compatibleGroups
+                );
+                eligibleCount = Number(stockRows?.[0]?.count ?? 0);
+            } catch (stockErr) {
+                console.error("Failed to query inventory availability for automatic decline check:", stockErr);
+                eligibleCount = null;
+            }
+
+            const requestedUnits = Number(request.unitsrequired || 1);
+            const shouldAutoDecline = eligibleCount !== null && eligibleCount < requestedUnits;
+
+            const INSUFFICIENT_STOCK_REASON =
+                "Insufficient eligible blood stock available to fulfil the requested quantity at this facility.";
+
             const assignment = await tx.requisitionassignments.create({
                 data: {
                     requestid: requestId,
                     bloodbankid: bloodBankId,
                     assignedbyuserid: assignedByUserId,
-                    assignmentstatus: "PENDING_ACCEPTANCE",
+                    assignmentstatus: shouldAutoDecline ? "DECLINED" : "PENDING_ACCEPTANCE",
+                    declinereason: shouldAutoDecline ? INSUFFICIENT_STOCK_REASON : null,
+                    respondedat: shouldAutoDecline ? new Date() : null,
                 },
             });
+
+            if (shouldAutoDecline) {
+                // Send in-app notification to requesting hospital immediately
+                const hospUser = await tx.hospitals.findUnique({
+                    where: { hospitalid: request.hospitalid },
+                    select: { userid: true, hospitalname: true },
+                });
+                const targetUserId = hospUser?.userid || request.createdbyuserid;
+
+                if (targetUserId) {
+                    await tx.notification.create({
+                        data: {
+                            userid: targetUserId,
+                            requestid: requestId,
+                            type: notification_type.REQUEST,
+                            title: "Requisition Automatically Declined - Insufficient Stock",
+                            message: `Your requisition for ${requestedUnits} unit(s) of ${request.bloodgroup} (${recipientComponent}) was automatically declined by ${targetBloodBank.bloodbankname || "Blood Bank"}: ${INSUFFICIENT_STOCK_REASON} (${eligibleCount} eligible unit(s) available).`,
+                            isread: false,
+                        },
+                    });
+                }
+            }
 
             return {
                 success: true,
                 assignment,
+                autoDeclined: shouldAutoDecline,
+                eligibleCount,
+                requestedUnits,
+                reason: shouldAutoDecline ? INSUFFICIENT_STOCK_REASON : undefined,
             };
         });
     }
@@ -2769,6 +2875,60 @@ export class UnitTraceabilityService {
                 });
             }
 
+            // Check if parent blood request can be marked FULFILLED
+            if (reservation.requestid) {
+                const parentRequest = await tx.bloodrequests.findUnique({
+                    where: { requestid: reservation.requestid },
+                    select: { requestid: true, unitsrequired: true, status: true },
+                });
+
+                if (parentRequest && parentRequest.status !== "FULFILLED") {
+                    const linkedReservations = await tx.bloodreservations.findMany({
+                        where: { requestid: reservation.requestid },
+                        select: { reservationid: true },
+                    });
+                    const resIds = linkedReservations.map((r) => r.reservationid);
+
+                    const totalDelivered = await tx.reservationitems.count({
+                        where: {
+                            reservationid: { in: resIds },
+                            itemstatus: "DELIVERED",
+                        },
+                    });
+
+                    const activeUndelivered = await tx.reservationitems.count({
+                        where: {
+                            reservationid: { in: resIds },
+                            itemstatus: { in: ["RESERVED", "PREPARED", "DISPATCHED"] },
+                        },
+                    });
+
+                    if (totalDelivered >= parentRequest.unitsrequired && activeUndelivered === 0) {
+                        await tx.bloodrequests.update({
+                            where: { requestid: reservation.requestid },
+                            data: {
+                                status: "FULFILLED",
+                                updatedat: now,
+                            },
+                        });
+
+                        try {
+                            await tx.requeststatushistory.create({
+                                data: {
+                                    requestid: reservation.requestid,
+                                    changedbyuserid: actorUserId,
+                                    oldstatus: parentRequest.status,
+                                    newstatus: "FULFILLED",
+                                    remarks: `All ${parentRequest.unitsrequired} required blood unit(s) successfully delivered to hospital.`,
+                                },
+                            });
+                        } catch {
+                            // Non-fatal if history record insert fails
+                        }
+                    }
+                }
+            }
+
             return {
                 success: true,
                 reservationId,
@@ -3188,9 +3348,9 @@ export class UnitTraceabilityService {
                 err.statusCode = 403;
                 throw err;
             }
-            if (unit.facilityapprovalstatus === "REJECTED") {
+            if (unit.facilityapprovalstatus !== "APPROVED") {
                 const err: any = new Error(
-                    `Blood bank facility is REJECTED. Rejected facilities cannot perform clinical operations.`
+                    `Blood bank facility is ${unit.facilityapprovalstatus || "NOT_APPROVED"}. Only APPROVED facilities may perform clinical operations.`
                 );
                 err.statusCode = 403;
                 throw err;

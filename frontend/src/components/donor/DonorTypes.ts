@@ -25,7 +25,8 @@ export interface DonorProfile {
 
 export interface DonorCommitmentInfo {
   deliveryId: string;
-  acceptanceStatus: "PENDING" | "ACCEPTED" | "REJECTED" | string;
+  acceptanceStatus: "PENDING" | "ACCEPTED" | "REJECTED" | "DECLINED" | string;
+  response?: "PENDING" | "ACCEPTED" | "DECLINED" | string;
   acceptedAt?: string | null;
   rejectedAt?: string | null;
   transitStatus: "DONOR_FOUND" | "STARTED" | "REACHED_LOCATION" | "COMPLETED" | string;
@@ -62,6 +63,7 @@ export interface RequestPreviewItem {
   prescriptionStatus?: string;
   requestStatus?: string;
   hasResponded?: boolean;
+  isDeclined?: boolean;
   myCommitment?: DonorCommitmentInfo | null;
 }
 

@@ -56,6 +56,7 @@ export interface BloodRequestItem {
   prescriptionhistory?: PrescriptionHistoryItem[];
   requeststatushistory?: RequestStatusHistoryItem[];
   volunteers?: VolunteerDonorResponse[];
+  requisitionassignments?: RequisitionAssignmentItem[];
 }
 
 export interface PrescriptionItem {
@@ -216,6 +217,37 @@ export interface RequestStatusHistoryItem {
     name: string;
     role: string;
   } | null;
+}
+
+export interface MatchedDonorScoreBreakdown {
+  distanceScore: number;
+  availabilityScore: number;
+  responseScore: number;
+  totalScore: number;
+}
+
+export interface MatchedDonorExplanations {
+  compatibility: string;
+  location: string;
+  availability: string;
+  responsiveness: string;
+}
+
+export interface MatchedDonorItem {
+  donorId: string;
+  donorName: string;
+  bloodGroup: string;
+  gender: string | null;
+  city: string;
+  state: string;
+  matchScore: number;
+  scoreBreakdown: MatchedDonorScoreBreakdown;
+  explanations: MatchedDonorExplanations;
+  distanceKm: number | null;
+  distanceDisplay: string;
+  matchType: "COORDINATES" | "CITY_FALLBACK";
+  availabilityStatus: string;
+  lastDonationDate: string | null;
 }
 
 export interface HospitalItem {
@@ -391,18 +423,21 @@ export interface InventoryUnitItem {
   bloodbankid: string;
   inventoryid: string;
   unitbarcode: string;
+  donationidentificationnumber?: string | null;
   bloodgroup: string;
   bloodcomponent: string;
-  volume_ml: number;
-  status: "QUARANTINED" | "AVAILABLE" | "RESERVED" | "IN_TRANSIT" | "DELIVERED" | "DISCARDED";
-  screeningstatus: "PENDING" | "PASSED" | "FAILED";
-  collectiondate: string;
+  volume_ml?: number;
+  status: "QUARANTINED" | "AVAILABLE" | "RESERVED" | "IN_TRANSIT" | "DELIVERED" | "DISCARDED" | string;
+  screeningstatus?: "PENDING" | "PASSED" | "FAILED" | string;
+  ttiscreeningstatus?: "PENDING" | "PASSED" | "FAILED" | string;
+  collectiondate?: string;
   expirydate: string;
-  islegacyreconciled: boolean;
-  createdat: string;
-  updatedat: string;
-  currentscreening?: UnitScreeningRecordItem | null;
-  screeningrecords?: UnitScreeningRecordItem[];
+  islegacyreconciled?: boolean;
+  storagebinlocation?: string | null;
+  createdat?: string;
+  updatedat?: string;
+  currentscreening?: any;
+  screeningrecords?: any[];
 }
 
 export interface UnitScreeningRecordItem {
@@ -413,10 +448,12 @@ export interface UnitScreeningRecordItem {
   hcvstatus: string;
   syphilisstatus: string;
   malariastatus: string;
-  overallstatus: "PASSED" | "FAILED";
+  overallstatus: "PASSED" | "FAILED" | string;
   testedat: string;
   labtechnicianname: string;
   medicalofficername: string;
+  verifiedat?: string | null;
+  verifiedbyuserid?: string | null;
   testkitdetails?: string | null;
   notes?: string | null;
 }
@@ -426,9 +463,11 @@ export interface RequisitionAssignmentItem {
   requestid: string;
   bloodbankid: string;
   assignedbyuserid?: string | null;
-  status: "PENDING" | "ACCEPTED" | "REJECTED" | "SUPERSEDED";
+  assignmentstatus?: "PENDING_ACCEPTANCE" | "ACCEPTED" | "DECLINED" | "CANCELLED" | "SUPERSEDED" | string;
+  status?: "PENDING" | "ACCEPTED" | "REJECTED" | "DECLINED" | "SUPERSEDED" | string;
   assignedat: string;
   respondedat?: string | null;
+  declinereason?: string | null;
   rejectionreason?: string | null;
   notes?: string | null;
   bloodrequests?: BloodRequestItem;
@@ -442,28 +481,34 @@ export interface BloodReservationItem {
   bloodbankid: string;
   assignmentid: string;
   reservedbyuserid?: string | null;
-  status: "RESERVED" | "PREPARED" | "DISPATCHED" | "DELIVERED" | "CANCELLED";
+  status?: "RESERVED" | "PREPARED" | "DISPATCHED" | "DELIVERED" | "CANCELLED" | string;
+  reservationstatus?: "ACTIVE" | "COMPLETED" | "CANCELLED" | string;
   reservedat: string;
+  expiresat?: string;
   dispatchedat?: string | null;
   deliveredat?: string | null;
   cancelledat?: string | null;
   cancellationreason?: string | null;
   couriertemperature_c?: number | null;
   items?: ReservationItemDetail[];
+  reservationitems?: ReservationItemDetail[];
   bloodrequests?: BloodRequestItem;
   bloodbanks?: AuthBloodBank;
 }
 
 export interface ReservationItemDetail {
   reservationitemid: string;
+  itemid?: string;
   reservationid: string;
   unitid: string;
-  status: "RESERVED" | "PREPARED" | "DISPATCHED" | "DELIVERED" | "CANCELLED" | "RETURNED_EXCURSION";
+  status?: "RESERVED" | "PREPARED" | "DISPATCHED" | "DELIVERED" | "CANCELLED" | "RETURNED_EXCURSION" | string;
+  itemstatus?: string;
   unitbarcode?: string;
   bloodgroup?: string;
   bloodcomponent?: string;
   inventoryunits?: InventoryUnitItem;
   crossmatches?: ClinicalCrossmatchItem[];
+  clinicalcrossmatches?: ClinicalCrossmatchItem[];
 }
 
 export interface ClinicalCrossmatchItem {
@@ -818,8 +863,12 @@ export const api = {
       }
       return api.post<{
         success: boolean;
-        message: string;
+        message?: string;
         assignment: RequisitionAssignmentItem;
+        autoDeclined?: boolean;
+        eligibleCount?: number;
+        requestedUnits?: number;
+        reason?: string;
       }>(`/bloodrequests/${requestId}/assign`, data, { headers });
     },
 
@@ -847,6 +896,24 @@ export const api = {
         reservation?: BloodReservationItem;
       }>(`/bloodrequests/reservations/${reservationId}/receipt`, data, { headers });
     },
+
+    getMatchedDonors: (id: string, params?: { radiusKm?: number; page?: number; limit?: number }) =>
+      api.get<{
+        success: boolean;
+        count: number;
+        total: number;
+        page: number;
+        limit: number;
+        totalPages: number;
+        data: MatchedDonorItem[];
+      }>(`/bloodrequests/${id}/matched-donors`, { params }),
+
+    triggerBroadcast: (id: string, data?: { radiusKm?: number; reason?: string }) =>
+      api.post<{
+        success: boolean;
+        message: string;
+        broadcast: any;
+      }>(`/bloodrequests/${id}/broadcast`, data),
   },
 
   bloodRequests: {
@@ -939,6 +1006,17 @@ export const api = {
       const blob = await response.blob();
       return { blob, filename, contentType };
     },
+
+    getMatchedDonors: (id: string, params?: { radiusKm?: number; page?: number; limit?: number }) =>
+      api.get<{
+        success: boolean;
+        count: number;
+        total: number;
+        page: number;
+        limit: number;
+        totalPages: number;
+        data: MatchedDonorItem[];
+      }>(`/bloodrequests/${id}/matched-donors`, { params }),
 
     getBroadcastStatus: (id: string) =>
       api.get<{
@@ -1172,6 +1250,9 @@ export const api = {
     respondToRequest: (
       requestId: string,
       payload?: {
+        action?: "ACCEPT" | "DECLINE";
+        response?: "ACCEPTED" | "DECLINED";
+        declineReason?: string;
         screeningAnswers?: {
           drinksAlcohol?: boolean;
           alcoholInPast24Hours?: boolean;
@@ -1192,7 +1273,18 @@ export const api = {
         message: string;
         requestId: string;
         patientName?: string;
+        status?: string;
+        response?: string;
       }>(`/bloodrequests/${requestId}/respond`, payload || {}),
+
+    declineRequest: (requestId: string, reason?: string) =>
+      api.post<{
+        success: boolean;
+        message: string;
+        requestId: string;
+        status?: string;
+        response?: string;
+      }>(`/bloodrequests/${requestId}/respond`, { action: "DECLINE", declineReason: reason }),
 
     updateTransitStatus: (
       requestId: string,
@@ -1523,7 +1615,9 @@ export const api = {
       bloodBankId: string,
       assignmentId: string,
       data: {
-        status: "ACCEPTED" | "REJECTED";
+        action?: "ACCEPT" | "DECLINE";
+        status?: "ACCEPTED" | "REJECTED" | "DECLINED";
+        declineReason?: string;
         rejectionreason?: string;
       },
       idempotencyKey?: string

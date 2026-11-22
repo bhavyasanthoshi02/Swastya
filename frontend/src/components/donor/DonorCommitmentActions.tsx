@@ -22,6 +22,8 @@ interface DonorCommitmentActionsProps {
     status: "STARTED" | "REACHED_LOCATION",
     deliveryId?: string
   ) => void | Promise<void>;
+  onDecline?: (requestId: string) => void | Promise<void>;
+  isDeclining?: boolean;
   donateHref?: string;
 }
 
@@ -30,20 +32,45 @@ export function DonorCommitmentActions({
   hasResponded,
   isUpdating = false,
   onUpdateTransit,
+  onDecline,
+  isDeclining = false,
   donateHref,
 }: DonorCommitmentActionsProps) {
   const rawRequestId = item.rawId || item.id.replace(/^REQ-/, "");
   const commitment = item.myCommitment;
 
-  if (!commitment && !hasResponded) {
+  if (item.isDeclined || commitment?.response === "DECLINED" || (commitment?.acceptanceStatus || "").toUpperCase() === "DECLINED") {
     return (
-      <Link
-        href={donateHref || `/donor/requests/${rawRequestId}/donate`}
-        className="inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-[#317786] hover:bg-[#245964] text-white transition-colors"
-      >
-        <Heart className="w-3.5 h-3.5 fill-current" />
-        <span>I Can Donate</span>
-      </Link>
+      <span className="inline-flex items-center justify-center gap-1 px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+        <XCircle className="w-3.5 h-3.5 text-slate-500" />
+        <span>Declined</span>
+      </span>
+    );
+  }
+
+  if (!hasResponded && (!commitment || commitment.response === "PENDING")) {
+    return (
+      <div className="flex items-center gap-1.5">
+        <Link
+          href={donateHref || `/donor/requests/${rawRequestId}/donate`}
+          className="inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-[#317786] hover:bg-[#245964] text-white transition-colors shadow-2xs"
+        >
+          <Heart className="w-3.5 h-3.5 fill-current" />
+          <span>I Can Donate</span>
+        </Link>
+        {onDecline && (
+          <button
+            type="button"
+            disabled={isDeclining}
+            onClick={() => onDecline(rawRequestId)}
+            className="inline-flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-medium text-slate-500 hover:text-rose-700 hover:bg-rose-50 border border-slate-200 hover:border-rose-200 transition-colors cursor-pointer"
+            title="Decline this blood request"
+          >
+            {isDeclining ? <Loader2 className="w-3 h-3 animate-spin" /> : <XCircle className="w-3 h-3" />}
+            <span>Decline</span>
+          </button>
+        )}
+      </div>
     );
   }
 

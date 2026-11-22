@@ -21,6 +21,8 @@ interface RequestDetailModalProps {
   request: RequestPreviewItem | null;
   onClose: () => void;
   onConfirmDonation?: (requestId: string) => void;
+  onDecline?: (requestId: string) => void | Promise<void>;
+  isDeclining?: boolean;
   hasResponded?: boolean;
   transitUpdatingId?: string | null;
   onUpdateTransit?: (
@@ -33,6 +35,9 @@ interface RequestDetailModalProps {
 export function RequestDetailModal({
   request,
   onClose,
+  onConfirmDonation,
+  onDecline,
+  isDeclining = false,
   hasResponded = false,
   transitUpdatingId = null,
   onUpdateTransit,
@@ -304,23 +309,14 @@ export function RequestDetailModal({
               Close
             </button>
 
-            {!isResponded && !request.myCommitment ? (
-              <button
-                type="button"
-                onClick={handleRespond}
-                className="px-4 py-2 rounded-xl text-xs font-semibold text-white bg-[#317786] hover:bg-[#245964] shadow-2xs flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
-              >
-                <Heart className="w-3.5 h-3.5 fill-current" />
-                <span>I Can Donate</span>
-              </button>
-            ) : (
-              <DonorCommitmentActions
-                item={request}
-                hasResponded={isResponded}
-                isUpdating={transitUpdatingId === (request.rawId || request.id)}
-                onUpdateTransit={onUpdateTransit}
-              />
-            )}
+            <DonorCommitmentActions
+              item={request}
+              hasResponded={isResponded}
+              isUpdating={transitUpdatingId === (request.rawId || request.id)}
+              onUpdateTransit={onUpdateTransit}
+              onDecline={onDecline}
+              isDeclining={isDeclining}
+            />
           </div>
         </div>
       </div>

@@ -14,6 +14,7 @@ import { triggerEmergencyBroadcast, getRequestBroadcastStatus } from "../service
 import { isDonorCompatibleWithRecipient } from "../utils/bloodCompatibility";
 import { scheduleEmergencyFollowUp, cancelPendingJobs, sanitizeErrorMessage } from "../services/scheduler.service";
 import { UnitTraceabilityService } from "../services/unitTraceability.service";
+import { DonorMatchingService } from "../services/donorMatching.service";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -400,6 +401,22 @@ router.get("/:id", authenticate, requireApprovedHospital, async (req: Request, r
                                 role: true,
                             },
                         },
+                    },
+                },
+                requisitionassignments: {
+                    include: {
+                        bloodbanks: {
+                            select: {
+                                bloodbankid: true,
+                                bloodbankname: true,
+                                city: true,
+                                state: true,
+                                licensenumber: true,
+                            },
+                        },
+                    },
+                    orderBy: {
+                        assignedat: "desc",
                     },
                 },
             },
@@ -2427,6 +2444,72 @@ router.post(
 );
 
 /*
+ * GET RANKED MATCHED DONORS
+ * GET /bloodrequests/:id/matched-donors
+ */
+router.get("/:id/matched-donors", authenticate, requireApprovedHospital, async (req: Request, res: Response) => {
+    try {
+        const user = (req as any).user;
+        const targetId = (Array.isArray(req.params.id) ? req.params.id[0] : req.params.id) as string;
+
+        if (!targetId || !UUID_REGEX.test(targetId)) {
+            return res.status(404).json({ success: false, message: "Blood request not found" });
+        }
+
+        const bloodRequest = await prisma.bloodrequests.findUnique({
+            where: { requestid: targetId },
+            include: { hospitals: true, requesters: true },
+        });
+
+        if (!bloodRequest) {
+            return res.status(404).json({ success: false, message: "Blood request not found" });
+        }
+
+        // Ownership authorization: Creator, linked hospital, linked requester, or Admin
+        const isOwner = bloodRequest.createdbyuserid === user.userid;
+        const isAdmin = user.role === "ADMIN";
+        let isRequesterOwner = false;
+        if (user.role === "REQUESTER" || user.role === "PATIENT") {
+            const requester = await prisma.requesters.findUnique({ where: { userid: user.userid } });
+            if (requester && bloodRequest.requesterid === requester.requesterid) {
+                isRequesterOwner = true;
+            }
+        }
+        let isHospitalOwner = false;
+        if (user.role === "HOSPITAL") {
+            const hospital = await prisma.hospitals.findUnique({ where: { userid: user.userid } });
+            if (hospital && bloodRequest.hospitalid === hospital.hospitalid) {
+                isHospitalOwner = true;
+            }
+        }
+
+        if (!isOwner && !isAdmin && !isRequesterOwner && !isHospitalOwner) {
+            return res.status(403).json({
+                success: false,
+                message: "Access denied: you are not authorized to view matched donors for this blood request",
+            });
+        }
+
+        const page = parseStrictBoundedInt(req.query.page, 1, 10000) || 1;
+        const limit = parseStrictBoundedInt(req.query.limit, 1, 100) || 20;
+        const radiusKm = req.query.radiusKm !== undefined && !isNaN(Number(req.query.radiusKm))
+            ? Number(req.query.radiusKm)
+            : undefined;
+
+        const result = await DonorMatchingService.getRankedEligibleDonors(bloodRequest, {
+            page,
+            limit,
+            radiusKm,
+        });
+
+        return res.status(200).json(result);
+    } catch (error) {
+        console.error("Error fetching matched donors:", error);
+        return res.status(500).json({ success: false, message: "Failed to fetch matched donors" });
+    }
+});
+
+/*
  * GET EMERGENCY BROADCAST STATUS
  * GET /bloodrequests/:id/broadcast
  */
@@ -2714,23 +2797,94 @@ router.post("/:id/respond", authenticate, async (req: Request, res: Response) =>
             });
         }
 
-        // Deduplication: Prevent duplicate responses from the same donor using durable commitments
+        const isDecline = req.body?.action === "DECLINE" || req.body?.response === "DECLINED" || req.body?.status === "DECLINED";
+
+        // Deduplication: Prevent duplicate or conflicting responses from the same donor
         const existingResponse = await prisma.broadcastdeliveries.findFirst({
             where: {
                 requestid: request.requestid,
                 donorid: donor.donorid,
-                response: "ACCEPTED",
+                response: { in: ["ACCEPTED", "DECLINED"] },
             },
         });
 
         if (existingResponse) {
             return res.status(400).json({
                 success: false,
-                message: "You have already volunteered for this blood request.",
+                message: existingResponse.response === "DECLINED"
+                    ? "You have already declined this blood request."
+                    : "You have already volunteered for this blood request.",
             });
         }
 
-        // Mandatory Pre-Donation Clinical Questionnaire Validation
+        // Handle DECLINE action directly without requiring clinical screening questionnaire answers
+        if (isDecline) {
+            const declineReason = req.body?.declineReason || req.body?.reason || "Declined by donor";
+            const existingDelivery = await prisma.broadcastdeliveries.findFirst({
+                where: {
+                    requestid: request.requestid,
+                    donorid: donor.donorid,
+                },
+                orderBy: { createdat: "desc" },
+            });
+
+            if (existingDelivery) {
+                await prisma.broadcastdeliveries.update({
+                    where: { deliveryid: existingDelivery.deliveryid },
+                    data: {
+                        deliverystatus: "RESPONDED",
+                        response: "DECLINED",
+                        acceptancestatus: "DECLINED",
+                        respondedat: new Date(),
+                        transitnotes: declineReason,
+                    },
+                });
+            } else {
+                let broadcast = await prisma.emergencybroadcasts.findFirst({
+                    where: { requestid: request.requestid },
+                    orderBy: { createdat: "desc" },
+                });
+                if (!broadcast) {
+                    broadcast = await prisma.emergencybroadcasts.create({
+                        data: {
+                            requestid: request.requestid,
+                            triggeredbyuserid: request.createdbyuserid,
+                            triggertype: "DIRECT_VOLUNTEER",
+                            triggerreason: "Direct donor response registration",
+                            radiuskm: request.searchradius || 5,
+                            status: "DONOR_RESPONDED",
+                            totalmatched: 1,
+                            totalnotified: 0,
+                            totalresponded: 0,
+                        },
+                    });
+                }
+                await prisma.broadcastdeliveries.create({
+                    data: {
+                        broadcastid: broadcast.broadcastid,
+                        requestid: request.requestid,
+                        donorid: donor.donorid,
+                        donoruserid: user.userid,
+                        matchtype: "DIRECT_VOLUNTEER",
+                        deliverystatus: "RESPONDED",
+                        response: "DECLINED",
+                        acceptancestatus: "DECLINED",
+                        respondedat: new Date(),
+                        transitnotes: declineReason,
+                    },
+                });
+            }
+
+            return res.status(200).json({
+                success: true,
+                message: "Blood requisition declined.",
+                requestId: request.requestid,
+                status: "DECLINED",
+                response: "DECLINED",
+            });
+        }
+
+        // Mandatory Pre-Donation Clinical Questionnaire Validation for ACCEPT action
         const rawScreening = req.body?.screeningAnswers;
         if (!rawScreening || typeof rawScreening !== "object" || Array.isArray(rawScreening)) {
             return res.status(400).json({
@@ -2964,11 +3118,14 @@ router.post("/:id/respond", authenticate, async (req: Request, res: Response) =>
                 where: {
                     requestid: request.requestid,
                     donorid: donor.donorid,
-                    response: "ACCEPTED",
+                    response: { in: ["ACCEPTED", "DECLINED"] },
                 },
             });
             if (concurrentResponse) {
-                throw Object.assign(new Error("You have already volunteered for this blood request."), { statusCode: 400 });
+                throw Object.assign(
+                    new Error(concurrentResponse.response === "DECLINED" ? "You have already declined this blood request." : "You have already volunteered for this blood request."),
+                    { statusCode: 400 }
+                );
             }
 
             // 5. Ensure parent broadcast container exists for this blood request

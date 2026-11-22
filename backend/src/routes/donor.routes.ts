@@ -815,8 +815,115 @@ router.get("/me/matching-requests", authenticate, authorize("DONOR", "ADMIN"), a
         const limit = Math.min(50, Math.max(1, parseInt(req.query.limit as string) || 10));
         const skip = (page - 1) * limit;
 
+        interface EvaluatedRequest {
+            request: any;
+            distanceKm: number | null;
+            distanceDisplay: string;
+            locationMatch: "COORDINATES" | "CITY_FALLBACK" | "NONE";
+            delivery?: any;
+        }
+
+        const matchedList: EvaluatedRequest[] = [];
+        const seenRequestIds = new Set<string>();
+
+        // 1. PRIMARY SOURCE: Targeted requests specifically broadcast to this authenticated donor
+        const myBroadcastDeliveries = await prisma.broadcastdeliveries.findMany({
+            where: {
+                OR: [
+                    { donoruserid: user.userid },
+                    { donorid: donor.donorid },
+                ],
+                bloodrequests: {
+                    status: { notIn: ["FULFILLED", "CANCELLED", "EXPIRED", "BLOOD_ARRANGED"] },
+                },
+            },
+            include: {
+                bloodrequests: {
+                    include: {
+                        hospitals: {
+                            select: {
+                                hospitalid: true,
+                                hospitalname: true,
+                                city: true,
+                                state: true,
+                                address: true,
+                                contactpersonname: true,
+                                contactpersonphone: true,
+                                latitude: true,
+                                longitude: true,
+                            },
+                        },
+                        requesters: {
+                            select: {
+                                requesterid: true,
+                                city: true,
+                                state: true,
+                                latitude: true,
+                                longitude: true,
+                            },
+                        },
+                        prescription: {
+                            select: {
+                                status: true,
+                                hospitalname: true,
+                            },
+                        },
+                    },
+                },
+            },
+            orderBy: { createdat: "desc" },
+        });
+
+        for (const delivery of myBroadcastDeliveries) {
+            const bReq = delivery.bloodrequests;
+            if (!bReq) continue;
+            if (seenRequestIds.has(bReq.requestid)) continue;
+
+            // ABO/Rh component compatibility check for donor safety
+            if (!exactOnly && !isDonorCompatibleWithRecipient(donor.bloodgroup, bReq.bloodgroup, bReq.bloodcomponent)) {
+                continue;
+            }
+
+            if (urgency && bReq.urgencylevel !== urgency) {
+                continue;
+            }
+
+            const reqLat = bReq.latitude != null
+                ? Number(bReq.latitude)
+                : (bReq.hospitals?.latitude != null
+                    ? Number(bReq.hospitals.latitude)
+                    : (bReq.requesters?.latitude != null ? Number(bReq.requesters.latitude) : null));
+
+            const reqLng = bReq.longitude != null
+                ? Number(bReq.longitude)
+                : (bReq.hospitals?.longitude != null
+                    ? Number(bReq.hospitals.longitude)
+                    : (bReq.requesters?.longitude != null ? Number(bReq.requesters.longitude) : null));
+
+            const locEval = evaluateLocationDistance(donorLat, donorLng, reqLat, reqLng, bReq.searchradius || 25);
+            const distKm = delivery.distancekm != null ? Number(delivery.distancekm) : locEval.distanceKm;
+            const distDisplay = distKm != null
+                ? `${distKm.toFixed(1)} km away`
+                : (bReq.hospitals?.city ? `City Match (${bReq.hospitals.city})` : "Direct Broadcast");
+
+            matchedList.push({
+                request: bReq,
+                distanceKm: distKm,
+                distanceDisplay: distDisplay,
+                locationMatch: locEval.hasCoordinates ? "COORDINATES" : "CITY_FALLBACK",
+                delivery,
+            });
+            seenRequestIds.add(bReq.requestid);
+        }
+
+        // 2. SECONDARY SOURCE: General open active requests that have NOT been targeted via emergency broadcasts
+        // (Broadcast privacy: requests broadcast to specific donors are only visible to their intended recipients)
         const whereClause: any = {
             status: { in: ACTIVE_REQUEST_STATUSES },
+            requestid: { notIn: Array.from(seenRequestIds) },
+            emergencybroadcasts: {
+                none: {},
+            },
             ...(exactOnly ? { bloodgroup: donor.bloodgroup } : {}),
         };
 
@@ -859,17 +966,8 @@ router.get("/me/matching-requests", authenticate, authorize("DONOR", "ADMIN"), a
             },
         });
 
-        // Evaluate location and filter by search radius or city fallback
-        interface EvaluatedRequest {
-            request: any;
-            distanceKm: number | null;
-            distanceDisplay: string;
-            locationMatch: "COORDINATES" | "CITY_FALLBACK" | "NONE";
-        }
-
-        const matchedList: EvaluatedRequest[] = [];
-
         for (const candidate of rawCandidates) {
+            if (seenRequestIds.has(candidate.requestid)) continue;
             if (!exactOnly && !isDonorCompatibleWithRecipient(donor.bloodgroup, candidate.bloodgroup, candidate.bloodcomponent)) {
                 continue;
             }
@@ -898,8 +996,8 @@ router.get("/me/matching-requests", authenticate, authorize("DONOR", "ADMIN"), a
                         distanceDisplay: locEval.distanceDisplay,
                         locationMatch: "COORDINATES",
                     });
+                    seenRequestIds.add(candidate.requestid);
                 }
-                // If coordinates are outside search radius, excluded
             } else {
                 // Missing coordinates on donor or request: safely fallback to city/state matching
                 const reqCity = (candidate.hospitals?.city || candidate.requesters?.city || "").trim();
@@ -913,7 +1011,6 @@ router.get("/me/matching-requests", authenticate, authorize("DONOR", "ADMIN"), a
                         donorCity.toLowerCase().includes(reqCity.toLowerCase()) ||
                         reqCity.toLowerCase().includes(donorCity.toLowerCase());
                 } else {
-                    // When location is missing or unavailable, do NOT silently match
                     isCityMatch = false;
                 }
 
@@ -924,6 +1021,7 @@ router.get("/me/matching-requests", authenticate, authorize("DONOR", "ADMIN"), a
                         distanceDisplay: "Distance unavailable - City match",
                         locationMatch: "CITY_FALLBACK",
                     });
+                    seenRequestIds.add(candidate.requestid);
                 }
             }
         }
@@ -960,18 +1058,22 @@ router.get("/me/matching-requests", authenticate, authorize("DONOR", "ADMIN"), a
         const total = matchedList.length;
         const paginated = matchedList.slice(skip, skip + limit);
 
-        // Check which requests the current donor has already volunteered for (from durable broadcastdeliveries and legacy notifications)
+        // Check which requests the current donor has deliveries or responses for
         const requestIds = paginated.map((item) => item.request.requestid);
         const [myDeliveries, myVolunteeredNotifications, myAllDeliveries] = await Promise.all([
             prisma.broadcastdeliveries.findMany({
                 where: {
-                    donoruserid: user.userid,
+                    OR: [
+                        { donoruserid: user.userid },
+                        { donorid: donor.donorid },
+                    ],
                     requestid: { in: requestIds },
-                    response: "ACCEPTED",
                 },
                 select: {
                     requestid: true,
                     deliveryid: true,
+                    response: true,
+                    deliverystatus: true,
                     acceptancestatus: true,
                     acceptedat: true,
                     rejectedat: true,
@@ -980,6 +1082,8 @@ router.get("/me/matching-requests", authenticate, authorize("DONOR", "ADMIN"), a
                     reachedat: true,
                     completedat: true,
                     receiptconfirmedat: true,
+                    respondedat: true,
+                    transitnotes: true,
                 },
             }),
             prisma.notification.findMany({
@@ -993,7 +1097,10 @@ router.get("/me/matching-requests", authenticate, authorize("DONOR", "ADMIN"), a
             }),
             prisma.broadcastdeliveries.findMany({
                 where: {
-                    donoruserid: user.userid,
+                    OR: [
+                        { donoruserid: user.userid },
+                        { donorid: donor.donorid },
+                    ],
                     response: "ACCEPTED",
                 },
                 orderBy: { respondedat: "desc" },
@@ -1028,17 +1135,21 @@ router.get("/me/matching-requests", authenticate, authorize("DONOR", "ADMIN"), a
         ]);
         const myDeliveryByRequest = new Map(myDeliveries.map((d) => [d.requestid, d]));
         const myRespondedSet = new Set([
-            ...myDeliveries.map((d) => d.requestid),
+            ...myDeliveries.filter((d) => d.response === "ACCEPTED").map((d) => d.requestid),
             ...myVolunteeredNotifications.map((v) => v.requestid),
         ]);
 
         // Format and sanitize output (strip patient contact and exact raw coordinates)
         const sanitizedRequests = paginated.map((item) => {
-            const delivery = myDeliveryByRequest.get(item.request.requestid);
+            const delivery = item.delivery || myDeliveryByRequest.get(item.request.requestid);
+            const isAccepted = delivery?.response === "ACCEPTED" || delivery?.acceptancestatus === "ACCEPTED";
+            const isDeclined = delivery?.response === "DECLINED" || delivery?.acceptancestatus === "DECLINED";
+            const hasResponded = Boolean(isAccepted || myRespondedSet.has(item.request.requestid));
+
             const sanitized = sanitizeRequestForDonor(
                 item.request,
-                myRespondedSet.has(item.request.requestid),
-                delivery?.acceptancestatus === "ACCEPTED"
+                hasResponded,
+                isAccepted
             );
             // Remove raw coordinate numbers from payload to protect patient and facility precise geolocation
             delete (sanitized as any).latitude;
@@ -1058,10 +1169,13 @@ router.get("/me/matching-requests", authenticate, authorize("DONOR", "ADMIN"), a
                 distanceDisplay: item.distanceDisplay,
                 locationMatch: item.locationMatch,
                 searchradius: item.request.searchradius || 5,
+                hasResponded,
+                isDeclined,
                 myCommitment: delivery
                     ? {
                         deliveryId: delivery.deliveryid,
-                        acceptanceStatus: delivery.acceptancestatus || "PENDING",
+                        acceptanceStatus: delivery.acceptancestatus || (isDeclined ? "DECLINED" : "PENDING"),
+                        response: delivery.response || "PENDING",
                         acceptedAt: delivery.acceptedat,
                         rejectedAt: delivery.rejectedat,
                         transitStatus: delivery.transitstatus || "DONOR_FOUND",
@@ -1069,6 +1183,7 @@ router.get("/me/matching-requests", authenticate, authorize("DONOR", "ADMIN"), a
                         reachedAt: delivery.reachedat,
                         completedAt: delivery.completedat,
                         receiptConfirmedAt: delivery.receiptconfirmedat,
+                        respondedAt: delivery.respondedat,
                     }
                     : null,
             };

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
@@ -29,8 +29,16 @@ import {
   ShieldAlert,
   ChevronDown,
   ChevronUp,
+  Building2,
+  Boxes,
+  Search,
+  Sparkles,
+  Users,
+  CheckSquare,
+  Square,
 } from "lucide-react";
-import { api, BloodRequestItem } from "@/lib/api";
+import { api, BloodRequestItem, MatchedDonorItem } from "@/lib/api";
+import { generateIdempotencyKey } from "@/lib/idempotency";
 import {
   mapBloodGroupToDisplay,
   mapBloodComponentToDisplay,
@@ -123,6 +131,245 @@ export default function HospitalRequestDetailsPage() {
   const [isEditingNotes, setIsEditingNotes] = useState(false);
   const [editedNotes, setEditedNotes] = useState("");
   const [isSavingNotes, setIsSavingNotes] = useState(false);
+
+  // Blood Bank Requisition Assignment State
+  const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
+  const [bloodbanksList, setBloodbanksList] = useState<any[]>([]);
+  const [isLoadingBloodbanks, setIsLoadingBloodbanks] = useState(false);
+  const [bloodbankSearchQuery, setBloodbankSearchQuery] = useState("");
+  const [selectedBloodBankId, setSelectedBloodBankId] = useState<string | null>(null);
+  const [assignmentNotes, setAssignmentNotes] = useState("");
+  const [isSubmittingAssignment, setIsSubmittingAssignment] = useState(false);
+  const [assignmentError, setAssignmentError] = useState<string | null>(null);
+
+  // Intelligent Donor Matching State
+  const [isMatchingModalOpen, setIsMatchingModalOpen] = useState(false);
+  const [matchedDonors, setMatchedDonors] = useState<MatchedDonorItem[]>([]);
+  const [isMatchingLoading, setIsMatchingLoading] = useState(false);
+  const [matchingError, setMatchingError] = useState<string | null>(null);
+  const [matchingRadius, setMatchingRadius] = useState<number>(25);
+  const [selectedDonorIds, setSelectedDonorIds] = useState<Set<string>>(new Set());
+  const [isBroadcastingToSelected, setIsBroadcastingToSelected] = useState(false);
+  const [matchingBroadcastFeedback, setMatchingBroadcastFeedback] = useState<{
+    type: "success" | "error";
+    text: string;
+  } | null>(null);
+  const [matchingSearchQuery, setMatchingSearchQuery] = useState("");
+
+  const activeAssignment = useMemo(() => {
+    if (!request?.requisitionassignments || request.requisitionassignments.length === 0) {
+      return null;
+    }
+    return (
+      request.requisitionassignments.find(
+        (a) => a.assignmentstatus === "ACCEPTED" || a.status === "ACCEPTED"
+      ) ||
+      request.requisitionassignments.find(
+        (a) => a.assignmentstatus === "PENDING_ACCEPTANCE" || a.status === "PENDING"
+      ) ||
+      request.requisitionassignments[0]
+    );
+  }, [request?.requisitionassignments]);
+
+  const filteredMatchedDonors = useMemo(() => {
+    if (!matchingSearchQuery.trim()) return matchedDonors;
+    const q = matchingSearchQuery.toLowerCase().trim();
+    return matchedDonors.filter(
+      (d) =>
+        d.donorName.toLowerCase().includes(q) ||
+        d.bloodGroup.toLowerCase().includes(q) ||
+        d.city.toLowerCase().includes(q) ||
+        d.state.toLowerCase().includes(q)
+    );
+  }, [matchedDonors, matchingSearchQuery]);
+
+  const isPrescriptionRequiredAndUnverified = useMemo(() => {
+    return Boolean(request?.requesterid && request?.prescription?.status !== "VERIFIED");
+  }, [request?.requesterid, request?.prescription?.status]);
+
+  const filteredBloodbanks = useMemo(() => {
+    if (!bloodbankSearchQuery.trim()) return bloodbanksList;
+    const query = bloodbankSearchQuery.toLowerCase().trim();
+    return bloodbanksList.filter(
+      (bb) =>
+        bb.bloodbankname?.toLowerCase().includes(query) ||
+        bb.city?.toLowerCase().includes(query) ||
+        bb.state?.toLowerCase().includes(query) ||
+        bb.licensenumber?.toLowerCase().includes(query)
+    );
+  }, [bloodbanksList, bloodbankSearchQuery]);
+
+  const selectedBloodBank = useMemo(() => {
+    if (!selectedBloodBankId) return null;
+    return bloodbanksList.find((bb) => bb.bloodbankid === selectedBloodBankId) || null;
+  }, [bloodbanksList, selectedBloodBankId]);
+
+  const handleOpenAssignModal = async () => {
+    setIsAssignModalOpen(true);
+    setAssignmentError(null);
+    setBloodbankSearchQuery("");
+    setAssignmentNotes("");
+    setSelectedBloodBankId(null);
+
+    if (bloodbanksList.length === 0) {
+      try {
+        setIsLoadingBloodbanks(true);
+        const res = await api.bloodbanks.getAll();
+        if (Array.isArray(res)) {
+          setBloodbanksList(res);
+        }
+      } catch (err: any) {
+        setAssignmentError(err?.message || "Failed to load blood banks list.");
+      } finally {
+        setIsLoadingBloodbanks(false);
+      }
+    }
+  };
+
+  const handleConfirmAssignment = async () => {
+    if (!request || !selectedBloodBankId) return;
+
+    if (isPrescriptionRequiredAndUnverified) {
+      setAssignmentError("Clinical prescription verification (VERIFIED) is required before assigning to a blood bank.");
+      return;
+    }
+
+    try {
+      setIsSubmittingAssignment(true);
+      setAssignmentError(null);
+
+      const idempotencyKey = generateIdempotencyKey();
+      const res = await api.hospital.assignRequisition(
+        request.requestid,
+        {
+          bloodbankid: selectedBloodBankId,
+          notes: assignmentNotes.trim() || undefined,
+        },
+        idempotencyKey
+      );
+
+      if (res?.success) {
+        const chosenBank = bloodbanksList.find((b) => b.bloodbankid === selectedBloodBankId);
+        if (res.autoDeclined) {
+          setActionSuccess(
+            `Requisition sent to ${chosenBank?.bloodbankname || "blood bank"}, but was automatically declined due to insufficient stock (${res.eligibleCount ?? 0} eligible units available). Please reassign to an alternate facility.`
+          );
+        } else {
+          setActionSuccess(`Requisition successfully assigned to ${chosenBank?.bloodbankname || "blood bank"}.`);
+        }
+        setIsAssignModalOpen(false);
+        fetchRequestDetails(true);
+      } else {
+        setAssignmentError(res?.message || "Failed to assign requisition.");
+      }
+    } catch (err: any) {
+      setAssignmentError(err?.message || "An unexpected error occurred while assigning requisition.");
+    } finally {
+      setIsSubmittingAssignment(false);
+    }
+  };
+
+  const fetchMatchedDonors = useCallback(
+    async (overrideRadius?: number) => {
+      if (!requestId) return;
+      const radiusToUse = overrideRadius ?? matchingRadius;
+      setIsMatchingLoading(true);
+      setMatchingError(null);
+      try {
+        const res = await api.hospital.getMatchedDonors(requestId, {
+          radiusKm: radiusToUse,
+          limit: 100,
+        });
+        if (res.success && Array.isArray(res.data)) {
+          setMatchedDonors(res.data);
+          // Pre-select all eligible donors for convenient batch broadcasting
+          setSelectedDonorIds(new Set(res.data.map((d: MatchedDonorItem) => d.donorId)));
+        } else {
+          setMatchedDonors([]);
+          setSelectedDonorIds(new Set());
+        }
+      } catch (err: any) {
+        console.error("Failed to fetch matched donors:", err);
+        setMatchingError(err?.message || "Failed to load matching donors.");
+        setMatchedDonors([]);
+        setSelectedDonorIds(new Set());
+      } finally {
+        setIsMatchingLoading(false);
+      }
+    },
+    [requestId, matchingRadius]
+  );
+
+  const handleOpenMatchingModal = () => {
+    setIsMatchingModalOpen(true);
+    setMatchingBroadcastFeedback(null);
+    setMatchingSearchQuery("");
+    const initialRadius = request?.searchradius && request.searchradius > 0 ? request.searchradius : 25;
+    setMatchingRadius(initialRadius);
+    fetchMatchedDonors(initialRadius);
+  };
+
+  const handleToggleDonorSelection = (donorId: string) => {
+    setSelectedDonorIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(donorId)) {
+        next.delete(donorId);
+      } else {
+        next.add(donorId);
+      }
+      return next;
+    });
+  };
+
+  const handleSelectAllMatchedDonors = () => {
+    setSelectedDonorIds(new Set(filteredMatchedDonors.map((d) => d.donorId)));
+  };
+
+  const handleDeselectAllMatchedDonors = () => {
+    setSelectedDonorIds(new Set());
+  };
+
+  const handleBroadcastToSelected = async () => {
+    if (selectedDonorIds.size === 0) {
+      setMatchingBroadcastFeedback({
+        type: "error",
+        text: "Please select at least one eligible donor before initiating broadcast.",
+      });
+      return;
+    }
+
+    setIsBroadcastingToSelected(true);
+    setMatchingBroadcastFeedback(null);
+
+    try {
+      const res = await api.hospital.triggerBroadcast(requestId, {
+        radiusKm: matchingRadius,
+        reason: `Targeted emergency broadcast to ${selectedDonorIds.size} matched donors`,
+      });
+
+      if (res.success) {
+        setMatchingBroadcastFeedback({
+          type: "success",
+          text: res.message || `Emergency broadcast dispatched to ${selectedDonorIds.size} matched donors.`,
+        });
+        await fetchBroadcastStatus();
+        await fetchRequestDetails(true);
+      } else {
+        setMatchingBroadcastFeedback({
+          type: "error",
+          text: res.message || "Failed to initiate emergency broadcast.",
+        });
+      }
+    } catch (err: any) {
+      console.error("Error broadcasting to matched donors:", err);
+      setMatchingBroadcastFeedback({
+        type: "error",
+        text: err?.message || "Failed to initiate emergency broadcast to selected donors.",
+      });
+    } finally {
+      setIsBroadcastingToSelected(false);
+    }
+  };
 
   useEffect(() => {
     return () => {
@@ -618,15 +865,27 @@ export default function HospitalRequestDetailsPage() {
             </div>
           </div>
 
-          {request.patientcontact && (
-            <a
-              href={`tel:${request.patientcontact}`}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#FAF6EE] hover:bg-[#F3E9D1] border border-[#F3E9D1] text-xs font-semibold text-[#053845] transition-colors self-start sm:self-center shrink-0"
-            >
-              <Phone className="w-3.5 h-3.5 text-[#317786]" />
-              <span>{request.patientcontact}</span>
-            </a>
-          )}
+          <div className="flex flex-wrap items-center gap-2 self-start sm:self-center shrink-0">
+            {request.patientcontact && (
+              <a
+                href={`tel:${request.patientcontact}`}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#FAF6EE] hover:bg-[#F3E9D1] border border-[#F3E9D1] text-xs font-semibold text-[#053845] transition-colors shrink-0"
+              >
+                <Phone className="w-3.5 h-3.5 text-[#317786]" />
+                <span>{request.patientcontact}</span>
+              </a>
+            )}
+            {!isTerminal && (
+              <button
+                type="button"
+                onClick={handleOpenMatchingModal}
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-[#053845] hover:bg-[#317786] text-white text-xs font-semibold cursor-pointer transition-colors shadow-2xs shrink-0"
+              >
+                <Users className="w-3.5 h-3.5" />
+                <span>Find Matching Donors</span>
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Horizontal Progress Tracker */}
@@ -692,17 +951,29 @@ export default function HospitalRequestDetailsPage() {
                 )}
               </div>
 
-              <button
-                type="button"
-                onClick={() => fetchBroadcastStatus()}
-                disabled={isBroadcastLoading}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-[#F3E9D1] text-xs font-semibold text-slate-600 hover:bg-[#FAF6EE] cursor-pointer transition-colors"
-              >
-                <RefreshCw
-                  className={`w-3.5 h-3.5 text-[#317786] ${isBroadcastLoading ? "animate-spin" : ""}`}
-                />
-                <span>Refresh</span>
-              </button>
+              <div className="flex items-center gap-2">
+                {!isTerminal && (
+                  <button
+                    type="button"
+                    onClick={handleOpenMatchingModal}
+                    className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-[#053845] hover:bg-[#317786] text-white text-xs font-semibold cursor-pointer transition-colors shadow-2xs"
+                  >
+                    <Users className="w-3.5 h-3.5" />
+                    <span>Find Matching Donors</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => fetchBroadcastStatus()}
+                  disabled={isBroadcastLoading}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-[#F3E9D1] text-xs font-semibold text-slate-600 hover:bg-[#FAF6EE] cursor-pointer transition-colors"
+                >
+                  <RefreshCw
+                    className={`w-3.5 h-3.5 text-[#317786] ${isBroadcastLoading ? "animate-spin" : ""}`}
+                  />
+                  <span>Refresh</span>
+                </button>
+              </div>
             </div>
 
             {broadcastFeedback && (
@@ -805,21 +1076,31 @@ export default function HospitalRequestDetailsPage() {
                 <span className="text-slate-600">
                   Emergency broadcast has not been initiated yet.
                 </span>
-                {canManageBroadcast && (
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
                   <button
                     type="button"
-                    onClick={handleExpandOrTriggerBroadcast}
-                    disabled={isExpandingBroadcast}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#B94F30] hover:bg-[#a14023] text-white font-semibold cursor-pointer transition-colors disabled:opacity-50 shrink-0"
+                    onClick={handleOpenMatchingModal}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[#F3E9D1] bg-white hover:bg-[#FAF6EE] text-[#053845] font-semibold cursor-pointer transition-colors shadow-2xs"
                   >
-                    {isExpandingBroadcast ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <Radio className="w-3.5 h-3.5" />
-                    )}
-                    <span>Initiate Broadcast</span>
+                    <Users className="w-3.5 h-3.5 text-[#317786]" />
+                    <span>Find Matching Donors</span>
                   </button>
-                )}
+                  {canManageBroadcast && (
+                    <button
+                      type="button"
+                      onClick={handleExpandOrTriggerBroadcast}
+                      disabled={isExpandingBroadcast}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#B94F30] hover:bg-[#a14023] text-white font-semibold cursor-pointer transition-colors disabled:opacity-50 shrink-0"
+                    >
+                      {isExpandingBroadcast ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Radio className="w-3.5 h-3.5" />
+                      )}
+                      <span>Initiate Broadcast</span>
+                    </button>
+                  )}
+                </div>
               </div>
             )}
           </section>
@@ -968,6 +1249,138 @@ export default function HospitalRequestDetailsPage() {
 
         {/* RIGHT COLUMN: Clinical Actions, Prescription, Notes, Details */}
         <div className="space-y-5">
+          {/* Blood Bank Requisition & Assignment Card */}
+          <section className="bg-white rounded-2xl border border-[#F3E9D1] p-5 shadow-2xs space-y-3.5">
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[#F3E9D1]/70">
+              <div className="flex items-center gap-2">
+                <Building2 className="w-4 h-4 text-[#317786]" />
+                <h2 className="font-serif text-base font-bold text-[#053845]">
+                  Blood Bank Requisition
+                </h2>
+              </div>
+
+              {activeAssignment ? (
+                activeAssignment.assignmentstatus === "ACCEPTED" || activeAssignment.status === "ACCEPTED" ? (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Accepted</span>
+                  </span>
+                ) : activeAssignment.assignmentstatus === "PENDING_ACCEPTANCE" || activeAssignment.status === "PENDING" ? (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+                    <Clock className="w-3.5 h-3.5 text-amber-600" />
+                    <span>Pending Acceptance</span>
+                  </span>
+                ) : activeAssignment.assignmentstatus === "DECLINED" || activeAssignment.status === "DECLINED" ? (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-50 text-[#A2363A] border border-rose-200">
+                    <AlertCircle className="w-3.5 h-3.5 text-[#A2363A]" />
+                    <span>Declined</span>
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-700">
+                    {activeAssignment.assignmentstatus || activeAssignment.status}
+                  </span>
+                )
+              ) : (
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-500">
+                  Unassigned
+                </span>
+              )}
+            </div>
+
+            {activeAssignment ? (
+              <div className="space-y-3 text-xs">
+                <div className="p-3 rounded-xl bg-[#FAF6EE]/70 border border-[#F3E9D1] space-y-1.5">
+                  <div className="flex flex-wrap items-center justify-between gap-1">
+                    <span className="font-semibold text-sm text-[#053845]">
+                      {activeAssignment.bloodbanks?.bloodbankname || "Assigned Blood Bank"}
+                    </span>
+                    {activeAssignment.bloodbanks?.licensenumber && (
+                      <span className="font-mono text-[10px] text-slate-500 bg-white px-1.5 py-0.5 rounded border border-[#F3E9D1]">
+                        LIC: {activeAssignment.bloodbanks.licensenumber}
+                      </span>
+                    )}
+                  </div>
+                  {activeAssignment.bloodbanks?.city && (
+                    <p className="text-slate-500 flex items-center gap-1">
+                      <MapPin className="w-3 h-3 text-[#317786]" />
+                      <span>
+                        {activeAssignment.bloodbanks.city}
+                        {activeAssignment.bloodbanks.state ? `, ${activeAssignment.bloodbanks.state}` : ""}
+                      </span>
+                    </p>
+                  )}
+                  <p className="text-[11px] text-slate-400">
+                    Dispatched on {formatDateTime(activeAssignment.assignedat)}
+                  </p>
+                  {activeAssignment.declinereason && (
+                    <div className="bg-rose-50 p-3 rounded-xl border border-rose-200 mt-2 space-y-1">
+                      <div className="flex items-center gap-1.5 text-xs font-bold text-rose-900">
+                        <AlertCircle className="w-4 h-4 text-[#A2363A] shrink-0" />
+                        <span>
+                          {activeAssignment.declinereason.includes("Insufficient eligible blood stock")
+                            ? "System Auto-Declined (Insufficient Stock)"
+                            : "Declined by Facility"}
+                        </span>
+                      </div>
+                      <p className="text-rose-800 text-xs">
+                        &quot;{activeAssignment.declinereason}&quot;
+                      </p>
+                      {activeAssignment.respondedat && (
+                        <p className="text-[10px] text-rose-600 font-mono">
+                          Responded on {formatDateTime(activeAssignment.respondedat)}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {!isTerminal && (
+                  <div>
+                    {activeAssignment.assignmentstatus === "ACCEPTED" || activeAssignment.status === "ACCEPTED" ? (
+                      <div className="p-2.5 rounded-xl bg-emerald-50 text-emerald-800 text-[11px] flex items-center gap-2 border border-emerald-200">
+                        <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        <span>Facility accepted requisition order. Screened units are being reserved.</span>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleOpenAssignModal}
+                        className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold text-white bg-[#053845] hover:bg-[#317786] transition-colors cursor-pointer shadow-2xs"
+                      >
+                        <Building2 className="w-3.5 h-3.5" />
+                        <span>Reassign to Another Blood Bank</span>
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-3 text-xs">
+                <p className="text-slate-500 leading-relaxed">
+                  Dispatch this requisition to an accredited blood bank to check vault inventory, reserve compatible units, and initiate clinical crossmatching.
+                </p>
+
+                {isPrescriptionRequiredAndUnverified && (
+                  <div className="p-2.5 rounded-xl bg-amber-50 text-amber-800 text-xs flex items-start gap-2 border border-amber-200">
+                    <ShieldAlert className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                    <span>Prescription verification (VERIFIED) is required by clinical protocol before dispatching to a blood bank.</span>
+                  </div>
+                )}
+
+                {!isTerminal && (
+                  <button
+                    type="button"
+                    onClick={handleOpenAssignModal}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold text-white bg-[#053845] hover:bg-[#317786] transition-colors cursor-pointer shadow-2xs"
+                  >
+                    <Building2 className="w-3.5 h-3.5" />
+                    <span>Send Requisition to Blood Bank</span>
+                  </button>
+                )}
+              </div>
+            )}
+          </section>
+
           {/* Clinical Coordination Actions Card */}
           <section className="bg-white rounded-2xl border border-[#F3E9D1] p-5 shadow-2xs space-y-3">
             <div className="flex items-center justify-between pb-3 border-b border-[#F3E9D1]/70">
@@ -1508,6 +1921,536 @@ export default function HospitalRequestDetailsPage() {
                     : "Confirm Rejection"}
                 </span>
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Blood Bank Requisition Assignment Modal */}
+      {isAssignModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4 max-h-[90vh] flex flex-col">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 shrink-0">
+              <div className="flex items-center gap-2">
+                <Building2 className="w-4 h-4 text-[#317786]" />
+                <h3 className="text-sm font-bold text-[#053845]">
+                  Send Requisition to Blood Bank
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAssignModalOpen(false)}
+                disabled={isSubmittingAssignment}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Scrollable Body */}
+            <div className="overflow-y-auto pr-1 space-y-4 text-xs">
+              {/* Requisition Brief Summary */}
+              <div className="p-3.5 rounded-xl bg-[#FAF6EE] border border-[#F3E9D1] space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-sm text-[#053845]">{request.patientname}</span>
+                  <span className="font-mono text-[11px] text-slate-500 font-medium">{refId}</span>
+                </div>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-slate-600">
+                  <span className="font-semibold text-[#053845]">
+                    {request.unitsrequired} {request.unitsrequired === 1 ? "unit" : "units"} of {bloodGroupDisplay} ({componentDisplay})
+                  </span>
+                  <span className="text-slate-300">•</span>
+                  <span className="text-slate-500">Urgency: {request.urgencylevel}</span>
+                  <span className="text-slate-300">•</span>
+                  <span className="text-slate-500">Required by {formatDateTime(request.requiredby)}</span>
+                </div>
+              </div>
+
+              {/* Warning/Error Alerts */}
+              {isPrescriptionRequiredAndUnverified && (
+                <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 flex items-start gap-2">
+                  <ShieldAlert className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                  <p className="leading-relaxed">
+                    <strong>Prescription Verification Required:</strong> This requisition was initiated by a patient and must have its clinical prescription authenticated (VERIFIED) prior to blood bank assignment.
+                  </p>
+                </div>
+              )}
+
+              {activeAssignment && (activeAssignment.assignmentstatus === "PENDING_ACCEPTANCE" || activeAssignment.status === "PENDING") && (
+                <div className="p-3 rounded-xl bg-blue-50 border border-blue-200 text-blue-900 flex items-start gap-2">
+                  <Clock className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+                  <p className="leading-relaxed">
+                    <strong>Pending Reassignment:</strong> This request is currently pending acceptance with <em>{activeAssignment.bloodbanks?.bloodbankname || "another facility"}</em>. Confirming a new assignment will cancel the pending order and dispatch to the selected facility.
+                  </p>
+                </div>
+              )}
+
+              {assignmentError && (
+                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <span>{assignmentError}</span>
+                </div>
+              )}
+
+              {/* Search Blood Banks */}
+              <div className="space-y-1.5">
+                <label className="block font-semibold text-slate-700">
+                  Select Target Blood Bank Facility
+                </label>
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={bloodbankSearchQuery}
+                    onChange={(e) => setBloodbankSearchQuery(e.target.value)}
+                    placeholder="Search by facility name, city, or state..."
+                    className="w-full text-xs pl-8 pr-3 py-2 rounded-xl border border-slate-200 bg-[#FAF6EE]/40 focus:bg-white focus:outline-none focus:border-[#317786] text-slate-800 placeholder:text-slate-400"
+                  />
+                </div>
+              </div>
+
+              {/* Blood Bank List */}
+              <div className="space-y-2">
+                {isLoadingBloodbanks ? (
+                  <div className="py-8 text-center text-slate-500 space-y-2">
+                    <Loader2 className="w-5 h-5 animate-spin mx-auto text-[#317786]" />
+                    <p className="text-xs">Loading licensed blood banks...</p>
+                  </div>
+                ) : filteredBloodbanks.length === 0 ? (
+                  <div className="p-6 text-center rounded-xl bg-[#FAF6EE]/50 border border-[#F3E9D1] text-slate-500">
+                    <Building2 className="w-6 h-6 mx-auto mb-1 text-slate-400" />
+                    <p className="text-xs font-medium">No blood banks found</p>
+                    <p className="text-[11px] text-slate-400 mt-0.5">
+                      {bloodbankSearchQuery ? "Try refining your search keyword." : "No registered blood banks currently available."}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="max-h-56 overflow-y-auto space-y-1.5 pr-1">
+                    {filteredBloodbanks.map((bb) => {
+                      const isSelected = selectedBloodBankId === bb.bloodbankid;
+                      return (
+                        <div
+                          key={bb.bloodbankid}
+                          onClick={() => setSelectedBloodBankId(bb.bloodbankid)}
+                          className={`p-3 rounded-xl border transition-all cursor-pointer flex items-center justify-between gap-3 ${
+                            isSelected
+                              ? "bg-[#317786]/10 border-[#317786] shadow-xs"
+                              : "bg-white border-[#F3E9D1] hover:bg-[#FAF6EE]/60"
+                          }`}
+                        >
+                          <div className="space-y-0.5 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="font-semibold text-xs text-[#053845] truncate">
+                                {bb.bloodbankname}
+                              </span>
+                              {bb.licensenumber && (
+                                <span className="font-mono text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded shrink-0">
+                                  {bb.licensenumber}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[11px] text-slate-500 flex items-center gap-1">
+                              <MapPin className="w-3 h-3 text-[#317786] shrink-0" />
+                              <span className="truncate">
+                                {bb.city ? `${bb.city}${bb.state ? `, ${bb.state}` : ""}` : "Licensed Facility"}
+                              </span>
+                            </p>
+                          </div>
+
+                          <div
+                            className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 ${
+                              isSelected
+                                ? "border-[#053845] bg-[#053845] text-white"
+                                : "border-slate-300 bg-white"
+                            }`}
+                          >
+                            {isSelected && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Confirmation Selection Summary */}
+              {selectedBloodBank && (
+                <div className="p-3 rounded-xl bg-[#317786]/10 border border-[#317786]/25 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-semibold text-[#053845] uppercase tracking-wide">
+                      Selected Target Facility
+                    </span>
+                    <span className="text-[11px] text-[#317786] font-medium">Ready to dispatch</span>
+                  </div>
+                  <p className="font-semibold text-xs text-[#053845]">{selectedBloodBank.bloodbankname}</p>
+                  <p className="text-[11px] text-slate-600">
+                    Location: {selectedBloodBank.city || "Regional center"} · Allocation: {request.unitsrequired} units
+                  </p>
+                </div>
+              )}
+
+              {/* Clinical Notes for Blood Bank */}
+              <div className="space-y-1">
+                <label className="block font-semibold text-slate-700">
+                  Clinical Notes / Special Handling Instructions (Optional)
+                </label>
+                <textarea
+                  rows={2}
+                  value={assignmentNotes}
+                  onChange={(e) => setAssignmentNotes(e.target.value)}
+                  placeholder="e.g. Inpatient surgery scheduled; require irradiated PRBC if available."
+                  className="w-full text-xs p-2.5 rounded-xl border border-slate-200 bg-[#FAF6EE]/40 focus:bg-white focus:outline-none focus:border-[#317786] text-slate-800 placeholder:text-slate-400"
+                />
+              </div>
+            </div>
+
+            {/* Modal Footer Actions */}
+            <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100 shrink-0">
+              <button
+                type="button"
+                onClick={() => setIsAssignModalOpen(false)}
+                disabled={isSubmittingAssignment}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmAssignment}
+                disabled={
+                  isSubmittingAssignment ||
+                  !selectedBloodBankId ||
+                  isPrescriptionRequiredAndUnverified
+                }
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold text-white bg-[#053845] hover:bg-[#317786] transition-colors cursor-pointer disabled:opacity-50 shadow-2xs"
+              >
+                {isSubmittingAssignment && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                <span>Confirm &amp; Send Requisition</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Intelligent Donor Matching Modal */}
+      {isMatchingModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl max-w-3xl w-full p-5 sm:p-6 shadow-2xl border border-slate-200 space-y-4 max-h-[90vh] flex flex-col">
+            {/* Modal Header */}
+            <div className="flex items-start justify-between gap-3 pb-3 border-b border-slate-100 shrink-0">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-[#FAF6EE] border border-[#F3E9D1] flex items-center justify-center shrink-0">
+                    <Sparkles className="w-4 h-4 text-[#B94F30]" />
+                  </div>
+                  <h3 className="font-serif text-lg font-bold text-[#053845]">
+                    Intelligent Donor Matching
+                  </h3>
+                  <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-[#317786]/10 text-[#317786] border border-[#317786]/20">
+                    {matchedDonors.length} Eligible
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500">
+                  Clinically compatible &amp; ranked donors for {request.patientname} ({bloodGroupDisplay} {componentDisplay}).
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsMatchingModalOpen(false)}
+                disabled={isBroadcastingToSelected}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+                title="Close"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Feedback Notification */}
+            {matchingBroadcastFeedback && (
+              <div
+                className={`p-3 rounded-xl border text-xs flex items-center gap-2 shrink-0 ${
+                  matchingBroadcastFeedback.type === "success"
+                    ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                    : "bg-rose-50 border-rose-200 text-rose-800"
+                }`}
+              >
+                {matchingBroadcastFeedback.type === "success" ? (
+                  <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                )}
+                <span className="font-medium">{matchingBroadcastFeedback.text}</span>
+              </div>
+            )}
+
+            {/* Radius Selector & Controls Bar */}
+            <div className="flex flex-wrap items-center justify-between gap-2.5 p-3 rounded-xl bg-[#FAF6EE]/70 border border-[#F3E9D1] shrink-0 text-xs">
+              <div className="flex items-center gap-2">
+                <span className="text-slate-600 font-medium">Search Radius:</span>
+                <select
+                  value={matchingRadius}
+                  onChange={(e) => {
+                    const r = Number(e.target.value);
+                    setMatchingRadius(r);
+                    fetchMatchedDonors(r);
+                  }}
+                  disabled={isMatchingLoading || isBroadcastingToSelected}
+                  className="px-2.5 py-1 rounded-lg border border-[#F3E9D1] bg-white font-semibold text-[#053845] focus:outline-none focus:border-[#317786] cursor-pointer"
+                >
+                  {[5, 10, 15, 25, 50, 75, 100].map((r) => (
+                    <option key={r} value={r}>
+                      {r} km radius
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => fetchMatchedDonors()}
+                  disabled={isMatchingLoading || isBroadcastingToSelected}
+                  className="p-1 rounded-lg border border-[#F3E9D1] bg-white hover:bg-slate-50 text-slate-600 cursor-pointer transition-colors"
+                  title="Refresh matching query"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 text-[#317786] ${isMatchingLoading ? "animate-spin" : ""}`} />
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    placeholder="Filter donors or city..."
+                    value={matchingSearchQuery}
+                    onChange={(e) => setMatchingSearchQuery(e.target.value)}
+                    className="pl-8 pr-2.5 py-1 rounded-lg border border-[#F3E9D1] bg-white text-xs text-[#053845] placeholder-slate-400 focus:outline-none focus:border-[#317786] w-40 sm:w-48"
+                  />
+                </div>
+                {matchedDonors.length > 0 && (
+                  <div className="flex items-center gap-1.5 pl-2 border-l border-[#F3E9D1]">
+                    <button
+                      type="button"
+                      onClick={handleSelectAllMatchedDonors}
+                      disabled={isBroadcastingToSelected}
+                      className="px-2 py-1 rounded text-[11px] font-semibold text-[#317786] hover:bg-[#FAF6EE] cursor-pointer"
+                    >
+                      Select All
+                    </button>
+                    <span className="text-slate-300">|</span>
+                    <button
+                      type="button"
+                      onClick={handleDeselectAllMatchedDonors}
+                      disabled={isBroadcastingToSelected}
+                      className="px-2 py-1 rounded text-[11px] font-semibold text-slate-500 hover:bg-[#FAF6EE] cursor-pointer"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Recommendation List Container */}
+            <div className="flex-1 overflow-y-auto min-h-[220px] max-h-[50vh] pr-1 space-y-2.5">
+              {isMatchingLoading && matchedDonors.length === 0 ? (
+                <div className="py-12 flex flex-col items-center justify-center gap-2.5 text-xs text-slate-500">
+                  <Loader2 className="w-6 h-6 animate-spin text-[#317786]" />
+                  <span className="font-medium text-slate-600">
+                    Evaluating blood compatibility, cooldown, and geographic proximity...
+                  </span>
+                  <span className="text-[11px] text-slate-400">
+                    Strict deterministic clinical validation in progress
+                  </span>
+                </div>
+              ) : matchingError ? (
+                <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 flex items-start gap-2.5">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <p className="font-semibold">Unable to load matched donors</p>
+                    <p>{matchingError}</p>
+                    <button
+                      type="button"
+                      onClick={() => fetchMatchedDonors()}
+                      className="text-[#317786] hover:underline font-semibold cursor-pointer pt-1 block"
+                    >
+                      Retry Matching Query
+                    </button>
+                  </div>
+                </div>
+              ) : filteredMatchedDonors.length === 0 ? (
+                <div className="py-12 text-center rounded-xl bg-[#FAF6EE]/50 border border-[#F3E9D1] p-6 space-y-2">
+                  <Users className="w-8 h-8 text-slate-300 mx-auto" />
+                  <p className="font-serif text-sm font-bold text-[#053845]">
+                    No Matching Eligible Donors Found
+                  </p>
+                  <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
+                    {matchingSearchQuery
+                      ? "No donors match your search filter. Try clearing the filter."
+                      : `No available donors matching ${bloodGroupDisplay} (${componentDisplay}) were found within ${matchingRadius} km. Try expanding the search radius above.`}
+                  </p>
+                </div>
+              ) : (
+                filteredMatchedDonors.map((donor) => {
+                  const isSelected = selectedDonorIds.has(donor.donorId);
+                  const isColdStart =
+                    donor.explanations.responsiveness.toLowerCase().includes("insufficient") ||
+                    donor.explanations.responsiveness.toLowerCase().includes("no previous") ||
+                    donor.explanations.responsiveness.toLowerCase().includes("neutral baseline");
+
+                  const scoreBadgeColor =
+                    donor.matchScore >= 80
+                      ? "bg-emerald-50 text-emerald-800 border-emerald-300"
+                      : donor.matchScore >= 60
+                      ? "bg-teal-50 text-[#053845] border-[#317786]/40"
+                      : "bg-amber-50 text-amber-800 border-amber-300";
+
+                  return (
+                    <div
+                      key={donor.donorId}
+                      onClick={() => handleToggleDonorSelection(donor.donorId)}
+                      className={`p-3.5 rounded-xl border transition-all cursor-pointer ${
+                        isSelected
+                          ? "bg-[#FAF6EE]/90 border-[#317786] ring-1 ring-[#317786]/30 shadow-2xs"
+                          : "bg-white border-[#F3E9D1] hover:border-slate-300 hover:bg-[#FAF6EE]/30"
+                      }`}
+                    >
+                      {/* Card Top Row: Checkbox, Name, Blood Group, Score */}
+                      <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-[#F3E9D1]/50">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleToggleDonorSelection(donor.donorId);
+                            }}
+                            className="text-[#053845] hover:text-[#317786] cursor-pointer shrink-0"
+                            aria-label={isSelected ? "Deselect donor" : "Select donor"}
+                          >
+                            {isSelected ? (
+                              <CheckSquare className="w-4 h-4 text-[#053845]" />
+                            ) : (
+                              <Square className="w-4 h-4 text-slate-300" />
+                            )}
+                          </button>
+
+                          <span className="font-serif font-bold text-sm text-[#053845] truncate">
+                            {donor.donorName}
+                          </span>
+
+                          <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-[#317786]/10 text-[#053845] border border-[#317786]/20 shrink-0">
+                            {mapBloodGroupToDisplay(donor.bloodGroup)}
+                          </span>
+
+                          {donor.gender && (
+                            <span className="text-[10px] text-slate-400 capitalize hidden sm:inline">
+                              · {donor.gender.toLowerCase()}
+                            </span>
+                          )}
+
+                          <span className="text-[11px] text-slate-500 hidden sm:inline">
+                            · {donor.city}, {donor.state}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span
+                            className={`px-2.5 py-0.5 rounded-full text-xs font-bold border ${scoreBadgeColor}`}
+                          >
+                            {donor.matchScore}/100 Match
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Score Breakdown Bar */}
+                      <div className="flex flex-wrap items-center gap-2 pt-2 pb-1.5 text-[11px]">
+                        <span className="text-slate-400 font-medium">Breakdown:</span>
+                        <span className="px-2 py-0.5 rounded bg-slate-100 font-medium text-slate-700">
+                          Distance: <strong className="text-[#053845]">{donor.scoreBreakdown.distanceScore}/40</strong>
+                        </span>
+                        <span className="px-2 py-0.5 rounded bg-slate-100 font-medium text-slate-700">
+                          Availability: <strong className="text-[#053845]">{donor.scoreBreakdown.availabilityScore}/30</strong>
+                        </span>
+                        <span className="px-2 py-0.5 rounded bg-slate-100 font-medium text-slate-700">
+                          Response: <strong className="text-[#053845]">{donor.scoreBreakdown.responseScore}/30</strong>
+                        </span>
+                        {donor.matchType === "CITY_FALLBACK" && (
+                          <span className="px-2 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-800 text-[10px] font-semibold">
+                            City Fallback
+                          </span>
+                        )}
+                        {isColdStart && (
+                          <span className="px-2 py-0.5 rounded bg-sky-50 border border-sky-200 text-sky-800 text-[10px] font-semibold inline-flex items-center gap-1">
+                            <Sparkles className="w-2.5 h-2.5" />
+                            Cold-Start
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Explanations List */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5 pt-1.5 text-xs text-slate-600">
+                        <div className="flex items-start gap-1.5">
+                          <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                          <span className="truncate">{donor.explanations.compatibility}</span>
+                        </div>
+
+                        <div className="flex items-start gap-1.5">
+                          <MapPin className="w-3.5 h-3.5 text-[#317786] shrink-0 mt-0.5" />
+                          <span className="truncate">{donor.explanations.location}</span>
+                        </div>
+
+                        <div className="flex items-start gap-1.5">
+                          <Clock className="w-3.5 h-3.5 text-[#053845] shrink-0 mt-0.5" />
+                          <span className="truncate">{donor.explanations.availability}</span>
+                        </div>
+
+                        <div className="flex items-start gap-1.5">
+                          {isColdStart ? (
+                            <Sparkles className="w-3.5 h-3.5 text-sky-600 shrink-0 mt-0.5" />
+                          ) : (
+                            <Heart className="w-3.5 h-3.5 text-[#B94F30] shrink-0 mt-0.5" />
+                          )}
+                          <span className="truncate">{donor.explanations.responsiveness}</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t border-slate-100 shrink-0">
+              <div className="text-xs text-slate-600">
+                <span className="font-bold text-[#053845]">{selectedDonorIds.size}</span> of{" "}
+                <span className="font-semibold">{filteredMatchedDonors.length}</span> eligible donors selected
+              </div>
+
+              <div className="flex items-center gap-2 self-end sm:self-auto">
+                <button
+                  type="button"
+                  onClick={() => setIsMatchingModalOpen(false)}
+                  disabled={isBroadcastingToSelected}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors cursor-pointer"
+                >
+                  Close
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleBroadcastToSelected}
+                  disabled={isBroadcastingToSelected || selectedDonorIds.size === 0}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold text-white bg-[#B94F30] hover:bg-[#a14023] transition-colors cursor-pointer disabled:opacity-50 shadow-2xs"
+                >
+                  {isBroadcastingToSelected ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Radio className="w-3.5 h-3.5" />
+                  )}
+                  <span>
+                    Broadcast to Selected ({selectedDonorIds.size})
+                  </span>
+                </button>
+              </div>
             </div>
           </div>
         </div>

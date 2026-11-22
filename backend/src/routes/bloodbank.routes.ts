@@ -1837,6 +1837,13 @@ function projectAssignmentForBloodBank(assignment: any) {
                   role: assignment.respondedby.role,
               }
             : null,
+        bloodreservations: (assignment.bloodreservations || []).map((res: any) => ({
+            ...res,
+            reservationitems: (res.reservationitems || []).map((item: any) => ({
+                ...item,
+                inventoryunits: item.unit || item.inventoryunits || null,
+            })),
+        })),
         ...(projectedRequest ? { bloodrequests: projectedRequest } : {}),
     };
 }
@@ -1871,6 +1878,16 @@ router.get(
                     },
                     assignedby: { select: SAFE_USER_SELECT },
                     respondedby: { select: SAFE_USER_SELECT },
+                    bloodreservations: {
+                        include: {
+                            reservationitems: {
+                                include: {
+                                    unit: true,
+                                    clinicalcrossmatches: true,
+                                },
+                            },
+                        },
+                    },
                 },
             });
 
@@ -1921,6 +1938,16 @@ router.get(
                     },
                     assignedby: { select: SAFE_USER_SELECT },
                     respondedby: { select: SAFE_USER_SELECT },
+                    bloodreservations: {
+                        include: {
+                            reservationitems: {
+                                include: {
+                                    unit: true,
+                                    clinicalcrossmatches: true,
+                                },
+                            },
+                        },
+                    },
                 },
             });
 
