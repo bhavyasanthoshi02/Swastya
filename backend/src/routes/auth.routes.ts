@@ -6,6 +6,7 @@ import { generateToken } from "../utils/jwt";
 import { authenticate } from "../middleware/auth.middleware";
 import { blood_group, gender_type, user_role, availability_status, approval_status } from "../generated/prisma/enums";
 import { validateCoordinates } from "../utils/distance";
+import { Msg91Service, getPhoneVariants } from "../services/msg91.service";
 
 const router = Router();
 
@@ -277,7 +278,21 @@ router.post("/register", async (req: Request, res: Response) => {
         }
 
         const hashedPassword = await bcrypt.hash(password, 10);
-        const contactNumber = (phoneNumber || phone || "").trim() || null;
+        let contactNumber = (phoneNumber || phone || "").trim() || null;
+
+        // Verify MSG91 OTP access token if provided during registration
+        const rawOtpToken = req.body?.accessToken || req.body?.otpAccessToken;
+        if (rawOtpToken && typeof rawOtpToken === "string" && rawOtpToken.trim() !== "") {
+            const otpVerification = await Msg91Service.verifyAccessToken(rawOtpToken.trim());
+            if (!otpVerification.success || !otpVerification.identifier) {
+                return res.status(400).json({
+                    success: false,
+                    message: otpVerification.message || "Invalid or expired OTP access token.",
+                });
+            }
+            // Derive trusted verified phone directly from MSG91's verification response
+            contactNumber = otpVerification.identifier;
+        }
 
         // Optional coordinate validation
         let validatedCoords: { latitude?: number; longitude?: number } = {};
@@ -576,13 +591,139 @@ router.post("/register", async (req: Request, res: Response) => {
     }
 });
 
+/**
+ * Shared OTP Login Handler
+ * Verifies access token with MSG91, extracts verified phone number, queries
+ * active matching account, and issues standard Swastya JWT.
+ */
+const executeOtpLogin = async (accessToken: string, res: Response) => {
+    if (!accessToken || typeof accessToken !== "string" || accessToken.trim() === "") {
+        return res.status(400).json({
+            success: false,
+            message: "OTP access token is required",
+        });
+    }
+
+    const verification = await Msg91Service.verifyAccessToken(accessToken.trim());
+    if (!verification.success || !verification.identifier) {
+        return res.status(401).json({
+            success: false,
+            message: verification.message || "Invalid or expired OTP access token.",
+        });
+    }
+
+    const phoneVariants = getPhoneVariants(verification.identifier);
+    const user = await prisma.users.findFirst({
+        where: {
+            phonenumber: { in: phoneVariants },
+        },
+        include: {
+            donors: true,
+            requesters: true,
+            hospitals: true,
+            bloodbanks: true,
+        },
+    });
+
+    if (!user) {
+        return res.status(404).json({
+            success: false,
+            code: "USER_NOT_FOUND",
+            verifiedPhone: verification.identifier,
+            normalizedPhone: verification.normalizedPhone,
+            message: "No account found matching this verified phone number. Please register an account.",
+        });
+    }
+
+    if (!user.isactive) {
+        return res.status(403).json({
+            success: false,
+            message: "Account is inactive or pending activation.",
+            pendingActivation: user.emailverified === false,
+        });
+    }
+
+    const token = generateToken(user.userid, user.role);
+    const { password: _password, ...safeUser } = user;
+
+    return res.status(200).json({
+        success: true,
+        token,
+        user: safeUser,
+        donor: user.donors || null,
+        requester: user.requesters || null,
+        hospital: user.hospitals || null,
+        bloodbank: user.bloodbanks || null,
+    });
+};
+
+/*
+ * VERIFY OTP ACCESS TOKEN
+ * POST /auth/verify-otp
+ */
+router.post("/verify-otp", async (req: Request, res: Response) => {
+    try {
+        const rawToken = req.body?.accessToken || req.body?.token;
+        if (!rawToken || typeof rawToken !== "string" || rawToken.trim() === "") {
+            return res.status(400).json({
+                success: false,
+                message: "Access token is required",
+            });
+        }
+
+        const result = await Msg91Service.verifyAccessToken(rawToken.trim());
+        if (!result.success) {
+            return res.status(400).json({
+                success: false,
+                message: result.message || "Invalid or expired OTP access token.",
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            verifiedPhone: result.identifier,
+            normalizedPhone: result.normalizedPhone,
+            message: result.message || "Phone number verified successfully.",
+        });
+    } catch (error) {
+        console.error("Verify OTP Error:", error);
+        return res.status(500).json({
+            success: false,
+            message: "Failed to verify OTP access token.",
+        });
+    }
+});
+
+/*
+ * LOGIN WITH OTP
+ * POST /auth/login-otp
+ */
+router.post("/login-otp", async (req: Request, res: Response) => {
+    try {
+        const rawToken = req.body?.accessToken || req.body?.token;
+        return await executeOtpLogin(rawToken, res);
+    } catch (error) {
+        console.error("Login OTP Error:", error);
+        return res.status(500).json({
+            success: false,
+            message: "OTP login failed",
+        });
+    }
+});
+
 /*
  * LOGIN USER
  * POST /auth/login
  */
 router.post("/login", async (req: Request, res: Response) => {
     try {
-        const { email, password } = req.body || {};
+        const { email, password, accessToken, token: legacyToken } = req.body || {};
+
+        // If OTP accessToken is supplied to standard login endpoint, route to OTP login
+        const otpToken = accessToken || legacyToken;
+        if (otpToken && (!email || !password)) {
+            return await executeOtpLogin(otpToken, res);
+        }
 
         if (!email || !password || typeof email !== "string" || typeof password !== "string") {
             return res.status(400).json({

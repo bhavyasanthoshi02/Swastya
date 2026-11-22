@@ -3,22 +3,26 @@
 import React, { useState, useEffect, Suspense } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Mail, Lock, Eye, EyeOff, ArrowLeft, Building2, CheckCircle2, AlertCircle, Loader2 } from "lucide-react";
+import { Mail, Lock, Eye, EyeOff, ArrowLeft, Building2, CheckCircle2, AlertCircle, Loader2, Smartphone, ShieldCheck } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { api } from "@/lib/api";
 import { setAuthToken, setStoredUser } from "@/lib/auth";
+import { triggerMsg91Otp } from "@/lib/msg91";
 
 function SignInForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const [authMode, setAuthMode] = useState<"password" | "otp">("password");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [phone, setPhone] = useState("");
   const [rememberMe, setRememberMe] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [isOtpLaunching, setIsOtpLaunching] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
+  const [errors, setErrors] = useState<{ email?: string; password?: string; phone?: string }>({});
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -26,6 +30,70 @@ function SignInForm() {
       setStatusMessage("Your session has expired. Please sign in again to continue.");
     }
   }, [searchParams]);
+
+  const handleSuccessfulAuth = (res: any) => {
+    setAuthToken(res.token);
+    setStoredUser(res.user, res.donor, res.requester, res.hospital, res.bloodbank);
+
+    if (res.user.role === "DONOR") {
+      router.push("/donor/dashboard");
+    } else if (res.user.role === "REQUESTER" || (res.user.role as any) === "PATIENT") {
+      router.push("/requester/dashboard");
+    } else if (res.user.role === "HOSPITAL") {
+      router.push("/hospital/dashboard");
+    } else if (res.user.role === "BLOOD_BANK") {
+      router.push("/bloodbank/dashboard");
+    } else {
+      router.push("/dashboard");
+    }
+  };
+
+  const handleOtpSignIn = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setErrorMessage(null);
+    setStatusMessage(null);
+    setIsOtpLaunching(true);
+
+    try {
+      await triggerMsg91Otp({
+        identifier: phone.trim() || undefined,
+        onSuccess: async (accessToken) => {
+          if (!accessToken) {
+            setErrorMessage("Did not receive a valid verification token from MSG91 widget.");
+            setIsOtpLaunching(false);
+            return;
+          }
+
+          try {
+            setIsLoading(true);
+            const res = await api.auth.loginWithOtp({ accessToken });
+            if (res.success && res.token) {
+              handleSuccessfulAuth(res);
+            } else {
+              setErrorMessage(res.message || "OTP authentication failed. Please try again.");
+            }
+          } catch (err: any) {
+            if (err?.data?.code === "USER_NOT_FOUND" || err?.status === 404) {
+              setErrorMessage("No account found matching this verified mobile number. Please create an account.");
+            } else {
+              setErrorMessage(err?.message || "Failed to authenticate with verified mobile OTP.");
+            }
+          } finally {
+            setIsLoading(false);
+            setIsOtpLaunching(false);
+          }
+        },
+        onFailure: (err) => {
+          setIsOtpLaunching(false);
+          const reason = typeof err === "string" ? err : err?.message || "OTP verification was cancelled or timed out.";
+          setErrorMessage(reason);
+        },
+      });
+    } catch (err: any) {
+      setIsOtpLaunching(false);
+      setErrorMessage(err?.message || "Unable to launch OTP verification widget.");
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -55,20 +123,7 @@ function SignInForm() {
       });
 
       if (res.success && res.token) {
-        setAuthToken(res.token);
-        setStoredUser(res.user, res.donor, res.requester, res.hospital, res.bloodbank);
-
-        if (res.user.role === "DONOR") {
-          router.push("/donor/dashboard");
-        } else if (res.user.role === "REQUESTER" || (res.user.role as any) === "PATIENT") {
-          router.push("/requester/dashboard");
-        } else if (res.user.role === "HOSPITAL") {
-          router.push("/hospital/dashboard");
-        } else if (res.user.role === "BLOOD_BANK") {
-          router.push("/bloodbank/dashboard");
-        } else {
-          router.push("/dashboard");
-        }
+        handleSuccessfulAuth(res);
       } else {
         setErrorMessage(res.message || "Failed to sign in. Please verify your credentials.");
       }
@@ -133,6 +188,81 @@ function SignInForm() {
               </div>
             )}
 
+            {/* Authentication Mode Switcher */}
+            <div className="flex rounded-lg bg-[#FAF6EE] border border-[#F3E9D1] p-1 mb-3.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthMode("password");
+                  setErrorMessage(null);
+                }}
+                className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                  authMode === "password"
+                    ? "bg-[#317786] text-white shadow-xs"
+                    : "text-slate-600 hover:text-[#053845]"
+                }`}
+              >
+                <Lock className="w-3.5 h-3.5" />
+                Password
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthMode("otp");
+                  setErrorMessage(null);
+                }}
+                className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                  authMode === "otp"
+                    ? "bg-[#317786] text-white shadow-xs"
+                    : "text-slate-600 hover:text-[#053845]"
+                }`}
+              >
+                <Smartphone className="w-3.5 h-3.5" />
+                Mobile OTP
+              </button>
+            </div>
+
+            {authMode === "otp" ? (
+              <form onSubmit={handleOtpSignIn} noValidate className="space-y-3 sm:space-y-3.5">
+                <div>
+                  <label htmlFor="otp-phone" className="block text-[10.5px] font-semibold uppercase tracking-wider text-slate-700 mb-1">
+                    Registered Mobile Number
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                      <Smartphone className="h-3.5 w-3.5" />
+                    </div>
+                    <input
+                      id="otp-phone"
+                      type="tel"
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
+                      placeholder="e.g. 9876543210 (or enter in widget)"
+                      className="w-full pl-9 pr-3 py-2 text-xs sm:text-sm rounded-lg border border-slate-200 bg-white text-slate-800 placeholder-slate-400 transition-colors focus:outline-none focus:border-[#317786] focus:ring-2 focus:ring-[#317786]/20"
+                    />
+                  </div>
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    Secure OTP login powered by MSG91 authentication.
+                  </p>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isLoading || isOtpLaunching}
+                  className="w-full py-2.5 px-4 rounded-lg font-medium text-xs sm:text-sm text-white bg-[#317786] hover:bg-[#245964] active:bg-[#1b444c] disabled:opacity-60 disabled:cursor-not-allowed shadow-sm hover:shadow transition-all focus:outline-none focus:ring-2 focus:ring-[#317786] focus:ring-offset-2 cursor-pointer flex items-center justify-center gap-2"
+                >
+                  {(isLoading || isOtpLaunching) && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  <ShieldCheck className="w-4 h-4" />
+                  <span>
+                    {isLoading
+                      ? "Verifying session..."
+                      : isOtpLaunching
+                      ? "Opening OTP Widget..."
+                      : "Send & Verify OTP"}
+                  </span>
+                </button>
+              </form>
+            ) : (
             <form onSubmit={handleSubmit} noValidate className="space-y-3 sm:space-y-3.5">
               {/* Email Field */}
               <div>
@@ -239,6 +369,7 @@ function SignInForm() {
                 <span>{isLoading ? "Signing in..." : "Sign In"}</span>
               </button>
             </form>
+            )}
 
             {/* Registration Link */}
             <div className="mt-3.5 pt-3 border-t border-slate-100 text-center text-xs text-slate-600">

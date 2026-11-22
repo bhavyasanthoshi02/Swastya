@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { setAuthToken, setStoredUser } from "@/lib/auth";
+import { triggerMsg91Otp } from "@/lib/msg91";
 
 type RoleType = "donor" | "hospital" | "bloodbank" | "patient";
 
@@ -88,6 +89,38 @@ export default function SignUpPage() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [agreeTerms, setAgreeTerms] = useState(false);
+
+  // MSG91 OTP Verification State
+  const [otpAccessToken, setOtpAccessToken] = useState<string | null>(null);
+  const [isPhoneVerified, setIsPhoneVerified] = useState(false);
+  const [isVerifyingPhone, setIsVerifyingPhone] = useState(false);
+
+  const handleVerifyPhoneOtp = async () => {
+    setErrorMessage(null);
+    setIsVerifyingPhone(true);
+    try {
+      await triggerMsg91Otp({
+        identifier: phone.trim() || undefined,
+        onSuccess: (token, data) => {
+          setOtpAccessToken(token);
+          setIsPhoneVerified(true);
+          setIsVerifyingPhone(false);
+          // If MSG91 returned verified phone identifier, update field
+          if (typeof data?.message === "string" && !data.message.startsWith("ey")) {
+            setPhone(data.message.trim());
+          }
+        },
+        onFailure: (err) => {
+          setIsVerifyingPhone(false);
+          const reason = typeof err === "string" ? err : err?.message || "OTP verification cancelled or failed.";
+          setErrorMessage(reason);
+        },
+      });
+    } catch (err: any) {
+      setIsVerifyingPhone(false);
+      setErrorMessage(err?.message || "Failed to launch OTP verification.");
+    }
+  };
 
   // Donor-Specific Fields
   const [dob, setDob] = useState("");
@@ -276,6 +309,11 @@ export default function SignUpPage() {
       phone: phone.trim(),
       role: roleMap[role],
     };
+
+    if (otpAccessToken) {
+      payload.accessToken = otpAccessToken;
+      payload.otpAccessToken = otpAccessToken;
+    }
 
     if (role === "donor") {
       payload.bloodGroup = bloodGroup;
@@ -1062,9 +1100,27 @@ export default function SignUpPage() {
                   </div>
 
                   <div>
-                    <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-700 mb-1">
-                      Phone Number
-                    </label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-700">
+                        Phone Number
+                      </label>
+                      {isPhoneVerified ? (
+                        <span className="inline-flex items-center gap-1 text-[10.5px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                          <Check className="w-3 h-3 text-emerald-600" />
+                          Verified with OTP
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={handleVerifyPhoneOtp}
+                          disabled={isVerifyingPhone}
+                          className="inline-flex items-center gap-1 text-[10.5px] font-semibold text-[#317786] hover:text-[#245964] hover:underline disabled:opacity-60 cursor-pointer"
+                        >
+                          {isVerifyingPhone && <Loader2 className="w-3 h-3 animate-spin" />}
+                          Verify with MSG91 OTP
+                        </button>
+                      )}
+                    </div>
                     <div className="relative">
                       <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
                         <Phone className="h-3.5 w-3.5" />
@@ -1072,9 +1128,19 @@ export default function SignUpPage() {
                       <input
                         type="tel"
                         value={phone}
-                        onChange={(e) => setPhone(e.target.value)}
+                        onChange={(e) => {
+                          setPhone(e.target.value);
+                          if (isPhoneVerified) {
+                            setIsPhoneVerified(false);
+                            setOtpAccessToken(null);
+                          }
+                        }}
                         placeholder="10-digit contact number"
-                        className="w-full pl-9 pr-3 py-2 text-xs sm:text-sm rounded-lg border border-slate-200 bg-white text-slate-800 placeholder-slate-400 focus:outline-none focus:border-[#317786] focus:ring-2 focus:ring-[#317786]/20"
+                        className={`w-full pl-9 pr-3 py-2 text-xs sm:text-sm rounded-lg border bg-white text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 ${
+                          isPhoneVerified
+                            ? "border-emerald-500 focus:border-emerald-500 focus:ring-emerald-500/20"
+                            : "border-slate-200 focus:border-[#317786] focus:ring-[#317786]/20"
+                        }`}
                       />
                     </div>
                   </div>

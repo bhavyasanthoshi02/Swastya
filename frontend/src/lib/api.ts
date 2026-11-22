@@ -686,6 +686,28 @@ export const api = {
         user: AuthUser;
         donor?: AuthDonor;
       }>("/auth/activate-donor", data),
+
+    loginWithOtp: (payload: { accessToken: string }) =>
+      api.post<{
+        success: boolean;
+        token: string;
+        user: AuthUser;
+        donor: AuthDonor | null;
+        requester: AuthRequester | null;
+        hospital: AuthHospital | null;
+        bloodbank: AuthBloodBank | null;
+        code?: string;
+        verifiedPhone?: string;
+        message?: string;
+      }>("/auth/login-otp", payload),
+
+    verifyOtp: (payload: { accessToken: string }) =>
+      api.post<{
+        success: boolean;
+        verifiedPhone?: string;
+        normalizedPhone?: string;
+        message?: string;
+      }>("/auth/verify-otp", payload),
   },
 
   requester: {
