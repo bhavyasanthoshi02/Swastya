@@ -5,20 +5,17 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutDashboard,
-  Building,
   Droplets,
+  ClipboardList,
+  FlaskConical,
+  Truck,
+  Building,
   Bell,
   LogOut,
   ChevronDown,
   Menu,
   X,
   ExternalLink,
-  ShieldCheck,
-  Clock,
-  AlertTriangle,
-  ClipboardList,
-  FlaskConical,
-  Truck,
 } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { api } from "@/lib/api";
@@ -38,7 +35,7 @@ export function BloodBankTopNav({
   representativeName = "Authorized Officer",
   licenseNumber = "LIC-PENDING",
   city = "Regional Network",
-  approvalStatus = "PENDING",
+  approvalStatus = "APPROVED",
 }: BloodBankTopNavProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -75,7 +72,7 @@ export function BloodBankTopNav({
             n.type?.toLowerCase().includes("emergency")
               ? "urgent"
               : "info",
-          href: "/bloodbank/dashboard",
+          href: n.requestid ? `/bloodbank/requisitions` : "/bloodbank/dashboard",
         }));
         setNotifications(mapped);
       }
@@ -156,48 +153,37 @@ export function BloodBankTopNav({
     setIsNotificationsOpen(false);
   }, [pathname]);
 
+  // Five core navigation items (Profile removed from navbar items)
   const navLinks = [
     {
       href: "/bloodbank/dashboard",
       label: "Dashboard",
-      shortLabel: "Dashboard",
       icon: LayoutDashboard,
       active: pathname === "/bloodbank/dashboard" || pathname === "/bloodbank",
     },
     {
       href: "/bloodbank/inventory",
-      label: "Inventory Overview",
-      shortLabel: "Inventory",
+      label: "Inventory",
       icon: Droplets,
       active: pathname.startsWith("/bloodbank/inventory"),
     },
     {
       href: "/bloodbank/requisitions",
-      label: "Requisitions Queue",
-      shortLabel: "Requisitions",
+      label: "Requisitions",
       icon: ClipboardList,
       active: pathname.startsWith("/bloodbank/requisitions"),
     },
     {
       href: "/bloodbank/screening",
-      label: "TTI Screening",
-      shortLabel: "Screening",
+      label: "Screening",
       icon: FlaskConical,
       active: pathname.startsWith("/bloodbank/screening"),
     },
     {
       href: "/bloodbank/dispatch",
-      label: "Dispatch & Crossmatch",
-      shortLabel: "Dispatch",
+      label: "Dispatch",
       icon: Truck,
       active: pathname.startsWith("/bloodbank/dispatch"),
-    },
-    {
-      href: "/bloodbank/profile",
-      label: "Facility Profile",
-      shortLabel: "Profile",
-      icon: Building,
-      active: pathname.startsWith("/bloodbank/profile"),
     },
   ];
 
@@ -210,37 +196,11 @@ export function BloodBankTopNav({
       .slice(0, 2);
   };
 
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case "APPROVED":
-        return {
-          label: "Verified Facility",
-          icon: ShieldCheck,
-          className: "bg-emerald-50 text-emerald-800 border-emerald-200",
-        };
-      case "REJECTED":
-        return {
-          label: "Deactivated / Rejected",
-          icon: AlertTriangle,
-          className: "bg-rose-50 text-rose-800 border-rose-200",
-        };
-      default:
-        return {
-          label: "Pending Verification",
-          icon: Clock,
-          className: "bg-amber-50 text-amber-800 border-amber-200",
-        };
-    }
-  };
-
-  const statusBadge = getStatusBadge(approvalStatus);
-  const StatusIcon = statusBadge.icon;
-
   return (
     <header className="sticky top-0 z-40 w-full bg-white/95 backdrop-blur-md border-b border-[#F3E9D1] transition-all">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-3 lg:gap-5">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
         {/* Left: Brand Logo & Navigation */}
-        <div className="flex items-center gap-4 lg:gap-6 min-w-0">
+        <div className="flex items-center gap-6 lg:gap-8 min-w-0">
           <Link
             href="/bloodbank/dashboard"
             className="flex items-center gap-2 group focus:outline-none shrink-0"
@@ -251,15 +211,15 @@ export function BloodBankTopNav({
               <span className="font-serif text-xl font-bold tracking-tight text-[#053845]">
                 Swastya
               </span>
-              <span className="text-[10px] tracking-wider uppercase font-semibold text-[#317786] bg-[#FAF6EE] border border-[#F3E9D1] px-2 py-0.5 rounded-full hidden 2xl:inline-block whitespace-nowrap">
-                Blood Bank
+              <span className="text-[10px] tracking-wider uppercase font-semibold text-[#317786] bg-[#FAF6EE] border border-[#F3E9D1] px-2 py-0.5 rounded-full hidden sm:inline-block whitespace-nowrap">
+                Blood Bank Portal
               </span>
             </div>
           </Link>
 
           {/* Desktop Nav Links */}
           <nav
-            className="hidden md:flex items-center gap-1 lg:gap-1.5"
+            className="hidden md:flex items-center gap-1.5"
             aria-label="Blood Bank Primary Navigation"
           >
             {navLinks.map((link) => {
@@ -268,36 +228,22 @@ export function BloodBankTopNav({
                 <Link
                   key={link.href}
                   href={link.href}
-                  title={link.label}
-                  className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 lg:px-3 lg:py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
+                  className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
                     link.active
                       ? "text-[#053845] bg-[#FAF6EE] border border-[#F3E9D1] shadow-2xs font-bold"
                       : "text-slate-600 hover:text-[#053845] hover:bg-[#FAF6EE]/70"
                   }`}
                 >
-                  <Icon
-                    className={`w-3.5 h-3.5 shrink-0 ${
-                      link.active ? "text-[#317786]" : "text-slate-400"
-                    }`}
-                  />
-                  <span className="hidden 2xl:inline">{link.label}</span>
-                  <span className="inline 2xl:hidden">{link.shortLabel}</span>
+                  <Icon className="w-3.5 h-3.5 shrink-0" />
+                  <span className="whitespace-nowrap">{link.label}</span>
                 </Link>
               );
             })}
           </nav>
         </div>
 
-        {/* Right Section: Status Badge, Notifications & Profile Dropdown */}
-        <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
-          {/* Facility Status Badge */}
-          <div
-            className={`hidden xl:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold border ${statusBadge.className}`}
-          >
-            <StatusIcon className="w-3.5 h-3.5 shrink-0" />
-            <span>{statusBadge.label}</span>
-          </div>
-
+        {/* Right Section: Notifications & Profile Dropdown */}
+        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
           {/* Notifications Dropdown */}
           <div className="relative" ref={notificationsRef}>
             <button
@@ -305,7 +251,7 @@ export function BloodBankTopNav({
                 setIsNotificationsOpen(!isNotificationsOpen);
                 setIsProfileOpen(false);
               }}
-              className="relative p-2 rounded-xl text-slate-500 hover:text-[#053845] hover:bg-slate-100/80 transition-colors focus:outline-none"
+              className="relative p-2 rounded-xl text-slate-500 hover:text-[#053845] hover:bg-[#FAF6EE] transition-colors focus:outline-none cursor-pointer"
               aria-label="View notifications"
             >
               <Bell className="w-5 h-5" />
@@ -315,14 +261,14 @@ export function BloodBankTopNav({
             </button>
 
             {isNotificationsOpen && (
-              <div className="absolute right-0 mt-2 w-80 sm:w-96 rounded-2xl bg-white border border-[#F3E9D1] shadow-xl py-3 z-50">
-                <div className="px-4 pb-2 border-b border-slate-100 flex items-center justify-between">
+              <div className="absolute right-0 mt-2 w-80 sm:w-96 rounded-2xl bg-white border border-[#F3E9D1] shadow-2xl py-3 z-50 animate-in fade-in zoom-in-95 duration-150">
+                <div className="px-4 pb-2 border-b border-[#F3E9D1]/60 flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <span className="font-serif text-sm font-bold text-[#053845]">
                       Notifications
                     </span>
                     {unreadCount > 0 && (
-                      <span className="bg-[#A2363A]/10 text-[#A2363A] text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                      <span className="bg-[#A2363A]/10 text-[#A2363A] text-[10px] font-bold px-2 py-0.5 rounded-full">
                         {unreadCount} new
                       </span>
                     )}
@@ -330,7 +276,7 @@ export function BloodBankTopNav({
                   {unreadCount > 0 && (
                     <button
                       onClick={handleMarkAllRead}
-                      className="text-xs text-[#317786] hover:underline font-medium"
+                      className="text-xs text-[#317786] hover:underline font-medium cursor-pointer"
                     >
                       Mark all as read
                     </button>
@@ -348,7 +294,7 @@ export function BloodBankTopNav({
                         key={n.id}
                         href={n.href}
                         onClick={() => setIsNotificationsOpen(false)}
-                        className="block px-4 py-3 hover:bg-slate-50/80 transition-colors text-left"
+                        className="block px-4 py-3 hover:bg-[#FAF6EE]/60 transition-colors text-left"
                       >
                         <div className="flex items-start justify-between gap-2">
                           <p className="text-xs font-semibold text-[#053845]">
@@ -358,87 +304,95 @@ export function BloodBankTopNav({
                             {n.time}
                           </span>
                         </div>
-                        <p className="text-[11px] text-slate-500 line-clamp-2 mt-0.5">
+                        <p className="text-[11px] text-slate-600 line-clamp-2 mt-0.5 leading-relaxed">
                           {n.desc}
                         </p>
                       </Link>
                     ))
                   )}
                 </div>
+
+                <div className="pt-2 border-t border-[#F3E9D1]/70 mt-1 text-center">
+                  <Link
+                    href="/bloodbank/requisitions"
+                    onClick={() => setIsNotificationsOpen(false)}
+                    className="text-xs font-semibold text-[#053845] hover:text-[#317786] transition-colors inline-flex items-center gap-1"
+                  >
+                    <span>View all requisitions</span>
+                    <ExternalLink className="w-3 h-3" />
+                  </Link>
+                </div>
               </div>
             )}
           </div>
 
           {/* Profile Dropdown */}
-          <div className="relative" ref={profileRef}>
+          <div className="relative shrink-0" ref={profileRef}>
             <button
+              type="button"
               onClick={() => {
                 setIsProfileOpen(!isProfileOpen);
                 setIsNotificationsOpen(false);
               }}
-              className="flex items-center gap-2 p-1 sm:pl-1.5 sm:pr-2 rounded-xl border border-slate-200/80 hover:border-[#317786]/50 bg-white hover:bg-slate-50 transition-all text-left"
+              className="flex items-center gap-2 p-1 rounded-full sm:rounded-xl hover:bg-[#FAF6EE] border border-transparent hover:border-[#F3E9D1] transition-all focus:outline-none cursor-pointer"
+              aria-label="Facility Profile Menu"
+              aria-expanded={isProfileOpen}
             >
-              <div className="w-8 h-8 rounded-lg bg-[#FAF6EE] text-[#053845] border border-[#F3E9D1] flex items-center justify-center font-bold text-xs shrink-0">
+              <div className="w-8 h-8 rounded-full bg-[#053845] text-white flex items-center justify-center text-xs font-bold font-serif shadow-xs">
                 {getInitials(bloodBankName)}
               </div>
-              <div className="hidden xl:block text-left max-w-[120px] 2xl:max-w-[160px] truncate">
-                <p className="text-xs font-bold text-[#053845] truncate">
-                  {bloodBankName}
-                </p>
-                <p className="text-[10px] text-slate-500 truncate">
-                  {city}
-                </p>
-              </div>
-              <ChevronDown className="w-4 h-4 text-slate-400 hidden xl:block shrink-0" />
+              <ChevronDown className="w-3.5 h-3.5 text-slate-400 hidden sm:block mr-1" />
             </button>
 
             {isProfileOpen && (
-              <div className="absolute right-0 mt-2 w-64 rounded-2xl bg-white border border-[#F3E9D1] shadow-xl p-2 z-50">
-                <div className="px-3 py-2.5 border-b border-slate-100">
-                  <p className="text-xs font-bold text-[#053845] truncate">
+              <div className="absolute right-0 mt-2 w-72 rounded-2xl bg-white border border-[#F3E9D1] shadow-2xl p-2 z-50 animate-in fade-in zoom-in-95 duration-150">
+                <div className="px-3 py-2.5 bg-[#FAF6EE]/70 rounded-xl mb-1.5 border border-[#F3E9D1]/60">
+                  <span className="block text-xs font-bold text-[#053845] truncate">
                     {bloodBankName}
-                  </p>
-                  <p className="text-[11px] text-slate-500 truncate mt-0.5">
-                    Lic: {licenseNumber}
-                  </p>
-                  <p className="text-[10px] text-slate-400 truncate">
-                    Contact: {representativeName}
-                  </p>
+                  </span>
+                  <span className="block text-[11px] text-slate-600 truncate">
+                    {representativeName}
+                  </span>
+                  <div className="flex items-center justify-between text-[10px] text-slate-400 mt-1">
+                    <span className="font-mono truncate">{licenseNumber}</span>
+                    <span className="text-[#317786] font-medium">{city}</span>
+                  </div>
                 </div>
 
-                <div className="py-1">
+                <div className="space-y-0.5">
                   <Link
-                    href="/bloodbank/dashboard"
+                    href="/bloodbank/profile"
                     onClick={() => setIsProfileOpen(false)}
-                    className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium text-slate-700 hover:text-[#053845] hover:bg-slate-50"
+                    className="flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium text-slate-700 hover:text-[#053845] hover:bg-[#FAF6EE] transition-colors"
                   >
-                    <LayoutDashboard className="w-4 h-4 text-slate-400" />
-                    <span>Dashboard</span>
+                    <Building className="w-3.5 h-3.5 text-[#317786]" />
+                    <span>Facility Profile</span>
                   </Link>
                   <Link
                     href="/bloodbank/inventory"
                     onClick={() => setIsProfileOpen(false)}
-                    className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium text-slate-700 hover:text-[#053845] hover:bg-slate-50"
+                    className="flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium text-slate-700 hover:text-[#053845] hover:bg-[#FAF6EE] transition-colors"
                   >
-                    <Droplets className="w-4 h-4 text-slate-400" />
-                    <span>Inventory Overview</span>
+                    <Droplets className="w-3.5 h-3.5 text-[#317786]" />
+                    <span>Blood Inventory</span>
                   </Link>
                   <Link
-                    href="/bloodbank/profile"
+                    href="/bloodbank/requisitions"
                     onClick={() => setIsProfileOpen(false)}
-                    className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium text-slate-700 hover:text-[#053845] hover:bg-slate-50"
+                    className="flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium text-slate-700 hover:text-[#053845] hover:bg-[#FAF6EE] transition-colors"
                   >
-                    <Building className="w-4 h-4 text-slate-400" />
-                    <span>Facility Profile</span>
+                    <ClipboardList className="w-3.5 h-3.5 text-[#317786]" />
+                    <span>Requisitions</span>
                   </Link>
                 </div>
 
-                <div className="pt-1 border-t border-slate-100">
+                <div className="border-t border-[#F3E9D1]/70 my-1 pt-1">
                   <button
+                    type="button"
                     onClick={handleSignOut}
-                    className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium text-rose-700 hover:bg-rose-50 transition-colors text-left"
+                    className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer text-left"
                   >
-                    <LogOut className="w-4 h-4 text-rose-600" />
+                    <LogOut className="w-3.5 h-3.5 text-rose-500" />
                     <span>Sign Out</span>
                   </button>
                 </div>
@@ -446,39 +400,28 @@ export function BloodBankTopNav({
             )}
           </div>
 
-          {/* Mobile Hamburger Toggle */}
+          {/* Mobile Menu Toggle */}
           <button
+            type="button"
             onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-            className="md:hidden p-2 rounded-xl text-slate-600 hover:text-[#053845] hover:bg-slate-100"
-            aria-label="Toggle mobile navigation menu"
+            className="md:hidden p-2 rounded-xl text-slate-600 hover:text-[#053845] hover:bg-[#FAF6EE] transition-colors focus:outline-none"
+            aria-label="Toggle navigation menu"
           >
-            {isMobileMenuOpen ? (
-              <X className="w-5 h-5" />
-            ) : (
-              <Menu className="w-5 h-5" />
-            )}
+            {isMobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
           </button>
         </div>
       </div>
 
-      {/* Mobile Drawer Menu */}
+      {/* Mobile Menu Drawer */}
       {isMobileMenuOpen && (
-        <div className="md:hidden border-t border-[#F3E9D1] bg-white px-4 pt-3 pb-6 space-y-3 shadow-lg">
-          <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-            <div>
-              <p className="text-xs font-bold text-[#053845] truncate">
-                {bloodBankName}
-              </p>
-              <p className="text-[10px] text-slate-500 truncate">
-                Lic: {licenseNumber}
-              </p>
-            </div>
-            <div
-              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border ${statusBadge.className}`}
-            >
-              <StatusIcon className="w-3 h-3 shrink-0" />
-              <span>{statusBadge.label}</span>
-            </div>
+        <div className="md:hidden border-b border-[#F3E9D1] bg-white px-4 pt-2 pb-4 space-y-2 animate-in slide-in-from-top-2 duration-150">
+          <div className="p-3 bg-[#FAF6EE] rounded-xl border border-[#F3E9D1] mb-2">
+            <span className="block text-xs font-bold text-[#053845] truncate">
+              {bloodBankName}
+            </span>
+            <span className="block text-[11px] text-slate-500">
+              {city}
+            </span>
           </div>
 
           <nav className="space-y-1">
@@ -491,25 +434,21 @@ export function BloodBankTopNav({
                   onClick={() => setIsMobileMenuOpen(false)}
                   className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold ${
                     link.active
-                      ? "text-[#053845] bg-[#FAF6EE] border border-[#F3E9D1]"
-                      : "text-slate-600 hover:bg-slate-50"
+                      ? "text-[#053845] bg-[#FAF6EE] border border-[#F3E9D1] font-bold"
+                      : "text-slate-600 hover:bg-[#FAF6EE]/70"
                   }`}
                 >
-                  <Icon
-                    className={`w-4 h-4 ${
-                      link.active ? "text-[#317786]" : "text-slate-400"
-                    }`}
-                  />
+                  <Icon className="w-4 h-4 shrink-0 text-[#317786]" />
                   <span>{link.label}</span>
                 </Link>
               );
             })}
           </nav>
 
-          <div className="pt-2 border-t border-slate-100">
+          <div className="pt-2 border-t border-[#F3E9D1]/70">
             <button
               onClick={handleSignOut}
-              className="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-medium text-rose-700 hover:bg-rose-50"
+              className="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-medium text-rose-700 hover:bg-rose-50 cursor-pointer"
             >
               <LogOut className="w-4 h-4 text-rose-600" />
               <span>Sign Out</span>

@@ -560,9 +560,9 @@ export class UnitTraceabilityService {
                 throw err;
             }
 
-            if (unit.facilityapprovalstatus !== "APPROVED") {
+            if (unit.facilityapprovalstatus === "REJECTED") {
                 const err: any = new Error(
-                    `Blood bank facility is ${unit.facilityapprovalstatus}. Only APPROVED facilities may perform clinical operations.`
+                    `Blood bank facility is REJECTED. Rejected facilities cannot perform clinical operations.`
                 );
                 err.statusCode = 403;
                 throw err;
@@ -814,9 +814,9 @@ export class UnitTraceabilityService {
                 throw err;
             }
 
-            if (unit.facilityapprovalstatus !== "APPROVED") {
+            if (unit.facilityapprovalstatus === "REJECTED") {
                 const err: any = new Error(
-                    `Blood bank facility is ${unit.facilityapprovalstatus}. Only APPROVED facilities may perform clinical operations.`
+                    `Blood bank facility is REJECTED. Rejected facilities cannot perform clinical operations.`
                 );
                 err.statusCode = 403;
                 throw err;
@@ -1226,9 +1226,9 @@ export class UnitTraceabilityService {
                 err.statusCode = 404;
                 throw err;
             }
-            if (targetBloodBank.approvalstatus !== "APPROVED") {
+            if (targetBloodBank.approvalstatus === "REJECTED") {
                 const err: any = new Error(
-                    `Target blood bank is ${targetBloodBank.approvalstatus}. Only APPROVED blood banks can be assigned requisitions.`
+                    `Target blood bank is REJECTED. Rejected blood banks cannot be assigned requisitions.`
                 );
                 err.statusCode = 403;
                 throw err;
@@ -1444,8 +1444,8 @@ export class UnitTraceabilityService {
                 err.statusCode = 404;
                 throw err;
             }
-            if (targetBloodBank.approvalstatus !== "APPROVED") {
-                const err: any = new Error(`Target blood bank is ${targetBloodBank.approvalstatus}. Only APPROVED blood banks can be assigned requisitions.`);
+            if (targetBloodBank.approvalstatus === "REJECTED") {
+                const err: any = new Error(`Target blood bank is REJECTED. Rejected blood banks cannot be assigned requisitions.`);
                 err.statusCode = 403;
                 throw err;
             }
@@ -1776,9 +1776,9 @@ export class UnitTraceabilityService {
                 err.statusCode = 403;
                 throw err;
             }
-            if (item.facilityapprovalstatus !== "APPROVED") {
+            if (item.facilityapprovalstatus === "REJECTED") {
                 const err: any = new Error(
-                    `Blood bank facility is ${item.facilityapprovalstatus}. Only APPROVED facilities may perform clinical operations.`
+                    `Blood bank facility is REJECTED. Rejected facilities cannot perform clinical operations.`
                 );
                 err.statusCode = 403;
                 throw err;
@@ -2016,9 +2016,9 @@ export class UnitTraceabilityService {
                 err.statusCode = 403;
                 throw err;
             }
-            if (reservation.facilityapprovalstatus !== "APPROVED") {
+            if (reservation.facilityapprovalstatus === "REJECTED") {
                 const err: any = new Error(
-                    `Blood bank facility is ${reservation.facilityapprovalstatus}. Only APPROVED facilities may perform clinical operations.`
+                    `Blood bank facility is REJECTED. Rejected facilities cannot perform clinical operations.`
                 );
                 err.statusCode = 403;
                 throw err;
@@ -2858,9 +2858,9 @@ export class UnitTraceabilityService {
                 err.statusCode = 403;
                 throw err;
             }
-            if (reservation.facilityapprovalstatus !== "APPROVED") {
+            if (reservation.facilityapprovalstatus === "REJECTED") {
                 const err: any = new Error(
-                    `Blood bank facility is ${reservation.facilityapprovalstatus}. Only APPROVED facilities may perform clinical operations.`
+                    `Blood bank facility is REJECTED. Rejected facilities cannot perform clinical operations.`
                 );
                 err.statusCode = 403;
                 throw err;
@@ -3188,9 +3188,9 @@ export class UnitTraceabilityService {
                 err.statusCode = 403;
                 throw err;
             }
-            if (unit.facilityapprovalstatus !== "APPROVED") {
+            if (unit.facilityapprovalstatus === "REJECTED") {
                 const err: any = new Error(
-                    `Blood bank facility is ${unit.facilityapprovalstatus}. Only APPROVED facilities may perform clinical operations.`
+                    `Blood bank facility is REJECTED. Rejected facilities cannot perform clinical operations.`
                 );
                 err.statusCode = 403;
                 throw err;

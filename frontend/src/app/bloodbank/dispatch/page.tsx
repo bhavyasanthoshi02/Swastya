@@ -13,30 +13,49 @@ import {
   Droplets,
   Calendar,
   Building2,
-  Lock,
-  ArrowRight,
-  ShieldAlert,
   Loader2,
   Check,
   X,
-  FileText,
   AlertCircle,
   Send,
   Thermometer,
   PackageCheck,
   ShieldCheck,
   Layers,
+  ChevronDown,
+  ChevronUp,
+  ArrowLeft,
 } from "lucide-react";
 import {
   api,
   RequisitionAssignmentItem,
   BloodReservationItem,
   ReservationItemDetail,
-  ClinicalCrossmatchItem,
 } from "@/lib/api";
 import { getStoredBloodBank, AuthBloodBank } from "@/lib/auth";
 import { generateIdempotencyKey } from "@/lib/idempotency";
 import { formatDate } from "@/lib/mappers";
+
+function formatBloodGroup(bg?: string | null): string {
+  if (!bg) return "—";
+  return bg
+    .replace("_POSITIVE", "+")
+    .replace("_NEGATIVE", "-")
+    .replace("POSITIVE", "+")
+    .replace("NEGATIVE", "-");
+}
+
+function formatComponentLabel(component?: string | null): string {
+  if (!component) return "Whole Blood";
+  if (component === "WHOLE_BLOOD") return "Whole Blood";
+  if (component === "RBC") return "Packed Red Cells (RBC)";
+  if (component === "PLATELETS") return "Platelets";
+  if (component === "PLASMA") return "Plasma (FFP)";
+  return component
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
+}
 
 export default function BloodBankDispatchPage() {
   const [bloodbank, setBloodBank] = useState<AuthBloodBank | null>(null);
@@ -49,6 +68,7 @@ export default function BloodBankDispatchPage() {
   // Filters & Search
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
   const [searchQuery, setSearchQuery] = useState("");
+  const [expandedReservationId, setExpandedReservationId] = useState<string | null>(null);
 
   // Crossmatch Modal State
   const [crossmatchTarget, setCrossmatchTarget] = useState<{
@@ -110,7 +130,7 @@ export default function BloodBankDispatchPage() {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, []);
+  }, [selectedVerifierId]);
 
   useEffect(() => {
     loadData();
@@ -192,13 +212,12 @@ export default function BloodBankDispatchPage() {
 
   // Open Dispatch Modal
   const openDispatchModal = (reservation: BloodReservationItem) => {
-    // Check that all items have COMPATIBLE crossmatch
     const items = reservation.items || [];
     const allCompatible =
       items.length > 0 &&
       items.every((it) => {
         const matches = it.crossmatches || [];
-        const latest = matches[0]; // Ordered by testedat DESC
+        const latest = matches[0];
         return latest && latest.crossmatchresult === "COMPATIBLE";
       });
 
@@ -295,11 +314,12 @@ export default function BloodBankDispatchPage() {
         return false;
       }
       if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
+        const q = searchQuery.toLowerCase().trim();
         const patientName = res.bloodrequests?.patientname?.toLowerCase() || "";
         const resId = res.reservationid.toLowerCase();
         const group = res.bloodrequests?.bloodgroup?.toLowerCase() || "";
-        return patientName.includes(q) || resId.includes(q) || group.includes(q);
+        const groupDisplay = formatBloodGroup(res.bloodrequests?.bloodgroup).toLowerCase();
+        return patientName.includes(q) || resId.includes(q) || group.includes(q) || groupDisplay.includes(q);
       }
       return true;
     });
@@ -311,349 +331,531 @@ export default function BloodBankDispatchPage() {
   const inTransitCount = allReservations.filter((r) => r.status === "DISPATCHED").length;
   const deliveredCount = allReservations.filter((r) => r.status === "DELIVERED").length;
 
-  return (
-    <div className="space-y-6 sm:space-y-8 pb-12">
-      {/* Header Banner */}
-      <div className="bg-white rounded-3xl border border-[#F3E9D1] shadow-xs p-6 sm:p-8 flex flex-col md:flex-row md:items-center justify-between gap-6">
-        <div className="space-y-2 max-w-2xl">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#FAF6EE] border border-[#F3E9D1] text-xs font-semibold text-[#317786]">
-            <Truck className="w-3.5 h-3.5 text-[#317786]" />
-            <span>Pre-Transfusion Testing &amp; Controlled Cold Chain</span>
-          </div>
-          <h1 className="font-serif text-2xl sm:text-3xl font-bold tracking-tight text-[#053845] leading-tight">
-            Clinical Crossmatching &amp; Controlled Dispatch
-          </h1>
-          <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-            Perform pre-transfusion crossmatch compatibility testing on reserved blood units. Ensure courier cold-box packing maintains{" "}
-            <strong className="text-[#053845]">2°C–6°C</strong> compliance prior to departure.
-          </p>
-        </div>
+  const hasActiveFilters = Boolean(searchQuery.trim()) || statusFilter !== "ALL";
 
-        <div className="flex items-center gap-3 shrink-0">
-          <button
-            type="button"
-            onClick={() => loadData(true)}
-            disabled={isRefreshing}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold text-slate-700 bg-white hover:bg-[#FAF6EE] border border-[#F3E9D1] transition-all cursor-pointer disabled:opacity-50"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 text-[#317786] ${isRefreshing ? "animate-spin" : ""}`} />
-            <span>Refresh Dispatch</span>
-          </button>
-        </div>
+  return (
+    <div className="space-y-6 pb-12">
+      {/* Top Breadcrumb Navigation */}
+      <div className="flex items-center justify-between gap-3">
+        <Link
+          href="/bloodbank/dashboard"
+          className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#053845] hover:text-[#317786] transition-colors"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          <span>Back to Blood Bank Dashboard</span>
+        </Link>
+
+        {!isLoading && !error && (
+          <span className="text-xs text-slate-500">
+            Showing {filteredReservations.length} of {allReservations.length}{" "}
+            {allReservations.length === 1 ? "reservation" : "reservations"}
+          </span>
+        )}
       </div>
 
-      {/* Success Notification */}
+      {/* Notifications */}
       {successMessage && (
-        <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 flex items-start justify-between gap-3 shadow-2xs">
+        <div className="p-3.5 rounded-2xl bg-teal-50 border border-teal-200 text-xs text-teal-900 flex items-center justify-between gap-3 shadow-2xs">
           <div className="flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-            <span>{successMessage}</span>
+            <CheckCircle2 className="w-4 h-4 text-teal-700 shrink-0" />
+            <span className="font-medium">{successMessage}</span>
           </div>
           <button
             onClick={() => setSuccessMessage(null)}
-            className="text-emerald-700 hover:text-emerald-900 cursor-pointer font-bold"
+            className="p-1 rounded-lg text-teal-600 hover:text-teal-800 hover:bg-teal-100/50 cursor-pointer"
           >
-            <X className="w-4 h-4" />
+            <X className="w-3.5 h-3.5" />
           </button>
         </div>
       )}
 
-      {/* Error Notification */}
       {error && (
-        <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-xs text-rose-800 flex items-start justify-between gap-3 shadow-2xs">
+        <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-xs text-rose-800 flex items-center justify-between gap-3 shadow-2xs">
           <div className="flex items-center gap-2">
             <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
-            <span>{error}</span>
+            <span className="font-medium">{error}</span>
           </div>
           <button
             onClick={() => setError(null)}
-            className="text-rose-700 hover:text-rose-900 cursor-pointer font-bold"
+            className="p-1 rounded-lg text-rose-600 hover:text-rose-800 hover:bg-rose-100/50 cursor-pointer"
           >
-            <X className="w-4 h-4" />
+            <X className="w-3.5 h-3.5" />
           </button>
         </div>
       )}
 
-      {/* 4 Quick Counters */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
-        <div className="bg-white rounded-3xl border border-[#F3E9D1] p-5 shadow-xs space-y-1">
-          <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider flex items-center gap-1.5">
-            <Layers className="w-3.5 h-3.5 text-amber-600" />
-            Awaiting Crossmatch
-          </span>
+      {/* 1. Compact Page Header */}
+      <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#317786]/15">
+        <div className="flex items-center gap-3.5 min-w-0">
+          <div className="w-11 h-11 rounded-2xl bg-[#317786]/10 border border-[#317786]/20 text-[#317786] flex items-center justify-center shrink-0">
+            <Truck className="w-5 h-5 text-[#317786]" />
+          </div>
+          <div className="space-y-0.5 min-w-0">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <h1 className="font-serif text-2xl sm:text-3xl font-bold text-[#053845] tracking-tight">
+                Clinical Crossmatching &amp; Dispatch
+              </h1>
+              {!isLoading && (
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-[#317786]/10 border border-[#317786]/20 text-[#317786]">
+                  {allReservations.length} Orders
+                </span>
+              )}
+            </div>
+            <p className="text-xs sm:text-sm text-slate-500">
+              Manage blood compatibility checks and hospital deliveries.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2.5 shrink-0 self-start sm:self-center">
+          <button
+            type="button"
+            onClick={() => loadData(true)}
+            disabled={isRefreshing || isLoading}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-slate-700 bg-white hover:bg-[#FAF6EE] border border-[#F3E9D1] shadow-2xs transition-colors cursor-pointer disabled:opacity-50"
+            title="Refresh dispatch orders"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 text-slate-500 ${isRefreshing ? "animate-spin text-[#317786]" : ""}`} />
+            <span>Refresh</span>
+          </button>
+        </div>
+      </header>
+
+      {/* 2. Four Compact Summary Cards */}
+      <section className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
+        {/* Awaiting Crossmatch */}
+        <div className="bg-white rounded-2xl border border-[#F3E9D1] p-4 shadow-2xs space-y-1">
+          <div className="flex items-center justify-between text-slate-500">
+            <span className="text-[11px] font-semibold uppercase tracking-wider">Awaiting Crossmatch</span>
+            <div className="w-7 h-7 rounded-lg bg-amber-50 border border-amber-100 flex items-center justify-center text-amber-700">
+              <Layers className="w-3.5 h-3.5 text-amber-600" />
+            </div>
+          </div>
           <div className="font-serif text-2xl sm:text-3xl font-bold text-amber-900">
             {readyCrossmatchCount}
           </div>
-          <p className="text-[11px] text-slate-500">Reserved units to be tested</p>
+          <p className="text-[11px] text-amber-700 font-medium">Reserved units to test</p>
         </div>
 
-        <div className="bg-white rounded-3xl border border-[#F3E9D1] p-5 shadow-xs space-y-1">
-          <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider flex items-center gap-1.5">
-            <PackageCheck className="w-3.5 h-3.5 text-emerald-600" />
-            Ready for Dispatch
-          </span>
+        {/* Ready for Dispatch */}
+        <div className="bg-white rounded-2xl border border-[#F3E9D1] p-4 shadow-2xs space-y-1">
+          <div className="flex items-center justify-between text-slate-500">
+            <span className="text-[11px] font-semibold uppercase tracking-wider">Ready for Dispatch</span>
+            <div className="w-7 h-7 rounded-lg bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-700">
+              <PackageCheck className="w-3.5 h-3.5 text-emerald-600" />
+            </div>
+          </div>
           <div className="font-serif text-2xl sm:text-3xl font-bold text-emerald-900">
             {readyDispatchCount}
           </div>
-          <p className="text-[11px] text-slate-500">All crossmatches compatible</p>
+          <p className="text-[11px] text-emerald-700 font-medium">Compatible and packed</p>
         </div>
 
-        <div className="bg-white rounded-3xl border border-[#F3E9D1] p-5 shadow-xs space-y-1">
-          <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider flex items-center gap-1.5">
-            <Truck className="w-3.5 h-3.5 text-[#317786]" />
-            In Cold-Box Transit
-          </span>
+        {/* In Transit */}
+        <div className="bg-white rounded-2xl border border-[#F3E9D1] p-4 shadow-2xs space-y-1">
+          <div className="flex items-center justify-between text-slate-500">
+            <span className="text-[11px] font-semibold uppercase tracking-wider">In Transit</span>
+            <div className="w-7 h-7 rounded-lg bg-sky-50 border border-sky-100 flex items-center justify-center text-sky-700">
+              <Truck className="w-3.5 h-3.5 text-sky-600" />
+            </div>
+          </div>
           <div className="font-serif text-2xl sm:text-3xl font-bold text-[#053845]">
             {inTransitCount}
           </div>
-          <p className="text-[11px] text-slate-500">En route to hospital</p>
+          <p className="text-[11px] text-sky-700 font-medium">Cold box en route</p>
         </div>
 
-        <div className="bg-white rounded-3xl border border-[#F3E9D1] p-5 shadow-xs space-y-1">
-          <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider flex items-center gap-1.5">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" />
-            Delivered &amp; Transfused
-          </span>
+        {/* Delivered */}
+        <div className="bg-white rounded-2xl border border-[#F3E9D1] p-4 shadow-2xs space-y-1">
+          <div className="flex items-center justify-between text-slate-500">
+            <span className="text-[11px] font-semibold uppercase tracking-wider">Delivered</span>
+            <div className="w-7 h-7 rounded-lg bg-teal-50 border border-teal-100 flex items-center justify-center text-teal-700">
+              <CheckCircle2 className="w-3.5 h-3.5 text-teal-600" />
+            </div>
+          </div>
           <div className="font-serif text-2xl sm:text-3xl font-bold text-[#053845]">
             {deliveredCount}
           </div>
-          <p className="text-[11px] text-slate-500">Receipt confirmed by hospital</p>
+          <p className="text-[11px] text-teal-700 font-medium">Receipt confirmed</p>
         </div>
-      </div>
+      </section>
 
-      {/* Main Reservation Cards List */}
-      <div className="bg-white rounded-3xl border border-[#F3E9D1] shadow-xs overflow-hidden">
-        {/* Filters and Search Bar */}
-        <div className="p-5 sm:p-6 border-b border-[#F3E9D1] bg-white space-y-3">
-          <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between">
-            <div className="relative flex-1">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search by Patient name, Reservation ID, or blood group..."
-                className="w-full pl-10 pr-4 py-2 text-xs sm:text-sm rounded-xl border border-slate-200 focus:outline-none focus:border-[#317786] focus:ring-2 focus:ring-[#317786]/20 text-slate-800 placeholder:text-slate-400"
-              />
-            </div>
-
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-500 font-medium">Status:</span>
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className="px-3 py-2 text-xs rounded-xl border border-slate-200 bg-white text-slate-800 font-semibold focus:outline-none focus:border-[#317786]"
+      {/* 3. Search and Filters */}
+      <section className="bg-white rounded-2xl border border-[#F3E9D1] p-3.5 sm:p-4 shadow-2xs space-y-3">
+        <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
+          {/* Search Box */}
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search by Patient Name, Reservation ID, or Blood Group..."
+              className="w-full pl-10 pr-8 py-2 text-xs sm:text-sm rounded-xl border border-slate-200 focus:outline-none focus:border-[#317786] focus:ring-1 focus:ring-[#317786]/30 text-slate-800 placeholder:text-slate-400"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 rounded-md text-slate-400 hover:text-slate-600 cursor-pointer"
               >
-                <option value="ALL">All Reservations</option>
-                <option value="RESERVED">Awaiting Crossmatch</option>
-                <option value="PREPARED">Prepared / Tested</option>
-                <option value="DISPATCHED">In Transit</option>
-                <option value="DELIVERED">Delivered</option>
-                <option value="CANCELLED">Cancelled</option>
-              </select>
-            </div>
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-500 font-medium hidden sm:inline">Status:</span>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="px-3 py-2 text-xs rounded-xl border border-slate-200 bg-white text-slate-800 font-semibold focus:outline-none focus:border-[#317786]"
+            >
+              <option value="ALL">All Reservations</option>
+              <option value="RESERVED">Awaiting Crossmatch</option>
+              <option value="PREPARED">Ready for Dispatch</option>
+              <option value="DISPATCHED">In Transit</option>
+              <option value="DELIVERED">Delivered</option>
+              <option value="CANCELLED">Cancelled</option>
+            </select>
+
+            {hasActiveFilters && (
+              <button
+                type="button"
+                onClick={() => {
+                  setStatusFilter("ALL");
+                  setSearchQuery("");
+                }}
+                className="text-xs font-medium text-[#317786] hover:underline px-1 cursor-pointer"
+              >
+                Reset
+              </button>
+            )}
           </div>
         </div>
+      </section>
 
-        {/* Reservations List */}
+      {/* 4. Dispatch Records Table (Primary Focus) */}
+      <div className="bg-white rounded-2xl border border-[#F3E9D1] shadow-2xs overflow-hidden">
         {isLoading ? (
           <div className="py-20 flex flex-col items-center justify-center gap-3 text-center">
-            <Loader2 className="w-8 h-8 text-[#317786] animate-spin" />
-            <p className="text-xs text-slate-500 font-medium">Loading dispatch reservations...</p>
+            <RefreshCw className="w-7 h-7 text-[#317786] animate-spin" />
+            <p className="text-xs text-slate-500 font-medium">Loading dispatch orders...</p>
           </div>
         ) : filteredReservations.length === 0 ? (
-          <div className="p-12 text-center">
-            <div className="w-14 h-14 rounded-2xl bg-[#FAF6EE] border border-[#F3E9D1] flex items-center justify-center mx-auto mb-3 text-slate-400 shadow-2xs">
-              <Truck className="w-7 h-7 text-[#317786]" />
+          <div className="py-16 px-6 text-center space-y-4">
+            <div className="w-12 h-12 rounded-2xl bg-[#FAF6EE] border border-[#F3E9D1] flex items-center justify-center text-[#317786] mx-auto">
+              <Truck className="w-6 h-6" />
             </div>
-            <h3 className="text-base font-serif font-bold text-[#053845]">No Reservations Found</h3>
-            <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1 leading-relaxed">
-              Accept hospital orders in the Requisitions Queue to create unit reservations for pre-transfusion crossmatching and cold-box delivery.
-            </p>
+            <div className="space-y-1">
+              <h4 className="font-serif text-base font-bold text-[#053845]">
+                {allReservations.length === 0 ? "No Dispatch Records Found" : "No matching dispatch orders"}
+              </h4>
+              <p className="text-xs text-slate-500 max-w-sm mx-auto leading-relaxed">
+                {allReservations.length === 0
+                  ? "Accept hospital orders in the Requisitions section to begin crossmatching and dispatch."
+                  : "No reservation orders match your active filter and search criteria."}
+              </p>
+            </div>
+
+            {hasActiveFilters && (
+              <button
+                type="button"
+                onClick={() => {
+                  setStatusFilter("ALL");
+                  setSearchQuery("");
+                }}
+                className="text-xs font-semibold text-[#317786] hover:underline cursor-pointer"
+              >
+                Clear all filters
+              </button>
+            )}
           </div>
         ) : (
-          <div className="overflow-x-auto divide-y divide-[#F3E9D1]/70">
-            {filteredReservations.map((reservation) => {
-              const req = reservation.bloodrequests;
-              const items = reservation.items || [];
-              const isReserved = reservation.status === "RESERVED";
-              const isPrepared = reservation.status === "PREPARED";
-              const isDispatched = reservation.status === "DISPATCHED";
-              const isDelivered = reservation.status === "DELIVERED";
-              const isCancelled = reservation.status === "CANCELLED";
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-[#FAF6EE]/70 text-[11px] font-semibold uppercase tracking-wider text-slate-600 border-b border-[#F3E9D1]">
+                  <th className="py-3 px-4">Reservation ID</th>
+                  <th className="py-3 px-4">Patient / Hospital</th>
+                  <th className="py-3 px-3">Blood Group</th>
+                  <th className="py-3 px-3">Component</th>
+                  <th className="py-3 px-2.5 text-center">Units</th>
+                  <th className="py-3 px-3 text-center">Crossmatch Status</th>
+                  <th className="py-3 px-3 text-center">Dispatch Status</th>
+                  <th className="py-3 px-3">Required By</th>
+                  <th className="py-3 px-4 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
+                {filteredReservations.map((reservation) => {
+                  const req = reservation.bloodrequests;
+                  const items = reservation.items || [];
+                  const isReserved = reservation.status === "RESERVED";
+                  const isPrepared = reservation.status === "PREPARED";
+                  const isDispatched = reservation.status === "DISPATCHED";
+                  const isDelivered = reservation.status === "DELIVERED";
+                  const isCancelled = reservation.status === "CANCELLED";
+                  const displayGroup = formatBloodGroup(req?.bloodgroup);
+                  const isExpanded = expandedReservationId === reservation.reservationid;
 
-              // Check if all items compatible
-              const allCompatible =
-                items.length > 0 &&
-                items.every((it) => {
-                  const latest = (it.crossmatches || [])[0];
-                  return latest && latest.crossmatchresult === "COMPATIBLE";
-                });
+                  // Evaluate crossmatch status across all items
+                  const allTestedAndCompatible =
+                    items.length > 0 &&
+                    items.every((it) => {
+                      const latest = (it.crossmatches || [])[0];
+                      return latest && latest.crossmatchresult === "COMPATIBLE";
+                    });
 
-              return (
-                <div key={reservation.reservationid} className="p-6 space-y-4 hover:bg-[#FAF6EE]/20 transition-colors">
-                  {/* Reservation Card Header */}
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-xs font-bold text-[#053845]">
-                          Reservation: {reservation.reservationid.slice(0, 8)}...
-                        </span>
-                        <span className="text-slate-300">•</span>
-                        <span className="text-xs text-slate-500">
-                          Order: {reservation.requestid.slice(0, 8)}...
-                        </span>
-                      </div>
-                      <h4 className="font-serif text-base font-bold text-[#053845]">
-                        Patient: {req?.patientname || "Emergency Patient"}
-                      </h4>
-                    </div>
+                  const hasIncompatible = items.some(
+                    (it) => (it.crossmatches || [])[0]?.crossmatchresult === "INCOMPATIBLE"
+                  );
 
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${
-                          isDelivered
-                            ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
-                            : isDispatched
-                            ? "bg-sky-50 text-sky-800 border border-sky-200"
-                            : isPrepared
-                            ? "bg-teal-50 text-teal-800 border border-teal-200"
-                            : isReserved
-                            ? "bg-amber-50 text-amber-800 border border-amber-200"
-                            : "bg-slate-100 text-slate-700 border border-slate-200"
-                        }`}
-                      >
-                        {isDispatched && <span className="w-2 h-2 rounded-full bg-sky-500 animate-pulse" />}
-                        {reservation.status}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Allocated Items & Crossmatch Status */}
-                  <div className="space-y-2">
-                    <span className="text-[11px] uppercase font-bold text-slate-500 tracking-wider">
-                      Allocated Blood Units ({items.length})
-                    </span>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      {items.map((item) => {
-                        const crossmatches = item.crossmatches || [];
-                        const latestCrossmatch = crossmatches[0];
-                        const crossmatchStatus = latestCrossmatch
-                          ? latestCrossmatch.crossmatchresult
-                          : "PENDING";
-
-                        return (
-                          <div
-                            key={item.reservationitemid}
-                            className="p-3.5 rounded-2xl border border-[#F3E9D1] bg-[#FAF6EE]/40 flex items-center justify-between gap-3 text-xs"
+                  return (
+                    <React.Fragment key={reservation.reservationid}>
+                      <tr className="hover:bg-slate-50/70 transition-colors">
+                        {/* Reservation ID */}
+                        <td className="py-3.5 px-4 font-mono font-medium text-xs text-slate-600">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setExpandedReservationId(isExpanded ? null : reservation.reservationid)
+                            }
+                            className="inline-flex items-center gap-1.5 hover:text-[#053845] cursor-pointer"
+                            title="Toggle unit details"
                           >
-                            <div className="space-y-1">
-                              <div className="flex items-center gap-2">
-                                <span className="font-mono font-bold text-[#053845]">
-                                  {item.unitbarcode || item.inventoryunits?.unitbarcode || item.unitid.slice(0, 8)}
-                                </span>
-                                <span className="inline-flex items-center justify-center w-6 h-6 rounded-md font-bold font-serif text-[11px] bg-white text-[#053845] border border-[#F3E9D1]">
-                                  {item.bloodgroup || req?.bloodgroup}
-                                </span>
-                              </div>
-                              <div className="text-[11px] text-slate-500">
-                                Component: {item.bloodcomponent || req?.bloodcomponent}
-                              </div>
-                            </div>
+                            <span>#{reservation.reservationid.slice(0, 8)}</span>
+                            {isExpanded ? (
+                              <ChevronUp className="w-3.5 h-3.5 text-slate-400" />
+                            ) : (
+                              <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+                            )}
+                          </button>
+                        </td>
 
-                            <div className="flex items-center gap-2">
-                              {crossmatchStatus === "PENDING" && (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
-                                  <Clock className="w-3 h-3" />
-                                  <span>X-MATCH PENDING</span>
-                                </span>
-                              )}
-                              {crossmatchStatus === "COMPATIBLE" && (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
-                                  <CheckCircle2 className="w-3 h-3" />
-                                  <span>COMPATIBLE</span>
-                                </span>
-                              )}
-                              {crossmatchStatus === "INCOMPATIBLE" && (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-800 border border-rose-200">
-                                  <XCircle className="w-3 h-3" />
-                                  <span>INCOMPATIBLE</span>
-                                </span>
-                              )}
-                              {crossmatchStatus === "INCONCLUSIVE" && (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
-                                  <AlertTriangle className="w-3 h-3" />
-                                  <span>INCONCLUSIVE</span>
-                                </span>
-                              )}
-
-                              {(isReserved || isPrepared) && (
-                                <button
-                                  type="button"
-                                  onClick={() => openCrossmatchModal(reservation, item)}
-                                  className="px-2.5 py-1 rounded-xl bg-[#053845] hover:bg-[#03252e] text-white font-semibold text-[11px] transition-all cursor-pointer"
-                                >
-                                  {crossmatchStatus === "PENDING" ? "Certify" : "Re-test"}
-                                </button>
-                              )}
-                            </div>
+                        {/* Patient / Hospital */}
+                        <td className="py-3.5 px-4">
+                          <div className="font-semibold text-[#053845]">
+                            {req?.patientname || "Emergency Patient"}
                           </div>
-                        );
-                      })}
-                    </div>
-                  </div>
+                          <div className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
+                            <Building2 className="w-3 h-3 text-slate-400 shrink-0" />
+                            <span>Hospital Order</span>
+                          </div>
+                        </td>
 
-                  {/* Reservation Actions Bar */}
-                  <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-[#F3E9D1]/50 text-xs">
-                    <div className="flex items-center gap-3 text-slate-500">
-                      <span>Reserved: {formatDate(reservation.reservedat)}</span>
-                      {reservation.couriertemperature_c != null && (
-                        <>
-                          <span>•</span>
-                          <span className="flex items-center gap-1 text-[#317786] font-semibold">
-                            <Thermometer className="w-3.5 h-3.5" />
-                            Courier Temp: {reservation.couriertemperature_c}°C
+                        {/* Blood Group */}
+                        <td className="py-3.5 px-3 font-bold text-[#053845]">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-bold text-[#053845] bg-[#FAF6EE] border border-[#F3E9D1]">
+                            <Droplets className="w-3 h-3 text-[#B94F30]" />
+                            <span>{displayGroup}</span>
                           </span>
-                        </>
-                      )}
-                    </div>
+                        </td>
 
-                    <div className="flex items-center gap-2">
-                      {(isReserved || isPrepared) && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setCancelTarget(reservation);
-                            setCancellationReason("");
-                          }}
-                          className="px-3 py-1.5 rounded-xl border border-slate-200 text-slate-600 hover:text-rose-600 hover:bg-rose-50 text-xs font-semibold transition-colors cursor-pointer"
-                        >
-                          Cancel Reservation
-                        </button>
-                      )}
+                        {/* Component */}
+                        <td className="py-3.5 px-3 font-medium text-slate-800">
+                          {formatComponentLabel(req?.bloodcomponent)}
+                        </td>
 
-                      {(isReserved || isPrepared) && (
-                        <button
-                          type="button"
-                          onClick={() => openDispatchModal(reservation)}
-                          disabled={!allCompatible}
-                          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#EFA27E] hover:bg-[#EFA27E]/90 text-[#053845] font-bold text-xs shadow-2xs transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                          title={
-                            !allCompatible
-                              ? "All units must be certified COMPATIBLE before dispatch"
-                              : "Dispatch cold box to hospital"
-                          }
-                        >
-                          <Truck className="w-3.5 h-3.5" />
-                          <span>Dispatch Cold-Box</span>
-                        </button>
+                        {/* Units */}
+                        <td className="py-3.5 px-2.5 text-center font-mono text-xs font-bold text-[#053845]">
+                          {items.length} units
+                        </td>
+
+                        {/* Crossmatch Status */}
+                        <td className="py-3.5 px-3 text-center">
+                          {hasIncompatible ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-rose-50 text-rose-700 border border-rose-200">
+                              <XCircle className="w-3 h-3" />
+                              <span>Incompatible</span>
+                            </span>
+                          ) : allTestedAndCompatible ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                              <span>Compatible</span>
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+                              <Clock className="w-3 h-3 text-amber-600" />
+                              <span>Awaiting Check</span>
+                            </span>
+                          )}
+                        </td>
+
+                        {/* Dispatch Status */}
+                        <td className="py-3.5 px-3 text-center">
+                          {isDelivered && (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-teal-50 text-teal-800 border border-teal-200">
+                              <CheckCircle2 className="w-3 h-3" />
+                              <span>Delivered</span>
+                            </span>
+                          )}
+                          {isDispatched && (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-sky-50 text-sky-800 border border-sky-200">
+                              <Truck className="w-3 h-3" />
+                              <span>In Transit</span>
+                            </span>
+                          )}
+                          {isPrepared && (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                              <PackageCheck className="w-3 h-3" />
+                              <span>Ready</span>
+                            </span>
+                          )}
+                          {isReserved && (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+                              <Clock className="w-3 h-3" />
+                              <span>Awaiting</span>
+                            </span>
+                          )}
+                          {isCancelled && (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                              <X className="w-3 h-3" />
+                              <span>Cancelled</span>
+                            </span>
+                          )}
+                        </td>
+
+                        {/* Required By */}
+                        <td className="py-3.5 px-3 text-slate-600">
+                          {req?.requiredby ? (
+                            <div className="flex items-center gap-1.5">
+                              <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                              <span>{formatDate(req.requiredby)}</span>
+                            </div>
+                          ) : (
+                            <span className="text-slate-400">Immediate</span>
+                          )}
+                        </td>
+
+                        {/* Actions */}
+                        <td className="py-3.5 px-4 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            {(isReserved || isPrepared) && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setExpandedReservationId(isExpanded ? null : reservation.reservationid)
+                                }
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-[#053845] transition-colors cursor-pointer shadow-2xs"
+                              >
+                                <Layers className="w-3.5 h-3.5 text-slate-500" />
+                                <span>Units</span>
+                              </button>
+                            )}
+
+                            {(isReserved || isPrepared) && (
+                              <button
+                                type="button"
+                                onClick={() => openDispatchModal(reservation)}
+                                disabled={!allTestedAndCompatible}
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-[#053845] hover:bg-[#317786] text-white font-semibold text-xs shadow-2xs transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                                title={
+                                  !allTestedAndCompatible
+                                    ? "All units must be certified COMPATIBLE before departure"
+                                    : "Dispatch cold box"
+                                }
+                              >
+                                <Truck className="w-3.5 h-3.5" />
+                                <span>Dispatch</span>
+                              </button>
+                            )}
+
+                            {(isReserved || isPrepared) && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setCancelTarget(reservation);
+                                  setCancellationReason("");
+                                }}
+                                title="Cancel reservation"
+                                className="p-1.5 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+
+                      {/* Expandable Allocated Units Checklist */}
+                      {isExpanded && (
+                        <tr className="bg-[#FAF6EE]/40 border-b border-[#F3E9D1]">
+                          <td colSpan={9} className="p-4 sm:p-5">
+                            <div className="space-y-3">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[11px] uppercase font-bold text-slate-600 tracking-wider">
+                                  Allocated Units for Reservation #{reservation.reservationid.slice(0, 8)} ({items.length} units)
+                                </span>
+                                {reservation.couriertemperature_c != null && (
+                                  <span className="inline-flex items-center gap-1 text-xs text-[#317786] font-semibold bg-white px-2 py-0.5 rounded-lg border border-[#F3E9D1]">
+                                    <Thermometer className="w-3.5 h-3.5" />
+                                    Courier Departure Temp: {reservation.couriertemperature_c}°C
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                                {items.map((item) => {
+                                  const crossmatches = item.crossmatches || [];
+                                  const latestCrossmatch = crossmatches[0];
+                                  const isComp = latestCrossmatch?.crossmatchresult === "COMPATIBLE";
+                                  const isIncomp = latestCrossmatch?.crossmatchresult === "INCOMPATIBLE";
+
+                                  return (
+                                    <div
+                                      key={item.reservationitemid}
+                                      className="p-3 rounded-xl border border-[#F3E9D1] bg-white flex items-center justify-between gap-2 shadow-2xs"
+                                    >
+                                      <div>
+                                        <span className="font-mono font-bold text-xs text-[#053845] block">
+                                          {item.unitbarcode || item.inventoryunits?.unitbarcode || item.unitid.slice(0, 8)}
+                                        </span>
+                                        <span className="text-[11px] text-slate-500">
+                                          {item.bloodgroup || req?.bloodgroup} • {item.bloodcomponent || req?.bloodcomponent}
+                                        </span>
+                                      </div>
+
+                                      <div className="flex items-center gap-2">
+                                        {isComp && (
+                                          <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
+                                            <Check className="w-2.5 h-2.5" /> Compatible
+                                          </span>
+                                        )}
+                                        {isIncomp && (
+                                          <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded">
+                                            <X className="w-2.5 h-2.5" /> Incompatible
+                                          </span>
+                                        )}
+                                        {!isComp && !isIncomp && (
+                                          <span className="text-[10px] font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded">
+                                            Pending
+                                          </span>
+                                        )}
+
+                                        {(isReserved || isPrepared) && (
+                                          <button
+                                            type="button"
+                                            onClick={() => openCrossmatchModal(reservation, item)}
+                                            className="px-2 py-1 rounded-lg bg-[#053845] hover:bg-[#317786] text-white font-semibold text-[10px] transition-colors cursor-pointer"
+                                          >
+                                            {latestCrossmatch ? "Re-test" : "Certify"}
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
                       )}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )}
       </div>
@@ -661,13 +863,13 @@ export default function BloodBankDispatchPage() {
       {/* Certify Crossmatch Modal */}
       {crossmatchTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
-          <div className="bg-white rounded-3xl border border-[#F3E9D1] shadow-2xl max-w-lg w-full p-6 sm:p-8 space-y-6">
+          <div className="bg-white rounded-2xl border border-[#F3E9D1] shadow-2xl max-w-lg w-full p-6 space-y-5">
             <div className="flex items-start justify-between">
               <div>
-                <h3 className="font-serif text-xl font-bold text-[#053845]">
+                <h3 className="font-serif text-lg font-bold text-[#053845]">
                   Certify Pre-Transfusion Crossmatch
                 </h3>
-                <p className="text-xs text-slate-500 mt-1">
+                <p className="text-xs text-slate-500 mt-0.5 font-mono">
                   Unit Barcode: {crossmatchTarget.item.unitbarcode || crossmatchTarget.item.unitid.slice(0, 8)}
                 </p>
               </div>
@@ -688,16 +890,16 @@ export default function BloodBankDispatchPage() {
 
             <div className="p-3 rounded-xl bg-[#FAF6EE] border border-[#F3E9D1] text-xs space-y-1">
               <div>
-                <strong>Recipient Patient:</strong> {crossmatchTarget.reservation.bloodrequests?.patientname}
+                <strong className="text-slate-700">Recipient Patient:</strong> {crossmatchTarget.reservation.bloodrequests?.patientname || "Emergency Patient"}
               </div>
               <div>
-                <strong>Group Compatibility:</strong> Donor Unit ({crossmatchTarget.item.bloodgroup}) with Recipient ({crossmatchTarget.reservation.bloodrequests?.bloodgroup})
+                <strong className="text-slate-700">Group Compatibility:</strong> Donor Unit ({crossmatchTarget.item.bloodgroup}) with Recipient ({crossmatchTarget.reservation.bloodrequests?.bloodgroup})
               </div>
             </div>
 
-            <div className="space-y-4 text-xs">
-              <div className="space-y-1.5">
-                <label className="font-bold text-slate-700">Crossmatch Test Result</label>
+            <div className="space-y-3 text-xs">
+              <div className="space-y-1">
+                <label className="font-semibold text-slate-700">Crossmatch Test Result</label>
                 <select
                   value={crossmatchResult}
                   onChange={(e) => setCrossmatchResult(e.target.value as any)}
@@ -709,19 +911,19 @@ export default function BloodBankDispatchPage() {
                 </select>
               </div>
 
-              <div className="space-y-1.5">
-                <label className="font-bold text-slate-700">Testing Method</label>
+              <div className="space-y-1">
+                <label className="font-semibold text-slate-700">Testing Method</label>
                 <input
                   type="text"
                   value={crossmatchMethod}
                   onChange={(e) => setCrossmatchMethod(e.target.value)}
                   placeholder="e.g. Gel Column Coombs, Tube Saline, Immediate Spin..."
-                  className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-slate-800 focus:outline-none focus:border-[#317786]"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-slate-800 focus:outline-none focus:border-[#317786]"
                 />
               </div>
 
-              <div className="space-y-1.5">
-                <label className="font-bold text-slate-700">
+              <div className="space-y-1">
+                <label className="font-semibold text-slate-700">
                   Technologist Name <span className="text-rose-600">*</span>
                 </label>
                 <input
@@ -729,23 +931,23 @@ export default function BloodBankDispatchPage() {
                   value={technologistName}
                   onChange={(e) => setTechnologistName(e.target.value)}
                   placeholder="e.g. A. Patel, Blood Bank Tech"
-                  className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-slate-800 focus:outline-none focus:border-[#317786]"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-slate-800 focus:outline-none focus:border-[#317786]"
                 />
               </div>
 
-              <div className="space-y-1.5">
-                <label className="font-bold text-slate-700">
-                  Second Clinical Verifier Account (Dual Sign-off) <span className="text-rose-600">*</span>
+              <div className="space-y-1">
+                <label className="font-semibold text-slate-700">
+                  Second Clinical Verifier (Dual Sign-off) <span className="text-rose-600">*</span>
                 </label>
                 {verifiers.length === 0 ? (
-                  <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900">
-                    No eligible second active verifier (separate BLOOD_BANK or ADMIN user) is available. Clinical crossmatch dual sign-off cannot be submitted until a second authorized verifier account exists.
+                  <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900">
+                    No second active verifier available. Dual sign-off requires a second authorized BLOOD_BANK or ADMIN user.
                   </div>
                 ) : (
                   <select
                     value={selectedVerifierId}
                     onChange={(e) => setSelectedVerifierId(e.target.value)}
-                    className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-slate-800 bg-white focus:outline-none focus:border-[#317786]"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-slate-800 bg-white focus:outline-none focus:border-[#317786]"
                   >
                     {verifiers.map((v) => (
                       <option key={v.userid} value={v.userid}>
@@ -756,23 +958,23 @@ export default function BloodBankDispatchPage() {
                 )}
               </div>
 
-              <div className="space-y-1.5">
-                <label className="font-bold text-slate-700">Clinical Observations (Optional)</label>
+              <div className="space-y-1">
+                <label className="font-semibold text-slate-700">Clinical Observations (Optional)</label>
                 <input
                   type="text"
                   value={crossmatchNotes}
                   onChange={(e) => setCrossmatchNotes(e.target.value)}
                   placeholder="Minor antibody screen negative, clear reaction..."
-                  className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-slate-800 focus:outline-none focus:border-[#317786]"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-slate-800 focus:outline-none focus:border-[#317786]"
                 />
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-3 pt-2">
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
               <button
                 type="button"
                 onClick={() => setCrossmatchTarget(null)}
-                className="px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                className="px-3.5 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
               >
                 Cancel
               </button>
@@ -780,7 +982,7 @@ export default function BloodBankDispatchPage() {
                 type="button"
                 onClick={handleRecordCrossmatch}
                 disabled={isSubmittingCrossmatch || verifiers.length === 0 || !selectedVerifierId}
-                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#053845] hover:bg-[#03252e] text-white text-xs font-bold shadow-md cursor-pointer disabled:opacity-50"
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#053845] hover:bg-[#317786] text-white text-xs font-bold shadow-2xs cursor-pointer disabled:opacity-50"
               >
                 {isSubmittingCrossmatch ? (
                   <>
@@ -790,7 +992,7 @@ export default function BloodBankDispatchPage() {
                 ) : (
                   <>
                     <ShieldCheck className="w-4 h-4" />
-                    <span>Commit Crossmatch Certificate</span>
+                    <span>Commit Certificate</span>
                   </>
                 )}
               </button>
@@ -802,14 +1004,14 @@ export default function BloodBankDispatchPage() {
       {/* Dispatch Cold-Box Modal */}
       {dispatchTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
-          <div className="bg-white rounded-3xl border border-[#F3E9D1] shadow-2xl max-w-lg w-full p-6 sm:p-8 space-y-6">
+          <div className="bg-white rounded-2xl border border-[#F3E9D1] shadow-2xl max-w-lg w-full p-6 space-y-5">
             <div className="flex items-start justify-between">
               <div>
-                <h3 className="font-serif text-xl font-bold text-[#053845]">
+                <h3 className="font-serif text-lg font-bold text-[#053845]">
                   Dispatch Temperature-Monitored Cold Box
                 </h3>
-                <p className="text-xs text-slate-500 mt-1">
-                  Reservation {dispatchTarget.reservationid.slice(0, 8)} ({dispatchTarget.items?.length || 0} unit(s) certified)
+                <p className="text-xs text-slate-500 mt-0.5 font-mono">
+                  Reservation #{dispatchTarget.reservationid.slice(0, 8)} ({dispatchTarget.items?.length || 0} unit(s) certified)
                 </p>
               </div>
               <button
@@ -827,50 +1029,50 @@ export default function BloodBankDispatchPage() {
               </div>
             )}
 
-            <div className="p-4 rounded-2xl bg-[#FAF6EE] border border-[#F3E9D1] space-y-2 text-xs">
+            <div className="p-3 rounded-xl bg-[#FAF6EE] border border-[#F3E9D1] space-y-1.5 text-xs">
               <div className="flex items-center gap-2 text-[#053845] font-bold">
                 <Thermometer className="w-4 h-4 text-[#317786]" />
                 <span>Cold-Chain Regulatory Compliance (2°C–6°C)</span>
               </div>
               <p className="text-slate-600 leading-relaxed text-[11px]">
-                Whole blood and red cells must depart the blood bank strictly within 2°C to 6°C using validated insulated transport containers with data-loggers.
+                Whole blood and red cells must depart the blood bank strictly within 2°C to 6°C using validated insulated transport containers.
               </p>
             </div>
 
-            <div className="space-y-4 text-xs">
-              <div className="space-y-1.5">
-                <label className="font-bold text-slate-700">
-                  Courier Cold-Box Departure Temperature (°C) <span className="text-rose-600">*</span>
+            <div className="space-y-3 text-xs">
+              <div className="space-y-1">
+                <label className="font-semibold text-slate-700">
+                  Courier Departure Temperature (°C) <span className="text-rose-600">*</span>
                 </label>
                 <input
                   type="number"
                   step="0.1"
                   value={courierTempC}
                   onChange={(e) => setCourierTempC(e.target.value)}
-                  className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-slate-800 focus:outline-none focus:border-[#317786] font-mono font-bold"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-slate-800 focus:outline-none focus:border-[#317786] font-mono font-bold"
                 />
                 <span className="text-[11px] text-slate-500">
                   Recommended calibrated dispatch temperature: 4.0°C
                 </span>
               </div>
 
-              <div className="space-y-1.5">
-                <label className="font-bold text-slate-700">Courier / Transport Notes (Optional)</label>
+              <div className="space-y-1">
+                <label className="font-semibold text-slate-700">Courier / Transport Notes (Optional)</label>
                 <input
                   type="text"
                   value={dispatchNotes}
                   onChange={(e) => setDispatchNotes(e.target.value)}
                   placeholder="Courier vehicle #, sealed cold box lock ID..."
-                  className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-slate-800 focus:outline-none focus:border-[#317786]"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-slate-800 focus:outline-none focus:border-[#317786]"
                 />
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-3 pt-2">
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
               <button
                 type="button"
                 onClick={() => setDispatchTarget(null)}
-                className="px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                className="px-3.5 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
               >
                 Cancel
               </button>
@@ -878,7 +1080,7 @@ export default function BloodBankDispatchPage() {
                 type="button"
                 onClick={handleDispatchReservation}
                 disabled={isSubmittingDispatch}
-                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#EFA27E] hover:bg-[#EFA27E]/90 text-[#053845] text-xs font-bold shadow-md cursor-pointer disabled:opacity-50"
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#053845] hover:bg-[#317786] text-white text-xs font-bold shadow-2xs cursor-pointer disabled:opacity-50"
               >
                 {isSubmittingDispatch ? (
                   <>
@@ -900,14 +1102,14 @@ export default function BloodBankDispatchPage() {
       {/* Cancel Reservation Modal */}
       {cancelTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
-          <div className="bg-white rounded-3xl border border-[#F3E9D1] shadow-2xl max-w-md w-full p-6 sm:p-8 space-y-6">
+          <div className="bg-white rounded-2xl border border-[#F3E9D1] shadow-2xl max-w-md w-full p-6 space-y-5">
             <div className="flex items-start justify-between">
               <div>
-                <h3 className="font-serif text-xl font-bold text-rose-900">
+                <h3 className="font-serif text-lg font-bold text-rose-900">
                   Cancel Blood Reservation
                 </h3>
-                <p className="text-xs text-slate-500 mt-1">
-                  Reservation {cancelTarget.reservationid.slice(0, 8)}
+                <p className="text-xs text-slate-500 mt-0.5 font-mono">
+                  Reservation #{cancelTarget.reservationid.slice(0, 8)}
                 </p>
               </div>
               <button
@@ -918,8 +1120,8 @@ export default function BloodBankDispatchPage() {
               </button>
             </div>
 
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-700">
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-slate-700">
                 Cancellation Reason <span className="text-rose-600">*</span>
               </label>
               <textarea
@@ -927,18 +1129,18 @@ export default function BloodBankDispatchPage() {
                 onChange={(e) => setCancellationReason(e.target.value)}
                 placeholder="Reason (e.g. Crossmatch incompatibility, patient surgery postponed, requisition modified)..."
                 rows={3}
-                className="w-full p-3 text-xs rounded-xl border border-slate-200 focus:outline-none focus:border-rose-500 focus:ring-2 focus:ring-rose-500/20 text-slate-800 placeholder:text-slate-400"
+                className="w-full p-3 text-xs rounded-xl border border-slate-200 focus:outline-none focus:border-rose-500 focus:ring-1 focus:ring-rose-500/30 text-slate-800 placeholder:text-slate-400"
               />
               <p className="text-[11px] text-slate-500">
                 Cancelling releases all reserved units back to AVAILABLE vault stock in the immutable ledger.
               </p>
             </div>
 
-            <div className="flex items-center justify-end gap-3 pt-2">
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
               <button
                 type="button"
                 onClick={() => setCancelTarget(null)}
-                className="px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                className="px-3.5 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
               >
                 Dismiss
               </button>
@@ -946,7 +1148,7 @@ export default function BloodBankDispatchPage() {
                 type="button"
                 onClick={handleCancelReservation}
                 disabled={isSubmittingCancel || cancellationReason.trim().length < 5}
-                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-md cursor-pointer disabled:opacity-50"
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-2xs cursor-pointer disabled:opacity-50"
               >
                 {isSubmittingCancel ? (
                   <>

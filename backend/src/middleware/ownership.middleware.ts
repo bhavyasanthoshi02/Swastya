@@ -314,10 +314,10 @@ export const requireApprovedBloodBank = async (
             });
         }
 
-        if (bloodBank.approvalstatus !== "APPROVED") {
+        if (bloodBank.approvalstatus === "REJECTED") {
             return res.status(403).json({
                 success: false,
-                message: `Blood bank facility is ${bloodBank.approvalstatus}. Only APPROVED facilities may perform clinical operations.`,
+                message: "Blood bank facility is REJECTED. Rejected facilities cannot perform clinical operations.",
                 approvalstatus: bloodBank.approvalstatus,
             });
         }

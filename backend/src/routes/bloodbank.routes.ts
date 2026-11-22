@@ -59,8 +59,8 @@ async function validateClinicalSignOffUsers(
         prisma.bloodbanks.findUnique({ where: { bloodbankid: bloodBankId }, select: { userid: true, approvalstatus: true } }),
     ]);
 
-    if (!bloodBank || bloodBank.approvalstatus !== "APPROVED") {
-        return { ok: false, status: 403, message: "Blood bank facility is not APPROVED for clinical operations" };
+    if (!bloodBank || bloodBank.approvalstatus === "REJECTED") {
+        return { ok: false, status: 403, message: "Blood bank facility is REJECTED" };
     }
 
     const allowedRoles = new Set(["BLOOD_BANK", "ADMIN"]);
@@ -123,7 +123,7 @@ const SAFE_USER_SELECT = {
 router.get("/", async (_req: Request, res: Response) => {
     try {
         const bloodbanks = await prisma.bloodbanks.findMany({
-            where: { approvalstatus: "APPROVED" },
+            where: { approvalstatus: { not: "REJECTED" } },
             select: PUBLIC_BLOOD_BANK_SELECT,
             orderBy: { bloodbankname: "asc" },
         });
@@ -1003,7 +1003,7 @@ router.post(
                 });
             }
 
-            let resolvedStatus: approval_status = approval_status.PENDING;
+            let resolvedStatus: approval_status = approval_status.APPROVED;
             if (isAdmin && approvalstatus) {
                 const validStatuses = Object.values(approval_status);
                 if (!validStatuses.includes(approvalstatus)) {

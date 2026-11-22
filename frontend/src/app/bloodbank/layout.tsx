@@ -169,17 +169,7 @@ export default function BloodBankLayout({
         </div>
       )}
 
-      {/* Pending Approval Banner */}
-      {bloodbank && bloodbank.approvalstatus === "PENDING" && (
-        <div className="bg-sky-50 border-b border-sky-200 px-4 py-2.5 text-xs text-sky-800">
-          <div className="max-w-7xl mx-auto flex items-center gap-2">
-            <Clock className="w-4 h-4 text-[#317786] shrink-0" />
-            <span>
-              <strong>Facility Verification in Progress:</strong> Your blood bank registration is currently under administrative review. Read-only inventory overview and profile updates remain available.
-            </span>
-          </div>
-        </div>
-      )}
+
 
       {/* Main Content Viewport */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">

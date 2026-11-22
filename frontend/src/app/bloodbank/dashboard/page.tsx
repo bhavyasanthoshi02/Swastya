@@ -156,9 +156,7 @@ export default function BloodBankDashboardPage() {
     );
   }
 
-  const approvalStatus = bloodbank.approvalstatus || "PENDING";
-  const isPending = approvalStatus === "PENDING";
-  const isApproved = approvalStatus === "APPROVED";
+  const approvalStatus = bloodbank.approvalstatus || "APPROVED";
   const isRejected = approvalStatus === "REJECTED";
 
   return (
@@ -219,19 +217,11 @@ export default function BloodBankDashboardPage() {
               <span className="text-[11px] text-slate-300 flex items-center gap-1.5">
                 <span
                   className={`w-2 h-2 rounded-full ${
-                    isApproved
-                      ? "bg-emerald-400 animate-pulse"
-                      : isRejected
-                      ? "bg-rose-400"
-                      : "bg-amber-400"
+                    isRejected ? "bg-rose-400" : "bg-emerald-400 animate-pulse"
                   }`}
                 />
                 <span>
-                  {isApproved
-                    ? "Verified Vault"
-                    : isRejected
-                    ? "Deactivated"
-                    : "Verification Pending"}
+                  {isRejected ? "Deactivated" : "Verified Vault"}
                 </span>
               </span>
             </div>
@@ -279,10 +269,10 @@ export default function BloodBankDashboardPage() {
               Accreditation
             </span>
             <div className="font-serif text-lg sm:text-xl font-bold text-emerald-300">
-              {isApproved ? "CDSCO Verified" : "Review Pending"}
+              {isRejected ? "Deactivated" : "CDSCO Verified"}
             </div>
             <p className="text-[11px] text-slate-300">
-              {isApproved ? "Approved for emergency dispatch" : "Regulatory review active"}
+              {isRejected ? "Facility suspended" : "Approved for emergency dispatch"}
             </p>
           </div>
         </div>

@@ -523,6 +523,8 @@ router.post("/register", async (req: Request, res: Response) => {
                         phonenumber: rawContactPhone,
                         password: hashedPassword,
                         role: user_role.BLOOD_BANK,
+                        isactive: true,
+                        emailverified: true,
                     },
                 });
 
@@ -539,7 +541,7 @@ router.post("/register", async (req: Request, res: Response) => {
                         pincode: rawPincodeBb,
                         latitude: validatedCoords.latitude ?? null,
                         longitude: validatedCoords.longitude ?? null,
-                        approvalstatus: approval_status.PENDING,
+                        approvalstatus: approval_status.APPROVED,
                     },
                 });
 

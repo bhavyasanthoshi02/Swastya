@@ -401,6 +401,7 @@ export interface InventoryUnitItem {
   islegacyreconciled: boolean;
   createdat: string;
   updatedat: string;
+  currentscreening?: UnitScreeningRecordItem | null;
   screeningrecords?: UnitScreeningRecordItem[];
 }
 
