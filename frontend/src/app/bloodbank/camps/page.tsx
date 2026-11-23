@@ -13,6 +13,7 @@ import {
   AlertCircle,
   RefreshCw,
   ChevronRight,
+  Sparkles,
 } from "lucide-react";
 import { api, DonationCampItem, CampSummary } from "@/lib/api";
 
@@ -119,6 +120,14 @@ export default function BloodBankCampsDashboardPage() {
         </div>
 
         <div className="flex items-center gap-2.5 shrink-0 self-start sm:self-center">
+          <Link
+            href="/bloodbank/camp-planner"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-[#053845] bg-[#FAF6EE] hover:bg-[#FAF6EE]/80 border border-[#F3E9D1] shadow-2xs transition-colors cursor-pointer"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-[#317786]" />
+            <span>AI Camp Planner</span>
+          </Link>
+
           <button
             type="button"
             onClick={() => fetchCamps(true)}

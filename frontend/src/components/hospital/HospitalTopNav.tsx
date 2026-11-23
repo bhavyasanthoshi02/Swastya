@@ -20,6 +20,7 @@ import {
   Stethoscope,
   MessageSquare,
   MoreHorizontal,
+  Radio,
 } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { api } from "@/lib/api";
@@ -205,6 +206,13 @@ export function HospitalTopNav({
       icon: Users,
       desc: "Manage hospital voluntary donor registry and contact roster",
       active: pathname.startsWith("/hospital/donors"),
+    },
+    {
+      href: "/hospital/emergency-matching",
+      label: "Emergency Matching",
+      icon: Radio,
+      desc: "Intelligent compatible donor matching, scoring and urgent dispatch",
+      active: pathname.startsWith("/hospital/emergency-matching"),
     },
     {
       href: "/hospital/sms",

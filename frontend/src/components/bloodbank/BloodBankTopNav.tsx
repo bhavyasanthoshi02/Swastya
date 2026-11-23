@@ -22,6 +22,7 @@ import {
   MessageSquare,
   SlidersHorizontal,
   Layers,
+  Calendar,
 } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { api } from "@/lib/api";
@@ -212,11 +213,25 @@ export function BloodBankTopNav({
   // Group 2: Outreach, Assets & Regional Intelligence
   const assetLinks = [
     {
+      href: "/bloodbank/predictor",
+      label: "AI Shortage Predictor",
+      desc: "7/14/30-day shortage forecasts, depletion runway & AI insights",
+      icon: TrendingUp,
+      active: pathname.startsWith("/bloodbank/predictor"),
+    },
+    {
       href: "/bloodbank/camps",
       label: "Blood Donation Camps",
       desc: "Community drives, schedule dates & voluntary donor registration",
       icon: Tent,
       active: pathname.startsWith("/bloodbank/camps"),
+    },
+    {
+      href: "/bloodbank/camp-planner",
+      label: "Smart Camp Planner",
+      desc: "AI-driven location & date recommendations for blood drives",
+      icon: Calendar,
+      active: pathname.startsWith("/bloodbank/camp-planner"),
     },
     {
       href: "/bloodbank/equipment",
@@ -572,6 +587,14 @@ export function BloodBankTopNav({
                   >
                     <ClipboardList className="w-3.5 h-3.5 text-[#317786]" />
                     <span>Requisitions</span>
+                  </Link>
+                  <Link
+                    href="/bloodbank/predictor"
+                    onClick={() => setIsProfileOpen(false)}
+                    className="flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium text-slate-700 hover:text-[#053845] hover:bg-[#FAF6EE] transition-colors"
+                  >
+                    <TrendingUp className="w-3.5 h-3.5 text-[#317786]" />
+                    <span>Shortage Predictor</span>
                   </Link>
                 </div>
 

@@ -18,6 +18,7 @@ import {
   AlertCircle,
   ExternalLink,
   Tent,
+  Radio,
 } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { api } from "@/lib/api";
@@ -149,6 +150,11 @@ export function DonorTopNav({
       href: "/donor/requests",
       label: "Blood Requests",
       icon: Droplets,
+    },
+    {
+      href: "/donor/emergency-requests",
+      label: "Emergency Matches",
+      icon: Radio,
     },
     {
       href: "/donor/camps",

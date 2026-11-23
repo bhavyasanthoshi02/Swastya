@@ -121,6 +121,118 @@ export interface ProcedureConfigItem {
   isHospitalOverride: boolean;
 }
 
+export interface MatchingCandidateScoreBreakdown {
+  compatibilityScore: number;
+  distanceScore: number;
+  availabilityScore: number;
+  responseScore: number;
+  totalScore: number;
+}
+
+export interface MatchingCandidateExplanations {
+  compatibility: string;
+  location: string;
+  availability: string;
+  responsiveness: string;
+}
+
+export interface MatchingCandidateItem {
+  donorId: string;
+  donorUserId: string;
+  donorName: string;
+  bloodGroup: string;
+  gender: string | null;
+  city: string;
+  state: string;
+  matchScore: number;
+  scoreBreakdown: MatchingCandidateScoreBreakdown;
+  explanations: MatchingCandidateExplanations;
+  distanceKm: number | null;
+  distanceDisplay: string;
+  matchType: "COORDINATES" | "CITY_FALLBACK";
+  availabilityStatus: string;
+  isEligible: boolean;
+  lastDonationDate: string | null;
+  daysSinceLastDonation: number | null;
+  cooldownSatisfied: boolean;
+  maskedPhone: string;
+  maskedEmail: string;
+  hasBeenNotified: boolean;
+  currentDeliveryStatus: string | null;
+  currentResponse: string | null;
+}
+
+export interface HospitalMatchingOverviewData {
+  activeMatchingRequisitionsCount: number;
+  totalCandidatesEvaluated: number;
+  totalDonorsNotified: number;
+  totalResponsesReceived: number;
+  totalAccepted: number;
+  totalDeclined: number;
+  totalPending: number;
+  responseRatePercent: number;
+  acceptanceRatePercent: number;
+}
+
+export interface RequisitionForMatchingItem {
+  requestId: string;
+  patientName: string;
+  patientAge: number;
+  patientGender: string;
+  bloodGroup: string;
+  bloodComponent: string;
+  unitsRequired: number;
+  urgencyLevel: string;
+  isEmergency: boolean;
+  searchRadiusKm: number;
+  requiredBy: string;
+  status: string;
+  createdAt: string;
+  hasActiveBroadcast: boolean;
+  broadcastId: string | null;
+  totalNotifiedCount: number;
+  totalRespondedCount: number;
+}
+
+export interface MatchingDonorResponseItem {
+  deliveryId: string;
+  donorId: string;
+  donorName: string;
+  bloodGroup: string;
+  city: string;
+  state: string;
+  distanceKm: number | null;
+  matchType: string;
+  deliveryStatus: string;
+  response: "PENDING" | "ACCEPTED" | "DECLINED";
+  respondedAt: string | null;
+  transitStatus: string | null;
+  transitNotes: string | null;
+  donorPhone: string;
+  donorEmail: string;
+  notifiedAt: string | null;
+}
+
+export interface DonorEmergencyRequestItem {
+  deliveryId: string;
+  broadcastId: string;
+  requestId: string;
+  hospitalName: string;
+  hospitalCity: string;
+  bloodGroup: string;
+  bloodComponent: string;
+  unitsRequired: number;
+  urgencyLevel: string;
+  requiredBy: string;
+  distanceKm: number | null;
+  distanceDisplay: string;
+  matchType: string;
+  response: "PENDING" | "ACCEPTED" | "DECLINED";
+  respondedAt: string | null;
+  transitStatus: string | null;
+  createdAt: string;
+}
+
 export interface SurgeryPlanItem {
   surgeryid: string;
   hospitalid: string;
@@ -1030,6 +1142,228 @@ export interface EquipmentDashboardMetrics {
   }>;
 }
 
+export type ShortageRiskLevel = "CRITICAL" | "HIGH" | "MODERATE" | "LOW";
+
+export interface BloodGroupPredictionItem {
+  bloodGroup: string;
+  displayName: string;
+  availableUnits: number;
+  reservedUnits: number;
+  quarantinedUnits: number;
+  expiringUnitsInPeriod: number;
+  effectiveAvailableUnits: number;
+  historicalDailyDemand: number;
+  historicalTotalDemand: number;
+  predictedDemand: number;
+  expectedStockPosition: number;
+  deficitUnits: number;
+  daysOfSupply: number;
+  riskLevel: ShortageRiskLevel;
+  explanation: string;
+  componentBreakdown: Array<{
+    component: string;
+    displayName: string;
+    availableUnits: number;
+    expiringUnits: number;
+    predictedDemand: number;
+  }>;
+}
+
+export interface ShortageTrendPointItem {
+  day: number;
+  date: string;
+  historicalDemand?: number;
+  projectedDemand: number;
+  projectedStockBalance: number;
+}
+
+export interface AiGeneratedInsightItem {
+  id: string;
+  type: "CRITICAL_DEFICIT" | "EXPIRY_WARNING" | "DEMAND_SURGE" | "SUFFICIENT_STOCK" | "COMPONENT_IMBALANCE";
+  severity: "critical" | "warning" | "info" | "success";
+  title: string;
+  description: string;
+  affectedBloodGroups: string[];
+  affectedComponents: string[];
+  metricValue?: string | number;
+  confidence: "HIGH" | "MEDIUM" | "LOW";
+  suggestedAction: string;
+}
+
+export interface ActionableRecommendationItem {
+  id: string;
+  category: "CAMP_ORGANIZATION" | "TTI_CLEARANCE" | "FEFO_DISPATCH" | "REGIONAL_TRANSFER" | "MONITORING";
+  title: string;
+  actionText: string;
+  priority: "HIGH" | "MEDIUM" | "LOW";
+  relatedBloodGroup?: string;
+  estimatedDeficitAverted?: number;
+}
+
+export interface PredictorOverviewSummaryItem {
+  totalAvailableUnits: number;
+  totalReservedUnits: number;
+  totalQuarantinedUnits: number;
+  groupsAtRiskCount: number;
+  criticalGroupsCount: number;
+  highRiskGroupsCount: number;
+  predictedShortagesTotalUnits: number;
+  unitsApproachingCriticalExpiry: number;
+  confidenceScore: number;
+  confidenceLevel: "HIGH" | "MEDIUM" | "LOW";
+  dataSufficiencyNote: string;
+  historicalRequestsAnalyzed: number;
+  forecastPeriodDays: 7 | 14 | 30;
+  selectedComponent: string;
+  facilityId: string;
+  facilityName: string;
+  generatedAt: string;
+}
+
+export interface CompletePredictionPayloadItem {
+  overview: PredictorOverviewSummaryItem;
+  predictions: BloodGroupPredictionItem[];
+  trends: {
+    timeline: ShortageTrendPointItem[];
+    historicalVsPredictedByGroup: Array<{
+      bloodGroup: string;
+      historicalAvg: number;
+      predicted: number;
+      currentStock: number;
+    }>;
+    riskDistribution: Record<ShortageRiskLevel, number>;
+  };
+  insights: AiGeneratedInsightItem[];
+  recommendations: ActionableRecommendationItem[];
+}
+
+export interface CampPlannerOverviewItem {
+  totalCampsOrganized: number;
+  upcomingCampsCount: number;
+  recommendedLocationsCount: number;
+  highDemandAreasCount: number;
+  predictedDeficitUnits: number;
+  criticalShortageGroupsCount: number;
+  facilityCity: string;
+  facilityName: string;
+  dataConfidence: "HIGH" | "MEDIUM" | "LOW";
+}
+
+export interface CampPlannerScoreBreakdown {
+  shortageScore: number;
+  donorScore: number;
+  demandScore: number;
+  conflictPenalty: number;
+}
+
+export interface CampPlannerTargetedGroup {
+  bloodGroup: string;
+  displayName: string;
+  priority: "HIGH" | "MEDIUM" | "LOW";
+  deficitUnits: number;
+  availableUnits: number;
+  daysOfSupply: number;
+}
+
+export interface CampPlannerLocationItem {
+  id: string;
+  locationName: string;
+  suggestedVenue: string;
+  area: string;
+  city: string;
+  district: string;
+  state: string;
+  pincode: string;
+  latitude: number | null;
+  longitude: number | null;
+  distanceKm?: number | null;
+  compositeScore: number;
+  priority: "HIGH" | "MEDIUM" | "LOW";
+  scoreBreakdown: CampPlannerScoreBreakdown;
+  donorCluster: {
+    totalDonorsInArea: number;
+    eligibleDonorsInArea: number;
+    availableDonorsInArea: number;
+    deficitGroupMatchingDonors: number;
+  };
+  hospitalRequisitions: {
+    totalRequestsInArea: number;
+    totalUnitsRequested: number;
+    associatedHospitalNames: string[];
+  };
+  estimatedTurnout: number;
+  estimatedCollectionUnits: number;
+  targetedBloodGroups: CampPlannerTargetedGroup[];
+  clinicalRationale: string;
+  recommendedSlot: {
+    suggestedDate: string;
+    formattedDate: string;
+    dayOfWeek: string;
+    startTime: string;
+    endTime: string;
+    conflictStatus: "OPTIMAL" | "CONFLICT_FREE" | "SCHEDULED_NEARBY";
+  };
+}
+
+export interface CampPlannerDateItem {
+  date: string;
+  formattedDate: string;
+  dayOfWeek: string;
+  isWeekend: boolean;
+  daysAway: number;
+  status: "OPTIMAL" | "RECOMMENDED" | "CONFLICT";
+  conflictReason: string | null;
+  suggestedTiming: {
+    startTime: string;
+    endTime: string;
+  };
+  expectedTurnout: number;
+  targetUnits: number;
+  alignmentReason: string;
+}
+
+export interface CampPlannerBloodGroupPriorityItem {
+  bloodGroup: string;
+  displayName: string;
+  priority: "HIGH" | "MEDIUM" | "LOW";
+  deficitUnits: number;
+  availableUnits: number;
+  daysOfSupply: number;
+  targetCollectionUnits: number;
+  rationale: string;
+}
+
+export interface CampPlannerInsightItem {
+  id: string;
+  type: "STRATEGIC_LOCATION" | "CRITICAL_TIMING" | "GROUP_TARGETING" | "DONOR_MOBILIZATION" | "LOGISTICAL_EFFICIENCY";
+  severity: "critical" | "warning" | "info" | "success";
+  title: string;
+  description: string;
+  impactScore: number;
+  suggestedAction: string;
+}
+
+export interface CompleteCampPlannerPayloadItem {
+  overview: CampPlannerOverviewItem;
+  horizonDays: 7 | 14 | 30;
+  locations: CampPlannerLocationItem[];
+  dates: CampPlannerDateItem[];
+  bloodGroupPriorities: CampPlannerBloodGroupPriorityItem[];
+  insights: CampPlannerInsightItem[];
+  existingCamps: Array<{
+    campid: string;
+    campname: string;
+    campdate: string;
+    venuename: string;
+    city: string;
+    status: string;
+    maxcapacity: number | null;
+    registeredCount: number;
+    attendedCount: number;
+    unitsDonated: number;
+  }>;
+}
+
 async function request<T = any>(endpoint: string, options: RequestOptions = {}): Promise<T> {
   const { params, headers, ...customConfig } = options;
 
@@ -1593,6 +1927,43 @@ export const api = {
       cancel: (id: string, reason: string) =>
         api.post<{ success: boolean; data: SurgeryPlanItem; message: string }>(`/hospitals/me/surgeries/${id}/cancel`, { reason }),
     },
+
+    emergencyMatching: {
+      getOverview: () =>
+        api.get<{ success: boolean; overview: HospitalMatchingOverviewData }>(
+          "/hospitals/me/emergency-matching/overview"
+        ),
+      getRequisitions: () =>
+        api.get<{ success: boolean; requisitions: RequisitionForMatchingItem[] }>(
+          "/hospitals/me/emergency-matching/requisitions"
+        ),
+      findCandidates: (requestId: string, radiusKm?: number) =>
+        api.get<{
+          success: boolean;
+          requisition: RequisitionForMatchingItem;
+          candidates: MatchingCandidateItem[];
+          totalCandidates: number;
+        }>(`/hospitals/me/emergency-matching/candidates`, {
+          params: { requestId, radiusKm },
+        }),
+      notifyDonors: (data: { requestId: string; donorIds: string[]; notes?: string }) =>
+        api.post<{
+          success: boolean;
+          broadcastId: string;
+          totalNotified: number;
+          message: string;
+        }>("/hospitals/me/emergency-matching/notify", data),
+      getResponses: (requestId: string) =>
+        api.get<{ success: boolean; responses: MatchingDonorResponseItem[] }>(
+          "/hospitals/me/emergency-matching/responses",
+          { params: { requestId } }
+        ),
+      updateTransit: (deliveryId: string, data: { transitStatus: string; notes?: string }) =>
+        api.patch<{ success: boolean; deliveryId: string; transitStatus: string; message: string }>(
+          `/hospitals/me/emergency-matching/deliveries/${deliveryId}/transit`,
+          data
+        ),
+    },
   },
 
   bloodRequests: {
@@ -2113,6 +2484,21 @@ export const api = {
         "/donors/me/notification-preferences",
         data
       ),
+
+    emergencyRequests: {
+      getAll: () =>
+        api.get<{ success: boolean; requests: DonorEmergencyRequestItem[] }>(
+          "/donors/me/emergency-requests/donor/requests"
+        ),
+      respond: (deliveryId: string, data: { response: "ACCEPTED" | "DECLINED"; notes?: string }) =>
+        api.post<{
+          success: boolean;
+          deliveryId: string;
+          response: string;
+          respondedAt: string;
+          message: string;
+        }>(`/donors/me/emergency-requests/donor/requests/${deliveryId}/respond`, data),
+    },
   },
 
   notifications: {
@@ -2600,6 +2986,108 @@ export const api = {
 
       cancelRegistration: (campId: string, regId: string, reason: string) =>
         api.patch<{ success: boolean; data: any; message: string }>(`/bloodbanks/me/camps/${campId}/registrations/${regId}/cancel`, { reason }),
+    },
+
+    predictions: {
+      get: (params?: { period?: 7 | 14 | 30; component?: string; bloodBankId?: string }) => {
+        const query = new URLSearchParams();
+        if (params?.period) query.append("period", String(params.period));
+        if (params?.component) query.append("component", params.component);
+        if (params?.bloodBankId) query.append("bloodBankId", params.bloodBankId);
+        const qs = query.toString();
+        return api.get<{ success: boolean; data: CompletePredictionPayloadItem }>(
+          `/bloodbanks/me/predictions${qs ? `?${qs}` : ""}`
+        );
+      },
+
+      getOverview: (params?: { period?: 7 | 14 | 30; component?: string }) => {
+        const query = new URLSearchParams();
+        if (params?.period) query.append("period", String(params.period));
+        if (params?.component) query.append("component", params.component);
+        const qs = query.toString();
+        return api.get<{ success: boolean; data: PredictorOverviewSummaryItem }>(
+          `/bloodbanks/me/predictions/overview${qs ? `?${qs}` : ""}`
+        );
+      },
+
+      getShortages: (params?: { period?: 7 | 14 | 30; component?: string }) => {
+        const query = new URLSearchParams();
+        if (params?.period) query.append("period", String(params.period));
+        if (params?.component) query.append("component", params.component);
+        const qs = query.toString();
+        return api.get<{
+          success: boolean;
+          data: {
+            forecastPeriodDays: number;
+            selectedComponent: string;
+            predictions: BloodGroupPredictionItem[];
+          };
+        }>(`/bloodbanks/me/predictions/shortages${qs ? `?${qs}` : ""}`);
+      },
+
+      getTrends: (params?: { period?: 7 | 14 | 30; component?: string }) => {
+        const query = new URLSearchParams();
+        if (params?.period) query.append("period", String(params.period));
+        if (params?.component) query.append("component", params.component);
+        const qs = query.toString();
+        return api.get<{
+          success: boolean;
+          data: {
+            forecastPeriodDays: number;
+            trends: {
+              timeline: ShortageTrendPointItem[];
+              historicalVsPredictedByGroup: Array<{
+                bloodGroup: string;
+                historicalAvg: number;
+                predicted: number;
+                currentStock: number;
+              }>;
+              riskDistribution: Record<ShortageRiskLevel, number>;
+            };
+          };
+        }>(`/bloodbanks/me/predictions/trends${qs ? `?${qs}` : ""}`);
+      },
+
+      getInsights: (params?: { period?: 7 | 14 | 30; component?: string }) => {
+        const query = new URLSearchParams();
+        if (params?.period) query.append("period", String(params.period));
+        if (params?.component) query.append("component", params.component);
+        const qs = query.toString();
+        return api.get<{
+          success: boolean;
+          data: {
+            forecastPeriodDays: number;
+            insights: AiGeneratedInsightItem[];
+            recommendations: ActionableRecommendationItem[];
+          };
+        }>(`/bloodbanks/me/predictions/insights${qs ? `?${qs}` : ""}`);
+      },
+    },
+
+    campPlanner: {
+      get: (params?: { horizon?: 7 | 14 | 30; bloodBankId?: string }) => {
+        const query = new URLSearchParams();
+        if (params?.horizon) query.append("horizon", String(params.horizon));
+        if (params?.bloodBankId) query.append("bloodBankId", params.bloodBankId);
+        const qs = query.toString();
+        return api.get<{ success: boolean; data: CompleteCampPlannerPayloadItem }>(
+          `/bloodbanks/me/camp-planner${qs ? `?${qs}` : ""}`
+        );
+      },
+      getOverview: () =>
+        api.get<{ success: boolean; data: CampPlannerOverviewItem }>("/bloodbanks/me/camp-planner/overview"),
+      getLocations: (params?: { horizon?: 7 | 14 | 30 }) => {
+        const query = new URLSearchParams();
+        if (params?.horizon) query.append("horizon", String(params.horizon));
+        const qs = query.toString();
+        return api.get<{ success: boolean; data: CampPlannerLocationItem[] }>(
+          `/bloodbanks/me/camp-planner/locations${qs ? `?${qs}` : ""}`
+        );
+      },
+      getDates: () =>
+        api.get<{ success: boolean; data: CampPlannerDateItem[] }>("/bloodbanks/me/camp-planner/dates"),
+      getInsights: () =>
+        api.get<{ success: boolean; data: CampPlannerInsightItem[] }>("/bloodbanks/me/camp-planner/insights"),
     },
   },
 
