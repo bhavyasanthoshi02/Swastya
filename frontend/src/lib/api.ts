@@ -36,6 +36,7 @@ export interface BloodRequestItem {
   searchradius: number | null;
   requiredby: string;
   status:
+  | "DRAFT"
   | "CREATED"
   | "VERIFIED"
   | "HOSPITAL_REVIEW"
@@ -46,6 +47,7 @@ export interface BloodRequestItem {
   | "CANCELLED"
   | "EXPIRED"
   | string;
+  isdraft?: boolean | null;
   notes: string | null;
   createdat: string;
   updatedat: string;
@@ -466,6 +468,87 @@ export interface CreateBloodRequestDto {
   notes?: string;
   requesterid?: string;
   hospitalid?: string;
+  isDraft?: boolean;
+  saveAsDraft?: boolean;
+}
+
+export interface DocumentRequirementItem {
+  documentType: string;
+  documentName: string;
+  isMandatory: boolean;
+  description: string;
+}
+
+export interface DocumentChecklistItem {
+  documentType: string;
+  documentName: string;
+  isMandatory: boolean;
+  description: string;
+  isUploaded: boolean;
+  document?: {
+    documentid: string;
+    originalfilename: string;
+    mimetype: string;
+    filesize: number;
+    version?: number;
+    filehash?: string | null;
+    uploadedat: string | null;
+    updatedat: string | null;
+  } | null;
+}
+
+export interface RequestCompletenessResponse {
+  success: boolean;
+  requestId: string;
+  totalRequirements: number;
+  mandatoryRequired: number;
+  mandatoryUploaded: number;
+  completionPercentage: number;
+  isComplete: boolean;
+  missingMandatory: Array<{ documentType: string; documentName: string }>;
+  checklist: DocumentChecklistItem[];
+  status?: string;
+  isdraft?: boolean;
+}
+
+export interface VerificationDiscrepancy {
+  field: string;
+  extractedValue: string;
+  expectedValue: string;
+  severity: "HIGH" | "MEDIUM" | "LOW";
+  reason: string;
+  sourceDocument: string;
+}
+
+export interface DocumentVerificationReportItem {
+  verificationId: string;
+  requestId: string;
+  documentId: string;
+  documentVersion: number;
+  documentType: string;
+  fileHash: string | null;
+  verificationStatus: "CONSISTENT" | "NEEDS_REVIEW" | "MISMATCH" | "PROCESSING_FAILED";
+  ocrConfidence: number;
+  extractedData: Record<string, any>;
+  discrepancies: VerificationDiscrepancy[];
+  summary: string;
+  processingError: string | null;
+  isCurrentVersion: boolean;
+  reviewerDecision: string | null;
+  reviewerRemarks: string | null;
+  reviewedByUserId: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RequisitionVerificationReportResponse {
+  success: boolean;
+  requestId: string;
+  totalDocuments: number;
+  verifiedDocuments: number;
+  overallStatus: "CONSISTENT" | "NEEDS_REVIEW" | "MISMATCH" | "PROCESSING_FAILED";
+  reports: DocumentVerificationReportItem[];
 }
 
 export interface DonorRegistryItem {
@@ -790,6 +873,163 @@ export interface CampRegistrationItem {
   };
 }
 
+export interface EquipmentItem {
+  equipmentid: string;
+  bloodbankid: string;
+  assetnumber: string;
+  equipmentname: string;
+  category: string;
+  manufacturer?: string | null;
+  modelnumber?: string | null;
+  serialnumber?: string | null;
+  installationdate?: string | null;
+  warrantyexpirydate?: string | null;
+  location?: string | null;
+  department?: string | null;
+  responsibleperson?: string | null;
+  operationalstatus: "OPERATIONAL" | "UNDER_MAINTENANCE" | "OUT_OF_SERVICE" | "RETIRED";
+  iscalibrationrequired: boolean;
+  calibrationintervaldays?: number | null;
+  lastcalibrationdate?: string | null;
+  nextcalibrationdate?: string | null;
+  calibrationstatus: "UP_TO_DATE" | "DUE_SOON" | "OVERDUE" | "NOT_APPLICABLE" | "PENDING_VERIFICATION";
+  ismaintenancerequired: boolean;
+  maintenanceintervaldays?: number | null;
+  lastmaintenancedate?: string | null;
+  nextmaintenancedate?: string | null;
+  maintenancestatus: "UP_TO_DATE" | "DUE_SOON" | "OVERDUE" | "NOT_APPLICABLE";
+  notes?: string | null;
+  createdbyuserid: string;
+  createdat: string;
+  updatedat: string;
+  calibrations?: EquipmentCalibrationItem[];
+  maintenance?: EquipmentMaintenanceItem[];
+  breakdowns?: EquipmentBreakdownItem[];
+  statushistory?: EquipmentStatusHistoryItem[];
+  createdbyuser?: { userid: string; name: string; role: string };
+  _count?: {
+    calibrations: number;
+    maintenance: number;
+    breakdowns: number;
+  };
+}
+
+export interface EquipmentCalibrationItem {
+  calibrationid: string;
+  equipmentid: string;
+  bloodbankid: string;
+  scheduleddate?: string | null;
+  performeddate: string;
+  nextduedate?: string | null;
+  performedby: string;
+  serviceprovider?: string | null;
+  certificatefilepath?: string | null;
+  certificatefilename?: string | null;
+  result: "PASSED" | "FAILED" | "PASSED_WITH_CONDITIONS";
+  standardsused?: string | null;
+  readings?: string | null;
+  remarks?: string | null;
+  verificationstatus: "PENDING" | "VERIFIED" | "REJECTED";
+  verifiedbyuserid?: string | null;
+  verifiedat?: string | null;
+  createdbyuserid: string;
+  createdat: string;
+  createdbyuser?: { userid: string; name: string; role: string };
+  verifiedbyuser?: { userid: string; name: string; role: string };
+}
+
+export interface EquipmentMaintenanceItem {
+  maintenanceid: string;
+  equipmentid: string;
+  bloodbankid: string;
+  maintenancetype: "PREVENTIVE" | "CORRECTIVE";
+  status: "SCHEDULED" | "IN_PROGRESS" | "COMPLETED" | "OVERDUE" | "CANCELLED";
+  scheduleddate: string;
+  completeddate?: string | null;
+  assignedto?: string | null;
+  serviceprovider?: string | null;
+  workdetails?: string | null;
+  partsreplaced?: string | null;
+  downtimehours?: number | null;
+  cost?: number | null;
+  reportfilepath?: string | null;
+  reportfilename?: string | null;
+  createdbyuserid: string;
+  createdat: string;
+  updatedat: string;
+  createdbyuser?: { userid: string; name: string; role: string };
+}
+
+export interface EquipmentBreakdownItem {
+  breakdownid: string;
+  equipmentid: string;
+  bloodbankid: string;
+  reportedat: string;
+  reportedbyuserid: string;
+  issue: string;
+  description?: string | null;
+  severity: "CRITICAL" | "MAJOR" | "MINOR";
+  status: "REPORTED" | "ASSIGNED" | "IN_REPAIR" | "RESOLVED";
+  impactonstorage: boolean;
+  sopactiontaken?: string | null;
+  resolutiondetails?: string | null;
+  resolvedat?: string | null;
+  resolvedbyuserid?: string | null;
+  createdat: string;
+  reportedbyuser?: { userid: string; name: string; role: string };
+  resolvedbyuser?: { userid: string; name: string; role: string };
+  equipment?: { assetnumber: string; equipmentname: string; location?: string | null };
+}
+
+export interface EquipmentStatusHistoryItem {
+  historyid: string;
+  equipmentid: string;
+  bloodbankid: string;
+  previousstatus: string;
+  newstatus: string;
+  reason: string;
+  changedbyuserid: string;
+  createdat: string;
+  changedbyuser?: { userid: string; name: string; role: string };
+}
+
+export interface EquipmentCategoryItem {
+  categoryid: string;
+  bloodbankid?: string | null;
+  categoryname: string;
+  description?: string | null;
+  defaultcalibrationinterval?: number | null;
+  defaultmaintenanceinterval?: number | null;
+  isactive: boolean;
+}
+
+export interface EquipmentDashboardMetrics {
+  totalEquipment: number;
+  operational: number;
+  underMaintenance: number;
+  outOfService: number;
+  retired: number;
+  calibration: {
+    upToDate: number;
+    dueSoon: number;
+    overdue: number;
+  };
+  maintenance: {
+    overdue: number;
+  };
+  activeBreakdownsCount: number;
+  activeBreakdowns: EquipmentBreakdownItem[];
+  upcomingCalibrations: Array<{
+    equipmentid: string;
+    assetnumber: string;
+    equipmentname: string;
+    category: string;
+    location?: string | null;
+    nextcalibrationdate: string;
+    calibrationstatus: string;
+  }>;
+}
+
 async function request<T = any>(endpoint: string, options: RequestOptions = {}): Promise<T> {
   const { params, headers, ...customConfig } = options;
 
@@ -1111,6 +1351,60 @@ export const api = {
     createBloodRequest: (data: CreateBloodRequestDto) =>
       api.post<BloodRequestItem>("/hospitals/me/bloodrequests", data),
 
+    getDocumentRequirements: (urgency?: string, isEmergency?: boolean) =>
+      api.get<{ success: boolean; requirements: DocumentRequirementItem[] }>(
+        "/hospitals/me/requests/document-requirements",
+        { params: { urgency, isEmergency: isEmergency ? "true" : "false" } }
+      ),
+
+    getRequestDocuments: (requestId: string) =>
+      api.get<RequestCompletenessResponse>(`/hospitals/me/requests/${requestId}/documents`),
+
+    uploadRequestDocument: (requestId: string, documentType: string, file: File) => {
+      const formData = new FormData();
+      formData.append("documentType", documentType);
+      formData.append("document", file);
+      return api.post<{
+        success: boolean;
+        message: string;
+        document: any;
+        completeness: RequestCompletenessResponse;
+      }>(`/hospitals/me/requests/${requestId}/documents`, formData);
+    },
+
+    deleteRequestDocument: (requestId: string, documentId: string) =>
+      api.delete<{
+        success: boolean;
+        message: string;
+        completeness: RequestCompletenessResponse;
+      }>(`/hospitals/me/requests/${requestId}/documents/${documentId}`),
+
+    submitDraftRequest: (requestId: string) =>
+      api.post<{
+        success: boolean;
+        message: string;
+        bloodRequest: BloodRequestItem;
+        completeness: RequestCompletenessResponse;
+      }>(`/hospitals/me/bloodrequests/${requestId}/submit`),
+
+    getDocumentDownloadUrl: (requestId: string, documentId: string) =>
+      `${API_BASE_URL}/hospitals/me/requests/${requestId}/documents/${documentId}/file`,
+
+    verifyDocument: (requestId: string, documentId: string) =>
+      api.post<{ success: boolean; report: DocumentVerificationReportItem }>(
+        `/hospitals/me/requests/${requestId}/documents/${documentId}/verify`
+      ),
+
+    getDocumentVerification: (requestId: string, documentId: string) =>
+      api.get<{ success: boolean; report: DocumentVerificationReportItem }>(
+        `/hospitals/me/requests/${requestId}/documents/${documentId}/verification`
+      ),
+
+    getVerificationReport: (requestId: string) =>
+      api.get<RequisitionVerificationReportResponse>(
+        `/hospitals/me/requests/${requestId}/verification-report`
+      ),
+
     getDonors: (params?: {
       search?: string;
       bloodGroup?: string;
@@ -1325,6 +1619,31 @@ export const api = {
         `/bloodrequests/${id}/prescription/verify`,
         data
       ),
+
+    getDocuments: (requestId: string) =>
+      api.get<RequestCompletenessResponse>(`/bloodrequests/${requestId}/documents`),
+
+    getDocumentDownloadUrl: (requestId: string, documentId: string) =>
+      `${API_BASE_URL}/bloodrequests/${requestId}/documents/${documentId}/file`,
+
+    getVerificationReport: (requestId: string) =>
+      api.get<RequisitionVerificationReportResponse>(
+        `/bloodrequests/${requestId}/verification-report`
+      ),
+
+    submitReviewerDecision: (
+      requestId: string,
+      documentId: string,
+      data: {
+        decision: "VERIFIED_MANUAL" | "CORRECTION_REQUIRED" | "ADDITIONAL_INFO_REQUIRED" | "ESCALATED";
+        remarks?: string;
+      }
+    ) =>
+      api.post<{
+        success: boolean;
+        message: string;
+        verification: DocumentVerificationReportItem;
+      }>(`/bloodrequests/${requestId}/documents/${documentId}/review-decision`, data),
 
     uploadReplacementPrescription: (id: string, formData: FormData) =>
       api.post<{ success: boolean; message: string; prescription: PrescriptionItem }>(
@@ -2325,6 +2644,178 @@ export const api = {
 
     cancelMyRegistration: (registrationId: string, reason?: string) =>
       api.post<{ success: boolean; data: any; message: string }>(`/donors/me/camp-registrations/${registrationId}/cancel`, { reason }),
+  },
+  equipment: {
+    list: (params?: {
+      category?: string;
+      operationalStatus?: string;
+      calibrationStatus?: string;
+      maintenanceStatus?: string;
+      search?: string;
+      page?: number;
+      limit?: number;
+    }) => {
+      const query = new URLSearchParams();
+      if (params?.category) query.set("category", params.category);
+      if (params?.operationalStatus) query.set("operationalStatus", params.operationalStatus);
+      if (params?.calibrationStatus) query.set("calibrationStatus", params.calibrationStatus);
+      if (params?.maintenanceStatus) query.set("maintenanceStatus", params.maintenanceStatus);
+      if (params?.search) query.set("search", params.search);
+      if (params?.page) query.set("page", String(params.page));
+      if (params?.limit) query.set("limit", String(params.limit));
+      const qs = query.toString() ? `?${query.toString()}` : "";
+      return api.get<{
+        success: boolean;
+        items: EquipmentItem[];
+        pagination: { total: number; page: number; limit: number; totalPages: number };
+      }>(`/equipment${qs}`);
+    },
+
+    getById: (id: string) =>
+      api.get<{
+        success: boolean;
+        equipment: EquipmentItem;
+      }>(`/equipment/${id}`),
+
+    create: (data: any) =>
+      api.post<{
+        success: boolean;
+        equipment: EquipmentItem;
+        message?: string;
+      }>("/equipment", data),
+
+    update: (id: string, data: any) =>
+      api.put<{
+        success: boolean;
+        equipment: EquipmentItem;
+        message?: string;
+      }>(`/equipment/${id}`, data),
+
+    updateStatus: (id: string, data: { operationalStatus: string; reason: string }) =>
+      api.patch<{
+        success: boolean;
+        equipment: EquipmentItem;
+        clinicalAdvisory?: string | null;
+        message?: string;
+      }>(`/equipment/${id}/status`, data),
+
+    getDashboard: () =>
+      api.get<{
+        success: boolean;
+        metrics: EquipmentDashboardMetrics;
+      }>("/equipment/dashboard"),
+
+    getCategories: () =>
+      api.get<{
+        success: boolean;
+        categories: EquipmentCategoryItem[];
+      }>("/equipment/categories"),
+
+    getReports: () =>
+      api.get<{
+        success: boolean;
+        report: any;
+      }>("/equipment/reports"),
+
+    logCalibration: (id: string, formData: FormData) =>
+      api.post<{
+        success: boolean;
+        calibration: EquipmentCalibrationItem;
+        clinicalAdvisory?: string | null;
+        message?: string;
+      }>(`/equipment/${id}/calibrations`, formData),
+
+    verifyCalibration: (id: string, calId: string, data: { decision: "VERIFIED" | "REJECTED"; remarks?: string }) =>
+      api.patch<{
+        success: boolean;
+        calibration: EquipmentCalibrationItem;
+        message?: string;
+      }>(`/equipment/${id}/calibrations/${calId}/verify`, data),
+
+    scheduleMaintenance: (id: string, formData: FormData) =>
+      api.post<{
+        success: boolean;
+        maintenance: EquipmentMaintenanceItem;
+        message?: string;
+      }>(`/equipment/${id}/maintenance`, formData),
+
+    reportBreakdown: (id: string, data: {
+      issue: string;
+      description?: string;
+      severity?: string;
+      impactOnStorage?: boolean;
+      sopActionTaken?: string;
+    }) =>
+      api.post<{
+        success: boolean;
+        breakdown: EquipmentBreakdownItem;
+        clinicalAdvisory?: string | null;
+        message?: string;
+      }>(`/equipment/${id}/breakdowns`, data),
+
+    resolveBreakdown: (id: string, breakdownId: string, data: {
+      resolutionDetails: string;
+      partsReplaced?: string;
+      downtimeHours?: number;
+      restoreOperational?: boolean;
+    }) =>
+      api.patch<{
+        success: boolean;
+        breakdown: EquipmentBreakdownItem;
+        message?: string;
+      }>(`/equipment/${id}/breakdowns/${breakdownId}/resolve`, data),
+
+    fetchCalibrationCertificateBlob: async (equipmentId: string, calId: string) => {
+      const token = getAuthToken();
+      const response = await fetch(
+        `${API_BASE_URL}/equipment/${equipmentId}/calibrations/${calId}/certificate`,
+        {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        }
+      );
+      if (response.status === 401) {
+        clearAuthToken();
+        if (typeof window !== "undefined" && !window.location.pathname.startsWith("/signin")) {
+          window.location.href = "/signin?session=expired";
+        }
+        throw new ApiError("Your session has expired. Please sign in again.", 401);
+      }
+      if (!response.ok) {
+        let message = "Failed to download calibration certificate.";
+        try {
+          const errJson = await response.json();
+          if (errJson?.message) message = errJson.message;
+        } catch {}
+        throw new ApiError(message, response.status);
+      }
+      return response.blob();
+    },
+
+    fetchMaintenanceReportBlob: async (equipmentId: string, maintId: string) => {
+      const token = getAuthToken();
+      const response = await fetch(
+        `${API_BASE_URL}/equipment/${equipmentId}/maintenance/${maintId}/report`,
+        {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        }
+      );
+      if (response.status === 401) {
+        clearAuthToken();
+        if (typeof window !== "undefined" && !window.location.pathname.startsWith("/signin")) {
+          window.location.href = "/signin?session=expired";
+        }
+        throw new ApiError("Your session has expired. Please sign in again.", 401);
+      }
+      if (!response.ok) {
+        let message = "Failed to download maintenance report.";
+        try {
+          const errJson = await response.json();
+          if (errJson?.message) message = errJson.message;
+        } catch {}
+        throw new ApiError(message, response.status);
+      }
+      return response.blob();
+    },
   },
 };
 

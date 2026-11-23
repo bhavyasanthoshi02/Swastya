@@ -15,6 +15,8 @@ import { isDonorCompatibleWithRecipient } from "../utils/bloodCompatibility";
 import { scheduleEmergencyFollowUp, cancelPendingJobs, sanitizeErrorMessage } from "../services/scheduler.service";
 import { UnitTraceabilityService } from "../services/unitTraceability.service";
 import { DonorMatchingService } from "../services/donorMatching.service";
+import { RequestDocumentService } from "../services/requestDocument.service";
+import { DocumentVerificationService } from "../services/documentVerification.service";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -1880,6 +1882,304 @@ router.get("/:id/prescription/file", authenticate, requireApprovedHospital, asyn
     } catch (error) {
         console.error("Error streaming prescription file:", error);
         res.status(500).json({ success: false, message: "Failed to retrieve prescription file" });
+    }
+});
+
+/**
+ * GET /bloodrequests/:id/documents
+ * Reviewer / Admin endpoint: view document completeness and attached documents for a request.
+ */
+router.get("/:id/documents", authenticate, async (req: Request, res: Response) => {
+    try {
+        const user = (req as any).user;
+        const targetId = (Array.isArray(req.params.id) ? req.params.id[0] : req.params.id) as string;
+
+        if (!targetId || !UUID_REGEX.test(targetId)) {
+            return res.status(404).json({ success: false, message: "Blood request not found" });
+        }
+
+        const bloodRequest = await prisma.bloodrequests.findUnique({
+            where: { requestid: targetId },
+            select: {
+                requestid: true,
+                hospitalid: true,
+                requesterid: true,
+                createdbyuserid: true,
+                status: true,
+                isdraft: true,
+            },
+        });
+
+        if (!bloodRequest) {
+            return res.status(404).json({ success: false, message: "Blood request not found" });
+        }
+
+        // Authorization check: Admin, Creator, Owning Hospital, or Assigned Blood Bank
+        let isAuthorized = user.role === "ADMIN" || bloodRequest.createdbyuserid === user.userid;
+        if (!isAuthorized && user.role === "HOSPITAL") {
+            const hosp = await prisma.hospitals.findUnique({ where: { userid: user.userid } });
+            if (hosp && hosp.hospitalid === bloodRequest.hospitalid) {
+                isAuthorized = true;
+            }
+        }
+        if (!isAuthorized && user.role === "BLOOD_BANK") {
+            const bb = await prisma.bloodbanks.findUnique({ where: { userid: user.userid } });
+            if (bb) {
+                const assignment = await prisma.requisitionassignments.findFirst({
+                    where: { requestid: targetId, bloodbankid: bb.bloodbankid },
+                });
+                if (assignment) isAuthorized = true;
+            }
+        }
+
+        if (!isAuthorized) {
+            return res.status(403).json({ success: false, message: "Forbidden: Not authorized to view documents for this request" });
+        }
+
+        const completeness = await RequestDocumentService.calculateDocumentCompleteness(targetId);
+        return res.status(200).json({
+            success: true,
+            ...completeness,
+            status: bloodRequest.status,
+            isdraft: bloodRequest.isdraft,
+        });
+    } catch (error: any) {
+        console.error("Error retrieving request documents:", error);
+        return res.status(500).json({ success: false, message: error.message || "Failed to retrieve documents" });
+    }
+});
+
+/**
+ * GET /bloodrequests/:id/documents/:documentId/file
+ * Secure reviewer / admin file download stream.
+ */
+router.get("/:id/documents/:documentId/file", authenticate, async (req: Request, res: Response) => {
+    try {
+        const user = (req as any).user;
+        const targetId = (Array.isArray(req.params.id) ? req.params.id[0] : req.params.id) as string;
+        const documentId = (Array.isArray(req.params.documentId) ? req.params.documentId[0] : req.params.documentId) as string;
+
+        if (!targetId || !UUID_REGEX.test(targetId) || !documentId || !UUID_REGEX.test(documentId)) {
+            return res.status(404).json({ success: false, message: "Blood request or document not found" });
+        }
+
+        const bloodRequest = await prisma.bloodrequests.findUnique({
+            where: { requestid: targetId },
+            select: {
+                requestid: true,
+                hospitalid: true,
+                requesterid: true,
+                createdbyuserid: true,
+            },
+        });
+
+        if (!bloodRequest) {
+            return res.status(404).json({ success: false, message: "Blood request not found" });
+        }
+
+        let isAuthorized = user.role === "ADMIN" || bloodRequest.createdbyuserid === user.userid;
+        if (!isAuthorized && user.role === "HOSPITAL") {
+            const hosp = await prisma.hospitals.findUnique({ where: { userid: user.userid } });
+            if (hosp && hosp.hospitalid === bloodRequest.hospitalid) {
+                isAuthorized = true;
+            }
+        }
+        if (!isAuthorized && user.role === "BLOOD_BANK") {
+            const bb = await prisma.bloodbanks.findUnique({ where: { userid: user.userid } });
+            if (bb) {
+                const assignment = await prisma.requisitionassignments.findFirst({
+                    where: { requestid: targetId, bloodbankid: bb.bloodbankid },
+                });
+                if (assignment) isAuthorized = true;
+            }
+        }
+
+        if (!isAuthorized) {
+            return res.status(403).json({ success: false, message: "Forbidden: Not authorized to download document" });
+        }
+
+        const doc = await prisma.requestdocuments.findFirst({
+            where: { documentid: documentId, requestid: targetId },
+        });
+
+        if (!doc || !fs.existsSync(doc.filepath)) {
+            return res.status(404).json({ success: false, message: "Document file not found on storage" });
+        }
+
+        res.setHeader("Content-Type", doc.mimetype);
+        res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(doc.originalfilename)}"`);
+        return res.sendFile(path.resolve(doc.filepath));
+    } catch (error: any) {
+        console.error("Error streaming document:", error);
+        return res.status(500).json({ success: false, message: "Failed to download document" });
+    }
+});
+
+/**
+ * GET /bloodrequests/:id/verification-report
+ * Reviewer / Admin endpoint: view aggregated AI verification report for a request.
+ */
+router.get("/:id/verification-report", authenticate, async (req: Request, res: Response) => {
+    try {
+        const user = (req as any).user;
+        const targetId = (Array.isArray(req.params.id) ? req.params.id[0] : req.params.id) as string;
+
+        if (!targetId || !UUID_REGEX.test(targetId)) {
+            return res.status(404).json({ success: false, message: "Blood request not found" });
+        }
+
+        const bloodRequest = await prisma.bloodrequests.findUnique({
+            where: { requestid: targetId },
+            select: {
+                requestid: true,
+                hospitalid: true,
+                requesterid: true,
+                createdbyuserid: true,
+            },
+        });
+
+        if (!bloodRequest) {
+            return res.status(404).json({ success: false, message: "Blood request not found" });
+        }
+
+        // Authorization check: Admin, Creator, Owning Hospital, or Assigned Blood Bank
+        let isAuthorized = user.role === "ADMIN" || bloodRequest.createdbyuserid === user.userid;
+        if (!isAuthorized && user.role === "HOSPITAL") {
+            const hosp = await prisma.hospitals.findUnique({ where: { userid: user.userid } });
+            if (hosp && hosp.hospitalid === bloodRequest.hospitalid) {
+                isAuthorized = true;
+            }
+        }
+        if (!isAuthorized && user.role === "BLOOD_BANK") {
+            const bb = await prisma.bloodbanks.findUnique({ where: { userid: user.userid } });
+            if (bb) {
+                const assignment = await prisma.requisitionassignments.findFirst({
+                    where: { requestid: targetId, bloodbankid: bb.bloodbankid },
+                });
+                if (assignment) isAuthorized = true;
+            }
+        }
+
+        if (!isAuthorized) {
+            return res.status(403).json({ success: false, message: "Forbidden: Not authorized to view verification report" });
+        }
+
+        const report = await DocumentVerificationService.getRequestVerificationReport(targetId);
+        return res.status(200).json({ success: true, ...report });
+    } catch (error: any) {
+        console.error("Error retrieving verification report:", error);
+        return res.status(500).json({ success: false, message: error.message || "Failed to retrieve verification report" });
+    }
+});
+
+/**
+ * POST /bloodrequests/:id/documents/:documentId/review-decision
+ * Authorized Reviewer Decision Endpoint:
+ * - Records official human reviewer decision (VERIFIED_MANUAL, CORRECTION_REQUIRED, ADDITIONAL_INFO_REQUIRED, ESCALATED).
+ * - Creates an immutable audit record in documentreviewaudit.
+ */
+router.post("/:id/documents/:documentId/review-decision", authenticate, async (req: Request, res: Response) => {
+    try {
+        const user = (req as any).user;
+        const targetId = (Array.isArray(req.params.id) ? req.params.id[0] : req.params.id) as string;
+        const documentId = (Array.isArray(req.params.documentId) ? req.params.documentId[0] : req.params.documentId) as string;
+
+        if (!targetId || !UUID_REGEX.test(targetId) || !documentId || !UUID_REGEX.test(documentId)) {
+            return res.status(400).json({ success: false, message: "Invalid UUID format" });
+        }
+
+        const bloodRequest = await prisma.bloodrequests.findUnique({
+            where: { requestid: targetId },
+            select: { requestid: true, hospitalid: true },
+        });
+
+        if (!bloodRequest) {
+            return res.status(404).json({ success: false, message: "Blood request not found" });
+        }
+
+        // Strict Reviewer Authorization Gate:
+        // Only verified clinical reviewers:
+        // - System ADMIN
+        // - Owning HOSPITAL (with APPROVED status)
+        // - Assigned BLOOD_BANK (with active, non-cancelled/non-rejected assignment)
+        let isAuthorizedReviewer = user.role === "ADMIN";
+        if (!isAuthorizedReviewer && user.role === "BLOOD_BANK") {
+            const bb = await prisma.bloodbanks.findUnique({ where: { userid: user.userid } });
+            if (bb) {
+                const assignment = await prisma.requisitionassignments.findFirst({
+                    where: {
+                        requestid: targetId,
+                        bloodbankid: bb.bloodbankid,
+                        assignmentstatus: { in: ["PENDING_ACCEPTANCE", "ACCEPTED"] },
+                    },
+                });
+                if (assignment) isAuthorizedReviewer = true;
+            }
+        }
+        if (!isAuthorizedReviewer && user.role === "HOSPITAL") {
+            const hosp = await prisma.hospitals.findUnique({ where: { userid: user.userid } });
+            if (
+                hosp &&
+                hosp.hospitalid === bloodRequest.hospitalid &&
+                hosp.approvalstatus === "APPROVED"
+            ) {
+                isAuthorizedReviewer = true;
+            }
+        }
+
+        if (!isAuthorizedReviewer) {
+            return res.status(403).json({
+                success: false,
+                message: "Forbidden: You are not authorized to record verification decisions on this requisition",
+            });
+        }
+
+        const { decision, remarks } = req.body;
+        const validDecisions = ["VERIFIED_MANUAL", "CORRECTION_REQUIRED", "ADDITIONAL_INFO_REQUIRED", "ESCALATED"];
+        if (!decision || !validDecisions.includes(decision)) {
+            return res.status(400).json({
+                success: false,
+                message: `Invalid decision. Allowed decisions: ${validDecisions.join(", ")}`,
+            });
+        }
+
+        if ((decision === "CORRECTION_REQUIRED" || decision === "ESCALATED") && (!remarks || !String(remarks).trim())) {
+            return res.status(400).json({
+                success: false,
+                message: "Remarks / explanation are mandatory when requesting correction or escalating",
+            });
+        }
+
+        // Find the current active verification record
+        const ver = await prisma.documentverifications.findFirst({
+            where: { documentid: documentId, requestid: targetId, iscurrentversion: true },
+            orderBy: { createdat: "desc" },
+        });
+
+        if (!ver) {
+            return res.status(404).json({
+                success: false,
+                message: "No active verification record found for this document to review",
+            });
+        }
+
+        const updated = await DocumentVerificationService.recordReviewerDecision({
+            verificationId: ver.verificationid,
+            reviewerUserId: user.userid,
+            reviewerRole: user.role,
+            decision,
+            remarks,
+        });
+
+        return res.status(200).json({
+            success: true,
+            message: "Reviewer decision and audit record successfully registered",
+            verification: updated,
+        });
+    } catch (error: any) {
+        console.error("Error recording reviewer decision:", error);
+        const status = error.statusCode || 500;
+        return res.status(status).json({ success: false, message: error.message || "Failed to record reviewer decision" });
     }
 });
 

@@ -21,6 +21,11 @@ import {
   X,
   ShieldCheck,
   Building2,
+  UploadCloud,
+  FileCheck,
+  Trash2,
+  Paperclip,
+  Bookmark,
 } from "lucide-react";
 import { api, CreateBloodRequestDto } from "@/lib/api";
 import { AuthHospital } from "@/lib/auth";
@@ -150,7 +155,63 @@ export default function HospitalNewBloodRequestPage() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [showReviewModal, setShowReviewModal] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSavingDraft, setIsSavingDraft] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  // Document Checklist & Validation State
+  interface AttachedDoc {
+    file: File;
+    error?: string;
+  }
+  const [attachedDocs, setAttachedDocs] = useState<Record<string, AttachedDoc>>({});
+  const [documentRequirements, setDocumentRequirements] = useState<
+    Array<{ documentType: string; documentName: string; isMandatory: boolean; description: string }>
+  >([
+    {
+      documentType: "PRESCRIPTION",
+      documentName: "Clinical Prescription & Medical Order",
+      isMandatory: true,
+      description: "Official prescription or clinical transfusion order issued by the treating physician.",
+    },
+    {
+      documentType: "DIAGNOSTIC_REPORT",
+      documentName: "Diagnostic Blood Test / Crossmatch Report",
+      isMandatory: false,
+      description: "Recent blood grouping, antibody screen, or crossmatch laboratory analysis.",
+    },
+    {
+      documentType: "CONSENT_FORM",
+      documentName: "Patient / Attendant Transfusion Consent",
+      isMandatory: false,
+      description: "Informed consent signed by the patient or authorized family representative.",
+    },
+  ]);
+
+  // Fetch configured requirements from backend
+  useEffect(() => {
+    async function loadRequirements() {
+      try {
+        const res = await api.hospital.getDocumentRequirements(urgencyLevel, isEmergency);
+        if (res.success && res.requirements && res.requirements.length > 0) {
+          setDocumentRequirements(res.requirements);
+        }
+      } catch {
+        // Fallback to initial defaults
+      }
+    }
+    loadRequirements();
+  }, [urgencyLevel, isEmergency]);
+
+  // Derived Document Completeness
+  const mandatoryRequirements = documentRequirements.filter((r) => r.isMandatory);
+  const mandatoryUploadedCount = mandatoryRequirements.filter(
+    (r) => attachedDocs[r.documentType]?.file && !attachedDocs[r.documentType]?.error
+  ).length;
+  const isDocumentComplete = mandatoryUploadedCount === mandatoryRequirements.length;
+  const completionPercentage =
+    mandatoryRequirements.length === 0
+      ? 100
+      : Math.round((mandatoryUploadedCount / mandatoryRequirements.length) * 100);
 
   // Fetch hospital profile to confirm identity
   useEffect(() => {
@@ -246,9 +307,124 @@ export default function HospitalNewBloodRequestPage() {
     return Object.keys(errs).length === 0;
   };
 
+  const handleFileSelect = (documentType: string, file: File | null) => {
+    if (!file) return;
+
+    if (file.size > 5 * 1024 * 1024) {
+      setAttachedDocs((prev) => ({
+        ...prev,
+        [documentType]: {
+          file,
+          error: `File size exceeds the 5 MB limit (${(file.size / (1024 * 1024)).toFixed(2)} MB).`,
+        },
+      }));
+      return;
+    }
+
+    const ext = "." + file.name.split(".").pop()?.toLowerCase();
+    const allowed = [".pdf", ".jpg", ".jpeg", ".png"];
+    if (!allowed.includes(ext)) {
+      setAttachedDocs((prev) => ({
+        ...prev,
+        [documentType]: {
+          file,
+          error: `Invalid file format "${ext}". Allowed formats are: PDF, JPG, PNG.`,
+        },
+      }));
+      return;
+    }
+
+    setAttachedDocs((prev) => ({
+      ...prev,
+      [documentType]: { file },
+    }));
+  };
+
+  const handleFileRemove = (documentType: string) => {
+    setAttachedDocs((prev) => {
+      const copy = { ...prev };
+      delete copy[documentType];
+      return copy;
+    });
+  };
+
+  const handleSaveDraft = async () => {
+    if (isSavingDraft || isSubmitting) return;
+
+    if (!patientName.trim()) {
+      setErrors((prev) => ({ ...prev, patientName: "Patient name is required to save a draft" }));
+      const el = document.getElementById("patientName");
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+
+    try {
+      setIsSavingDraft(true);
+      setSubmitError(null);
+
+      const requiredDateTime = new Date(`${requiredByDate}T${requiredByTime}:00`);
+
+      const notesParts: string[] = [];
+      if (hospital?.hospitalname) {
+        notesParts.push(`Hospital Facility: ${hospital.hospitalname} (${hospital.city || "Direct Entry"})`);
+      }
+      if (wardRoom.trim()) {
+        notesParts.push(`Ward / Room / Bed: ${wardRoom.trim()}`);
+      }
+      if (attendingDoctor.trim()) {
+        notesParts.push(`Attending Doctor: ${attendingDoctor.trim()}`);
+      }
+      if (clinicalNotes.trim()) {
+        notesParts.push(`Clinical Instructions: ${clinicalNotes.trim()}`);
+      }
+
+      const finalNotes = notesParts.join(" | ");
+
+      const payload: CreateBloodRequestDto = {
+        patientname: patientName.trim(),
+        patientage: parseInt(patientAge, 10) || 30,
+        patientgender: patientGender || "OTHER",
+        patientcontact: patientContact.trim() || hospital?.contactpersonphone || "9999999999",
+        bloodgroup: bloodGroup || "O_POSITIVE",
+        bloodcomponent: bloodComponent,
+        unitsrequired: unitsRequired,
+        urgencylevel: urgencyLevel,
+        isemergency: isEmergency,
+        searchradius: searchRadius,
+        requiredby: isNaN(requiredDateTime.getTime()) ? new Date(Date.now() + 86400000).toISOString() : requiredDateTime.toISOString(),
+        notes: finalNotes || undefined,
+        isDraft: true,
+      };
+
+      const res = await api.hospital.createBloodRequest(payload);
+
+      if (res && res.requestid) {
+        for (const [docType, docItem] of Object.entries(attachedDocs)) {
+          if (docItem.file && !docItem.error) {
+            await api.hospital.uploadRequestDocument(res.requestid, docType, docItem.file);
+          }
+        }
+        router.push(`/hospital/requests/${res.requestid}`);
+      } else {
+        throw new Error("Failed to save draft requisition");
+      }
+    } catch (err: any) {
+      setSubmitError(err?.message || "Failed to save draft requisition.");
+    } finally {
+      setIsSavingDraft(false);
+    }
+  };
+
   const handleReview = (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitError(null);
+    if (!isDocumentComplete) {
+      setSubmitError("Cannot proceed: All mandatory supporting documents must be attached before final review.");
+      const el = document.getElementById("section-documents");
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+
     if (validate()) {
       setShowReviewModal(true);
     } else {
@@ -266,6 +442,14 @@ export default function HospitalNewBloodRequestPage() {
     try {
       setIsSubmitting(true);
       setSubmitError(null);
+
+      if (!isDocumentComplete) {
+        setSubmitError("Cannot submit blood request: Mandatory supporting documents are missing.");
+        setShowReviewModal(false);
+        const el = document.getElementById("section-documents");
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+        return;
+      }
 
       const requiredDateTime = new Date(`${requiredByDate}T${requiredByTime}:00`);
 
@@ -299,15 +483,27 @@ export default function HospitalNewBloodRequestPage() {
         searchradius: searchRadius,
         requiredby: requiredDateTime.toISOString(),
         notes: finalNotes || undefined,
+        isDraft: true,
       };
 
+      // 1. Create initial draft
       const res = await api.hospital.createBloodRequest(payload);
 
-      if (res && res.requestid) {
-        router.push(`/hospital/requests/${res.requestid}`);
-      } else {
+      if (!res || !res.requestid) {
         throw new Error("Invalid response received from blood request service");
       }
+
+      // 2. Upload attached documents
+      for (const [docType, docItem] of Object.entries(attachedDocs)) {
+        if (docItem.file && !docItem.error) {
+          await api.hospital.uploadRequestDocument(res.requestid, docType, docItem.file);
+        }
+      }
+
+      // 3. Finalize and submit draft (backend re-verifies 100% completeness)
+      await api.hospital.submitDraftRequest(res.requestid);
+
+      router.push(`/hospital/requests/${res.requestid}`);
     } catch (err: any) {
       setSubmitError(err?.message || "Failed to create blood request. Please check inputs and try again.");
       setShowReviewModal(false);
@@ -935,6 +1131,157 @@ export default function HospitalNewBloodRequestPage() {
           </div>
         </section>
 
+        {/* SECTION 5: Supporting Clinical Documents */}
+        <section
+          id="section-documents"
+          className="bg-white rounded-2xl border border-[#F3E9D1] shadow-2xs p-5 space-y-4"
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-[#F3E9D1]/70 gap-2">
+            <div className="flex items-center gap-2.5">
+              <span className="w-7 h-7 rounded-lg bg-[#317786]/10 text-[#317786] flex items-center justify-center font-bold text-xs shrink-0">
+                5
+              </span>
+              <div>
+                <h2 className="font-serif text-base font-bold text-[#053845]">
+                  Supporting Clinical Documents
+                </h2>
+                <p className="text-[11px] text-slate-500">
+                  Ensure all mandatory clinical orders are attached prior to final submission.
+                </p>
+              </div>
+            </div>
+
+            {/* Progress Badge */}
+            <div className="flex items-center gap-2">
+              <div className="text-right">
+                <span className="text-[11px] font-semibold text-[#053845]">
+                  {mandatoryUploadedCount} of {mandatoryRequirements.length} Mandatory Attached
+                </span>
+                <span className="text-[11px] text-slate-500 block">
+                  ({completionPercentage}% complete)
+                </span>
+              </div>
+              <div className="w-16 h-2 rounded-full bg-slate-100 overflow-hidden border border-[#F3E9D1]">
+                <div
+                  className={`h-full transition-all duration-300 ${
+                    isDocumentComplete ? "bg-emerald-600" : "bg-[#317786]"
+                  }`}
+                  style={{ width: `${completionPercentage}%` }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Checklist Items */}
+          <div className="space-y-3">
+            {documentRequirements.map((req) => {
+              const docItem = attachedDocs[req.documentType];
+              const isUploaded = Boolean(docItem?.file && !docItem?.error);
+
+              return (
+                <div
+                  key={req.documentType}
+                  className={`p-4 rounded-xl border transition-colors ${
+                    isUploaded
+                      ? "bg-emerald-50/40 border-emerald-200"
+                      : req.isMandatory
+                      ? "bg-amber-50/30 border-amber-200/80"
+                      : "bg-[#FAF6EE]/40 border-[#F3E9D1]"
+                  }`}
+                >
+                  <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                    <div className="space-y-1 min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold text-xs sm:text-sm text-[#053845]">
+                          {req.documentName}
+                        </span>
+                        {req.isMandatory ? (
+                          <span className="text-[10px] px-2 py-0.5 rounded-md font-bold uppercase tracking-wider bg-[#A2363A]/10 text-[#A2363A] border border-[#A2363A]/20">
+                            Mandatory
+                          </span>
+                        ) : (
+                          <span className="text-[10px] px-2 py-0.5 rounded-md font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                            Optional
+                          </span>
+                        )}
+                        {isUploaded ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-100/70 px-2 py-0.5 rounded-md">
+                            <FileCheck className="w-3.5 h-3.5" />
+                            Ready
+                          </span>
+                        ) : req.isMandatory ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 bg-amber-100/60 px-2 py-0.5 rounded-md">
+                            <AlertCircle className="w-3.5 h-3.5" />
+                            Missing
+                          </span>
+                        ) : null}
+                      </div>
+
+                      <p className="text-xs text-slate-500">{req.description}</p>
+
+                      {/* Display attached file info */}
+                      {docItem?.file && (
+                        <div className="mt-2 pt-2 border-t border-slate-200/60 flex items-center justify-between text-xs text-slate-600">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <Paperclip className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                            <span className="font-medium truncate max-w-[240px]">
+                              {docItem.file.name}
+                            </span>
+                            <span className="text-slate-400 text-[11px] shrink-0">
+                              ({(docItem.file.size / 1024).toFixed(0)} KB)
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleFileRemove(req.documentType)}
+                            className="text-slate-400 hover:text-[#A2363A] transition-colors p-1"
+                            title="Remove attached file"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Display error message if invalid */}
+                      {docItem?.error && (
+                        <p className="text-xs text-[#A2363A] font-medium flex items-center gap-1 pt-1">
+                          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                          <span>{docItem.error}</span>
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Upload / Replace Action Trigger */}
+                    <div className="shrink-0 self-end sm:self-center">
+                      <label className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-white border border-[#F3E9D1] text-[#053845] hover:bg-[#FAF6EE] hover:border-[#317786] transition-colors cursor-pointer shadow-2xs">
+                        <UploadCloud className="w-4 h-4 text-[#317786]" />
+                        <span>{isUploaded ? "Replace File" : "Choose File"}</span>
+                        <input
+                          type="file"
+                          accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0] || null;
+                            handleFileSelect(req.documentType, file);
+                            e.target.value = "";
+                          }}
+                        />
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="p-3 rounded-xl bg-[#FAF6EE] border border-[#F3E9D1] text-xs text-slate-600 flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 text-[#317786] shrink-0" />
+            <span>
+              Accepted file formats: PDF, JPEG, PNG (maximum 5 MB per document). Files are stored in secure private storage.
+            </span>
+          </div>
+        </section>
+
         {/* Form Actions Footer */}
         <div className="bg-white rounded-2xl border border-[#F3E9D1] p-4 shadow-2xs flex flex-col sm:flex-row items-center justify-between gap-3">
           <Link
@@ -944,13 +1291,39 @@ export default function HospitalNewBloodRequestPage() {
             Cancel
           </Link>
 
-          <button
-            type="submit"
-            className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-[#053845] hover:bg-[#317786] text-white text-xs sm:text-sm font-semibold shadow-2xs transition-colors flex items-center justify-center gap-2 cursor-pointer"
-          >
-            <span>Review Request</span>
-            <ArrowRight className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-2.5 w-full sm:w-auto justify-end">
+            <button
+              type="button"
+              onClick={handleSaveDraft}
+              disabled={isSavingDraft || isSubmitting}
+              className="w-full sm:w-auto px-4 py-2.5 rounded-xl border border-[#F3E9D1] bg-white hover:bg-[#FAF6EE] text-slate-700 text-xs sm:text-sm font-semibold transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+            >
+              {isSavingDraft ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin text-[#317786]" />
+                  <span>Saving Draft...</span>
+                </>
+              ) : (
+                <>
+                  <Bookmark className="w-4 h-4 text-[#317786]" />
+                  <span>Save as Draft</span>
+                </>
+              )}
+            </button>
+
+            <button
+              type="submit"
+              disabled={isSavingDraft || isSubmitting}
+              className={`w-full sm:w-auto px-6 py-2.5 rounded-xl text-xs sm:text-sm font-semibold shadow-2xs transition-colors flex items-center justify-center gap-2 cursor-pointer ${
+                isDocumentComplete
+                  ? "bg-[#053845] hover:bg-[#317786] text-white"
+                  : "bg-slate-200 text-slate-400 hover:bg-slate-200"
+              }`}
+            >
+              <span>Review Request</span>
+              <ArrowRight className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       </form>
 
@@ -1062,10 +1435,18 @@ export default function HospitalNewBloodRequestPage() {
                     </span>
                   </div>
 
-                  <div className="flex items-baseline justify-between py-1.5 sm:col-span-2">
+                  <div className="flex items-baseline justify-between py-1.5 sm:col-span-2 border-b border-[#F3E9D1]/70">
                     <span className="text-slate-500">Donor Search Radius</span>
                     <span className="font-medium text-slate-700 text-right">
                       {searchRadius} km radius
+                    </span>
+                  </div>
+
+                  <div className="flex items-baseline justify-between py-1.5 sm:col-span-2">
+                    <span className="text-slate-500">Supporting Documents</span>
+                    <span className="font-semibold text-emerald-700 text-right flex items-center gap-1">
+                      <FileCheck className="w-3.5 h-3.5" />
+                      {mandatoryUploadedCount} mandatory document(s) verified (100% complete)
                     </span>
                   </div>
                 </div>

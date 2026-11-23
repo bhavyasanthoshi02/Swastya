@@ -13,6 +13,7 @@ import notificationRoutes from "./routes/notification.routes";
 import surgeryPlannerRoutes from "./routes/surgeryPlanner.routes";
 import campRoutes from "./routes/camp.routes";
 import campPublicRoutes from "./routes/campPublic.routes";
+import equipmentRoutes from "./routes/equipment.routes";
 
 const app = express();
 app.disable("x-powered-by");
@@ -201,6 +202,8 @@ app.use("/hospitals", hospitalRoutes);
 app.use("/bloodbanks/me/camps", campRoutes);
 app.use("/bloodbanks", bloodbankRoutes);
 app.use("/camps", campPublicRoutes);
+app.use("/equipment", equipmentRoutes);
+app.use("/bloodbanks/equipment", equipmentRoutes);
 app.use("/bloodrequests", (req: Request, res: Response, next: NextFunction) => {
     if (req.method === "POST") {
         return uploadRateLimiter(req, res, next);

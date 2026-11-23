@@ -143,7 +143,7 @@ export class BloodDemandForecastService {
                     createdat: { gte: startDate },
                     ...(bloodGroup ? { bloodgroup: bloodGroup } : {}),
                     ...(bloodComponent ? { bloodcomponent: bloodComponent } : {}),
-                    status: { notIn: ["CANCELLED"] },
+                    status: { notIn: ["CANCELLED", "DRAFT"] },
                 },
                 select: {
                     requestid: true,

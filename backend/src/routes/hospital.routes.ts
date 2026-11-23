@@ -1,4 +1,6 @@
 import { Router, Request, Response } from "express";
+import path from "path";
+import fs from "fs";
 import jwt from "jsonwebtoken";
 import multer from "multer";
 import { prisma } from "../config/prisma";
@@ -10,6 +12,8 @@ import { approval_status, blood_group, blood_component, notification_type, verif
 import { DonorImportService, normalizeBloodGroup } from "../services/donorImport.service";
 import { BloodDemandForecastService } from "../services/bloodDemandForecast.service";
 import { RegionalAiInsightsService } from "../services/regionalAiInsights.service";
+import { RequestDocumentService } from "../services/requestDocument.service";
+import { DocumentVerificationService } from "../services/documentVerification.service";
 import { validateCoordinates } from "../utils/distance";
 
 const router = Router();
@@ -840,6 +844,9 @@ async function createHospitalBloodRequestCore(hospital: any, user: any, body: an
             );
         }
 
+        const isDraft = Boolean(body.isDraft || body.saveAsDraft);
+        const initialStatus = isDraft ? "DRAFT" : "CREATED";
+
         const created = await tx.bloodrequests.create({
             data: {
                 createdbyuserid: user.userid,
@@ -862,7 +869,8 @@ async function createHospitalBloodRequestCore(hospital: any, user: any, body: an
                 longitude: requestLongitude,
 
                 requiredby: requiredDate,
-                status: "CREATED",
+                status: initialStatus as any,
+                isdraft: isDraft,
                 notes,
             },
             include: {
@@ -908,9 +916,11 @@ async function createHospitalBloodRequestCore(hospital: any, user: any, body: an
             data: {
                 requestid: created.requestid,
                 oldstatus: null,
-                newstatus: "CREATED",
+                newstatus: initialStatus as any,
                 changedbyuserid: user.userid,
-                remarks: `Blood requisition created directly by hospital ${hospital.hospitalname}`,
+                remarks: isDraft
+                    ? `Blood requisition saved as DRAFT by hospital ${hospital.hospitalname}`
+                    : `Blood requisition created directly by hospital ${hospital.hospitalname}`,
             },
         });
 
@@ -919,8 +929,10 @@ async function createHospitalBloodRequestCore(hospital: any, user: any, body: an
                 userid: user.userid,
                 requestid: created.requestid,
                 type: notification_type.REQUEST,
-                title: "Hospital Blood Requisition Created",
-                message: `Requisition (${created.bloodgroup}, ${created.unitsrequired} unit(s)) successfully registered at ${hospital.hospitalname}.`,
+                title: isDraft ? "Hospital Blood Requisition Saved as Draft" : "Hospital Blood Requisition Created",
+                message: isDraft
+                    ? `Requisition (${created.bloodgroup}, ${created.unitsrequired} unit(s)) saved as DRAFT. Supporting documents can be uploaded before final submission.`
+                    : `Requisition (${created.bloodgroup}, ${created.unitsrequired} unit(s)) successfully registered at ${hospital.hospitalname}.`,
                 isread: false,
             },
         });
@@ -967,6 +979,459 @@ router.post("/me/bloodrequests", authenticate, authorize("HOSPITAL", "ADMIN"), r
         return res.status(500).json({
             success: false,
             message: "Failed to create blood request",
+        });
+    }
+});
+
+/*
+ * GET DOCUMENT CHECKLIST REQUIREMENTS FOR A BLOOD REQUISITION
+ * GET /hospitals/me/requests/document-requirements
+ */
+router.get("/me/requests/document-requirements", authenticate, authorize("HOSPITAL", "ADMIN"), async (req: Request, res: Response) => {
+    try {
+        const urgency = req.query.urgency as string | undefined;
+        const isEmergency = req.query.isEmergency === "true";
+        const requirements = RequestDocumentService.getDocumentRequirements(urgency, isEmergency);
+        return res.status(200).json({ success: true, requirements });
+    } catch (error: any) {
+        console.error("Error fetching document requirements:", error);
+        return res.status(500).json({ success: false, message: "Failed to fetch document requirements" });
+    }
+});
+
+/*
+ * GET DOCUMENT CHECKLIST & COMPLETENESS STATUS FOR A REQUISITION
+ * GET /hospitals/me/requests/:requestId/documents
+ */
+router.get("/me/requests/:requestId/documents", authenticate, authorize("HOSPITAL", "ADMIN"), requireApprovedHospital, async (req: Request, res: Response) => {
+    try {
+        const user = (req as any).user;
+        const requestId = req.params.requestId as string;
+        if (!UUID_REGEX.test(requestId)) {
+            return res.status(400).json({ success: false, message: "Invalid requestId format" });
+        }
+
+        const hospital = await prisma.hospitals.findUnique({ where: { userid: user.userid } });
+        const request = await prisma.bloodrequests.findUnique({
+            where: { requestid: requestId },
+            select: { hospitalid: true, requestid: true, status: true, isdraft: true },
+        });
+
+        if (!request) {
+            return res.status(404).json({ success: false, message: "Blood request not found" });
+        }
+
+        if (user.role !== "ADMIN" && request.hospitalid !== hospital?.hospitalid) {
+            return res.status(403).json({ success: false, message: "Access denied to this blood request" });
+        }
+
+        const completeness = await RequestDocumentService.calculateDocumentCompleteness(requestId);
+        return res.status(200).json({
+            success: true,
+            ...completeness,
+            status: request.status,
+            isdraft: request.isdraft,
+        });
+    } catch (error: any) {
+        console.error("Error fetching request documents:", error);
+        const status = error.statusCode || 500;
+        return res.status(status).json({ success: false, message: error.message || "Failed to fetch document completeness" });
+    }
+});
+
+/*
+ * UPLOAD OR REPLACE A SUPPORTING DOCUMENT
+ * POST /hospitals/me/requests/:requestId/documents
+ */
+router.post("/me/requests/:requestId/documents", authenticate, authorize("HOSPITAL", "ADMIN"), requireApprovedHospital, (req: Request, res: Response) => {
+    upload.single("document")(req, res, async (err: any) => {
+        if (err) {
+            if (err.code === "LIMIT_FILE_SIZE") {
+                return res.status(400).json({
+                    success: false,
+                    message: "File size exceeds the 5 MB limit (maximum 5 MB allowed)",
+                });
+            }
+            return res.status(400).json({
+                success: false,
+                message: err.message || "File upload processing failed",
+            });
+        }
+
+        try {
+            const user = (req as any).user;
+            const requestId = req.params.requestId as string;
+            if (!UUID_REGEX.test(requestId)) {
+                return res.status(400).json({ success: false, message: "Invalid requestId format" });
+            }
+
+            const hospital = await prisma.hospitals.findUnique({ where: { userid: user.userid } });
+            const request = await prisma.bloodrequests.findUnique({
+                where: { requestid: requestId },
+                select: { hospitalid: true, requestid: true },
+            });
+
+            if (!request) {
+                return res.status(404).json({ success: false, message: "Blood request not found" });
+            }
+
+            if (user.role !== "ADMIN" && request.hospitalid !== hospital?.hospitalid) {
+                return res.status(403).json({
+                    success: false,
+                    message: "Access denied: cannot upload documents for another hospital's request",
+                });
+            }
+
+            if (!req.file) {
+                return res.status(400).json({ success: false, message: "Document file is required" });
+            }
+
+            const documentType = req.body.documentType;
+            if (!documentType || typeof documentType !== "string") {
+                return res.status(400).json({ success: false, message: "documentType is required" });
+            }
+
+            const record = await RequestDocumentService.uploadOrReplaceDocument({
+                requestId,
+                documentType,
+                fileBuffer: req.file.buffer,
+                originalFileName: req.file.originalname,
+                declaredMimeType: req.file.mimetype,
+                userId: user.userid,
+            });
+
+            const completeness = await RequestDocumentService.calculateDocumentCompleteness(requestId);
+
+            return res.status(200).json({
+                success: true,
+                message: "Document uploaded successfully",
+                document: {
+                    documentid: record.documentid,
+                    documenttype: record.documenttype,
+                    documentname: record.documentname,
+                    originalfilename: record.originalfilename,
+                    filesize: record.filesize,
+                    mimetype: record.mimetype,
+                    uploadedat: record.uploadedat,
+                },
+                completeness,
+            });
+        } catch (error: any) {
+            console.error("Error uploading request document:", error);
+            const status = error.statusCode || 500;
+            return res.status(status).json({
+                success: false,
+                message: error.message || "Failed to upload document",
+            });
+        }
+    });
+});
+
+/*
+ * DELETE A SUPPORTING DOCUMENT
+ * DELETE /hospitals/me/requests/:requestId/documents/:documentId
+ */
+router.delete("/me/requests/:requestId/documents/:documentId", authenticate, authorize("HOSPITAL", "ADMIN"), requireApprovedHospital, async (req: Request, res: Response) => {
+    try {
+        const user = (req as any).user;
+        const requestId = (Array.isArray(req.params.requestId) ? req.params.requestId[0] : req.params.requestId) as string;
+        const documentId = (Array.isArray(req.params.documentId) ? req.params.documentId[0] : req.params.documentId) as string;
+        if (!requestId || !documentId || !UUID_REGEX.test(requestId) || !UUID_REGEX.test(documentId)) {
+            return res.status(400).json({ success: false, message: "Invalid UUID format" });
+        }
+
+        const hospital = await prisma.hospitals.findUnique({ where: { userid: user.userid } });
+        const request = await prisma.bloodrequests.findUnique({
+            where: { requestid: requestId },
+            select: { hospitalid: true },
+        });
+
+        if (!request) {
+            return res.status(404).json({ success: false, message: "Blood request not found" });
+        }
+
+        if (user.role !== "ADMIN" && request.hospitalid !== hospital?.hospitalid) {
+            return res.status(403).json({ success: false, message: "Access denied" });
+        }
+
+        await RequestDocumentService.deleteDocument({ requestId, documentId });
+        const completeness = await RequestDocumentService.calculateDocumentCompleteness(requestId);
+
+        return res.status(200).json({
+            success: true,
+            message: "Document deleted successfully",
+            completeness,
+        });
+    } catch (error: any) {
+        console.error("Error deleting request document:", error);
+        const status = error.statusCode || 500;
+        return res.status(status).json({
+            success: false,
+            message: error.message || "Failed to delete document",
+        });
+    }
+});
+
+/*
+ * SECURE STREAMING DOWNLOAD OF A SUPPORTING DOCUMENT
+ * GET /hospitals/me/requests/:requestId/documents/:documentId/file
+ */
+router.get("/me/requests/:requestId/documents/:documentId/file", authenticate, authorize("HOSPITAL", "ADMIN"), requireApprovedHospital, async (req: Request, res: Response) => {
+    try {
+        const user = (req as any).user;
+        const requestId = (Array.isArray(req.params.requestId) ? req.params.requestId[0] : req.params.requestId) as string;
+        const documentId = (Array.isArray(req.params.documentId) ? req.params.documentId[0] : req.params.documentId) as string;
+        if (!requestId || !documentId || !UUID_REGEX.test(requestId) || !UUID_REGEX.test(documentId)) {
+            return res.status(400).json({ success: false, message: "Invalid UUID format" });
+        }
+
+        const hospital = await prisma.hospitals.findUnique({ where: { userid: user.userid } });
+        const request = await prisma.bloodrequests.findUnique({
+            where: { requestid: requestId },
+            select: { hospitalid: true },
+        });
+
+        if (!request) {
+            return res.status(404).json({ success: false, message: "Blood request not found" });
+        }
+
+        if (user.role !== "ADMIN" && request.hospitalid !== hospital?.hospitalid) {
+            return res.status(403).json({ success: false, message: "Access denied to document" });
+        }
+
+        const doc = await prisma.requestdocuments.findFirst({
+            where: { documentid: documentId, requestid: requestId },
+        });
+
+        if (!doc || !fs.existsSync(doc.filepath)) {
+            return res.status(404).json({ success: false, message: "Document file not found on storage" });
+        }
+
+        res.setHeader("Content-Type", doc.mimetype);
+        res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(doc.originalfilename)}"`);
+        return res.sendFile(path.resolve(doc.filepath));
+    } catch (error: any) {
+        console.error("Error streaming document:", error);
+        return res.status(500).json({ success: false, message: "Failed to download document" });
+    }
+});
+
+/*
+ * TRIGGER AI DOCUMENT VERIFICATION
+ * POST /hospitals/me/requests/:requestId/documents/:documentId/verify
+ */
+router.post("/me/requests/:requestId/documents/:documentId/verify", authenticate, authorize("HOSPITAL", "ADMIN"), requireApprovedHospital, async (req: Request, res: Response) => {
+    try {
+        const user = (req as any).user;
+        const requestId = (Array.isArray(req.params.requestId) ? req.params.requestId[0] : req.params.requestId) as string;
+        const documentId = (Array.isArray(req.params.documentId) ? req.params.documentId[0] : req.params.documentId) as string;
+        if (!requestId || !documentId || !UUID_REGEX.test(requestId) || !UUID_REGEX.test(documentId)) {
+            return res.status(400).json({ success: false, message: "Invalid UUID format" });
+        }
+
+        const hospital = await prisma.hospitals.findUnique({ where: { userid: user.userid } });
+        const request = await prisma.bloodrequests.findUnique({
+            where: { requestid: requestId },
+            select: { hospitalid: true },
+        });
+
+        if (!request) {
+            return res.status(404).json({ success: false, message: "Blood request not found" });
+        }
+
+        if (user.role !== "ADMIN" && request.hospitalid !== hospital?.hospitalid) {
+            return res.status(403).json({ success: false, message: "Access denied: cannot verify another hospital's document" });
+        }
+
+        const report = await DocumentVerificationService.verifyDocument({ requestId, documentId });
+        return res.status(200).json({ success: true, report });
+    } catch (error: any) {
+        console.error("Error executing document verification:", error);
+        const status = error.statusCode || 500;
+        return res.status(status).json({ success: false, message: error.message || "Failed to verify document" });
+    }
+});
+
+/*
+ * GET LATEST VERIFICATION REPORT FOR A DOCUMENT
+ * GET /hospitals/me/requests/:requestId/documents/:documentId/verification
+ */
+router.get("/me/requests/:requestId/documents/:documentId/verification", authenticate, authorize("HOSPITAL", "ADMIN"), requireApprovedHospital, async (req: Request, res: Response) => {
+    try {
+        const user = (req as any).user;
+        const requestId = (Array.isArray(req.params.requestId) ? req.params.requestId[0] : req.params.requestId) as string;
+        const documentId = (Array.isArray(req.params.documentId) ? req.params.documentId[0] : req.params.documentId) as string;
+        if (!requestId || !documentId || !UUID_REGEX.test(requestId) || !UUID_REGEX.test(documentId)) {
+            return res.status(400).json({ success: false, message: "Invalid UUID format" });
+        }
+
+        const hospital = await prisma.hospitals.findUnique({ where: { userid: user.userid } });
+        const request = await prisma.bloodrequests.findUnique({
+            where: { requestid: requestId },
+            select: { hospitalid: true },
+        });
+
+        if (!request) {
+            return res.status(404).json({ success: false, message: "Blood request not found" });
+        }
+
+        if (user.role !== "ADMIN" && request.hospitalid !== hospital?.hospitalid) {
+            return res.status(403).json({ success: false, message: "Access denied" });
+        }
+
+        const ver = await prisma.documentverifications.findFirst({
+            where: { documentid: documentId, requestid: requestId, iscurrentversion: true },
+            orderBy: { createdat: "desc" },
+            include: {
+                reviewedby: { select: { userid: true, name: true, role: true } },
+                reviewaudits: {
+                    orderBy: { createdat: "desc" },
+                    include: { reviewer: { select: { name: true, role: true } } },
+                },
+            },
+        });
+
+        if (!ver) {
+            return res.status(404).json({ success: false, message: "No verification report found for this document" });
+        }
+
+        return res.status(200).json({ success: true, report: ver });
+    } catch (error: any) {
+        console.error("Error fetching verification report:", error);
+        return res.status(500).json({ success: false, message: error.message || "Failed to fetch verification report" });
+    }
+});
+
+/*
+ * GET AGGREGATED CROSS-DOCUMENT VERIFICATION REPORT FOR A REQUISITION
+ * GET /hospitals/me/requests/:requestId/verification-report
+ */
+router.get("/me/requests/:requestId/verification-report", authenticate, authorize("HOSPITAL", "ADMIN"), requireApprovedHospital, async (req: Request, res: Response) => {
+    try {
+        const user = (req as any).user;
+        const requestId = (Array.isArray(req.params.requestId) ? req.params.requestId[0] : req.params.requestId) as string;
+        if (!requestId || !UUID_REGEX.test(requestId)) {
+            return res.status(400).json({ success: false, message: "Invalid UUID format" });
+        }
+
+        const hospital = await prisma.hospitals.findUnique({ where: { userid: user.userid } });
+        const request = await prisma.bloodrequests.findUnique({
+            where: { requestid: requestId },
+            select: { hospitalid: true },
+        });
+
+        if (!request) {
+            return res.status(404).json({ success: false, message: "Blood request not found" });
+        }
+
+        if (user.role !== "ADMIN" && request.hospitalid !== hospital?.hospitalid) {
+            return res.status(403).json({ success: false, message: "Access denied" });
+        }
+
+        const report = await DocumentVerificationService.getRequestVerificationReport(requestId);
+        return res.status(200).json({ success: true, ...report });
+    } catch (error: any) {
+        console.error("Error fetching request verification report:", error);
+        return res.status(500).json({ success: false, message: error.message || "Failed to fetch verification report" });
+    }
+});
+
+/*
+ * SUBMIT A DRAFT REQUISITION ONCE 100% COMPLETE
+ * POST /hospitals/me/bloodrequests/:requestId/submit
+ */
+router.post("/me/bloodrequests/:requestId/submit", authenticate, authorize("HOSPITAL", "ADMIN"), requireApprovedHospital, async (req: Request, res: Response) => {
+    try {
+        const user = (req as any).user;
+        const requestId = req.params.requestId as string;
+        if (!UUID_REGEX.test(requestId)) {
+            return res.status(400).json({ success: false, message: "Invalid requestId format" });
+        }
+
+        const hospital = await prisma.hospitals.findUnique({ where: { userid: user.userid } });
+        const request = await prisma.bloodrequests.findUnique({
+            where: { requestid: requestId },
+            select: {
+                requestid: true,
+                hospitalid: true,
+                status: true,
+                isdraft: true,
+                bloodgroup: true,
+                unitsrequired: true,
+                isemergency: true,
+            },
+        });
+
+        if (!request) {
+            return res.status(404).json({ success: false, message: "Blood request not found" });
+        }
+
+        if (user.role !== "ADMIN" && request.hospitalid !== hospital?.hospitalid) {
+            return res.status(403).json({
+                success: false,
+                message: "Access denied: cannot submit another hospital's request",
+            });
+        }
+
+        // Must be in DRAFT to submit
+        if (request.status !== "DRAFT" && !request.isdraft) {
+            return res.status(400).json({
+                success: false,
+                message: `Request is already in ${request.status} status and cannot be resubmitted`,
+            });
+        }
+
+        // Re-verify completeness on backend. Reject submission if mandatory documents are missing!
+        const completeness = await RequestDocumentService.validateRequestSubmissionEligibility(requestId);
+
+        // Update status to CREATED and isdraft to false
+        const updated = await prisma.$transaction(async (tx) => {
+            const upd = await tx.bloodrequests.update({
+                where: { requestid: requestId },
+                data: {
+                    status: "CREATED",
+                    isdraft: false,
+                    updatedat: new Date(),
+                },
+            });
+
+            await tx.requeststatushistory.create({
+                data: {
+                    requestid: requestId,
+                    oldstatus: "DRAFT",
+                    newstatus: "CREATED",
+                    changedbyuserid: user.userid,
+                    remarks: `Blood requisition finalized and submitted by hospital ${hospital?.hospitalname || "Hospital"}. All mandatory documents verified complete.`,
+                },
+            });
+
+            await tx.notification.create({
+                data: {
+                    userid: user.userid,
+                    requestid: requestId,
+                    type: notification_type.REQUEST,
+                    title: "Hospital Blood Requisition Submitted",
+                    message: `Requisition (${request.bloodgroup}, ${request.unitsrequired} unit(s)) successfully submitted with 100% verified supporting documents.`,
+                    isread: false,
+                },
+            });
+
+            return upd;
+        });
+
+        return res.status(200).json({
+            success: true,
+            message: "Blood requisition successfully submitted with all mandatory supporting documents",
+            bloodRequest: updated,
+            completeness,
+        });
+    } catch (error: any) {
+        console.error("Error submitting blood request:", error);
+        const status = error.statusCode || 500;
+        return res.status(status).json({
+            success: false,
+            message: error.message || "Failed to submit blood request",
+            completeness: error.completeness,
         });
     }
 });
