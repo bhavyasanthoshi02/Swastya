@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import {
   Tent,
@@ -10,17 +10,13 @@ import {
   Building2,
   Users,
   Search,
-  Filter,
   ArrowRight,
+  ArrowLeft,
   Loader2,
   AlertCircle,
   RefreshCw,
   CheckCircle2,
-  X,
   Compass,
-  ChevronRight,
-  CalendarDays,
-  Phone,
   BookmarkCheck,
 } from "lucide-react";
 import { api } from "@/lib/api";
@@ -173,168 +169,172 @@ export default function DonorCampDiscoveryPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#FBF9F4] text-slate-800 pb-16">
-      {/* Top Banner / Hero */}
-      <section className="bg-gradient-to-b from-white via-white to-[#FBF9F4] border-b border-[#F3E9D1] pt-8 pb-10">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
-            <div>
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-[#EFA27E]/15 text-[#053845] border border-[#EFA27E]/30 mb-3">
-                <Tent className="w-3.5 h-3.5 text-[#317786]" />
-                <span>Community Blood Drives</span>
-              </div>
-              <h1 className="font-serif text-2xl sm:text-3xl lg:text-4xl font-bold text-[#053845] tracking-tight">
+    <div className="space-y-5 pb-12">
+      {/* Top Breadcrumb Navigation */}
+      <div className="flex items-center justify-between gap-3">
+        <Link
+          href="/donor/dashboard"
+          className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#053845] hover:text-[#317786] transition-colors"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          <span>Back to Donor Dashboard</span>
+        </Link>
+
+        <Link
+          href="/donor/my-camps"
+          className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-white border border-[#F3E9D1] text-xs font-semibold text-[#053845] hover:bg-[#FAF6EE] shadow-2xs transition-all"
+        >
+          <BookmarkCheck className="w-3.5 h-3.5 text-[#317786]" />
+          <span>My Registrations</span>
+          {registeredCampIds.size > 0 && (
+            <span className="w-4 h-4 rounded-full bg-[#317786] text-white text-[10px] font-bold flex items-center justify-center ml-0.5">
+              {registeredCampIds.size}
+            </span>
+          )}
+        </Link>
+      </div>
+
+      {/* Header matching Donor Dashboard & Blood Requests */}
+      <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#317786]/15">
+        <div className="flex items-start sm:items-center gap-3.5 min-w-0">
+          <div className="w-11 h-11 rounded-2xl bg-[#317786]/10 border border-[#317786]/20 text-[#317786] flex items-center justify-center shrink-0">
+            <Tent className="w-5 h-5" />
+          </div>
+          <div className="space-y-0.5 min-w-0">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <h1 className="font-serif text-2xl sm:text-3xl font-bold text-[#053845] tracking-tight">
                 Nearby Blood Donation Camps
               </h1>
-              <p className="text-sm sm:text-base text-slate-600 mt-2 max-w-2xl leading-relaxed">
-                Discover verified mobile camps organized by certified blood banks. Participate as a walk-in donor or reserve your preferred time slot in advance.
-              </p>
+              {!isLoading && !error && (
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-[#317786]/10 border border-[#317786]/20 text-[#317786]">
+                  {camps.length} {camps.length === 1 ? "Camp" : "Camps"} Available
+                </span>
+              )}
             </div>
+            <p className="text-sm text-slate-600">
+              Discover verified mobile camps organized by certified blood banks. Participate as a walk-in donor or reserve your preferred time slot in advance.
+            </p>
+          </div>
+        </div>
 
-            {/* Quick Action to My Registrations */}
-            <div className="flex items-center gap-3">
-              <Link
-                href="/donor/my-camps"
-                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-[#F3E9D1] text-sm font-semibold text-[#053845] hover:bg-[#FAF6EE] shadow-sm transition-all"
-              >
-                <BookmarkCheck className="w-4 h-4 text-[#317786]" />
-                <span>My Registrations</span>
-                {registeredCampIds.size > 0 && (
-                  <span className="w-5 h-5 rounded-full bg-[#317786] text-white text-[11px] font-bold flex items-center justify-center ml-1">
-                    {registeredCampIds.size}
-                  </span>
-                )}
-              </Link>
-            </div>
+        <button
+          type="button"
+          onClick={fetchCamps}
+          disabled={isLoading}
+          className="self-start sm:self-center inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[#F3E9D1] bg-white text-xs font-semibold text-[#053845] hover:bg-[#FAF6EE] shadow-2xs transition-all cursor-pointer"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 text-[#317786] ${isLoading ? "animate-spin" : ""}`} />
+          <span>Refresh</span>
+        </button>
+      </header>
+
+      {/* Search & Filter Bar */}
+      <section aria-label="Search and filter blood camps">
+        <form
+          onSubmit={handleSearchSubmit}
+          className="p-3.5 sm:p-4 bg-white rounded-2xl border border-[#F3E9D1] shadow-2xs grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3"
+        >
+          {/* Keyword Search */}
+          <div className="relative lg:col-span-2">
+            <Search className="w-4 h-4 text-[#317786] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input
+              type="text"
+              placeholder="Search camp name, venue, city..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full pl-9 pr-3 py-2 text-xs rounded-xl border border-[#F3E9D1] bg-slate-50/50 text-[#053845] placeholder:text-slate-400 focus:outline-none focus:border-[#317786] transition-colors"
+            />
           </div>
 
-          {/* Search & Filter Bar */}
-          <form
-            onSubmit={handleSearchSubmit}
-            className="mt-8 p-4 bg-white rounded-2xl border border-[#F3E9D1] shadow-sm grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3"
-          >
-            {/* Keyword Search */}
-            <div className="relative lg:col-span-2">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
-              <input
-                type="text"
-                placeholder="Search camp name, venue, city..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 text-sm bg-slate-50/60 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#317786]/30 focus:border-[#317786]"
-              />
-            </div>
+          {/* City / District */}
+          <div>
+            <input
+              type="text"
+              placeholder="City or District"
+              value={cityFilter}
+              onChange={(e) => setCityFilter(e.target.value)}
+              className="w-full px-3 py-2 text-xs rounded-xl border border-[#F3E9D1] bg-slate-50/50 text-[#053845] placeholder:text-slate-400 focus:outline-none focus:border-[#317786] transition-colors"
+            />
+          </div>
 
-            {/* City / District */}
-            <div>
-              <input
-                type="text"
-                placeholder="City or District"
-                value={cityFilter}
-                onChange={(e) => setCityFilter(e.target.value)}
-                className="w-full px-3 py-2 text-sm bg-slate-50/60 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#317786]/30 focus:border-[#317786]"
-              />
-            </div>
+          {/* Date Picker */}
+          <div>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              title="From Date"
+              className="w-full px-3 py-2 text-xs rounded-xl border border-[#F3E9D1] bg-slate-50/50 text-[#053845] focus:outline-none focus:border-[#317786] transition-colors"
+            />
+          </div>
 
-            {/* Date Picker */}
-            <div>
-              <input
-                type="date"
-                value={dateFrom}
-                onChange={(e) => setDateFrom(e.target.value)}
-                title="From Date"
-                className="w-full px-3 py-2 text-sm bg-slate-50/60 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#317786]/30 focus:border-[#317786]"
-              />
-            </div>
+          {/* Actions: Search Button & Location toggle */}
+          <div className="flex items-center gap-2">
+            <button
+              type="submit"
+              className="flex-1 py-2 px-4 rounded-xl bg-[#317786] hover:bg-[#245964] text-white text-xs font-semibold shadow-2xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <Search className="w-3.5 h-3.5" />
+              <span>Search</span>
+            </button>
 
-            {/* Actions: Search Button & Location toggle */}
-            <div className="flex items-center gap-2">
-              <button
-                type="submit"
-                className="flex-1 py-2 px-4 rounded-xl bg-[#053845] hover:bg-[#074b5c] text-white text-sm font-semibold shadow-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-              >
-                <Search className="w-4 h-4" />
-                <span>Search</span>
-              </button>
+            <button
+              type="button"
+              onClick={requestGeolocation}
+              disabled={isLocating}
+              title="Detect Nearby Camps via Geolocation"
+              className={`p-2 rounded-xl border text-xs font-medium transition-all cursor-pointer ${
+                userCoords
+                  ? "bg-[#317786] text-white border-[#317786]"
+                  : "bg-white text-[#053845] border-[#F3E9D1] hover:bg-[#FAF6EE]"
+              }`}
+            >
+              {isLocating ? (
+                <Loader2 className="w-4 h-4 animate-spin text-[#317786]" />
+              ) : (
+                <Compass className="w-4 h-4" />
+              )}
+            </button>
+          </div>
+        </form>
 
-              <button
-                type="button"
-                onClick={requestGeolocation}
-                disabled={isLocating}
-                title="Detect Nearby Camps via Geolocation"
-                className={`p-2 rounded-xl border text-sm font-medium transition-all cursor-pointer ${
-                  userCoords
-                    ? "bg-[#317786] text-white border-[#317786]"
-                    : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
-                }`}
-              >
-                {isLocating ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Compass className="w-4 h-4" />
-                )}
-              </button>
-            </div>
-          </form>
-
-          {/* Active Radius Filter Pill if Location Active */}
-          {userCoords && (
-            <div className="mt-3 flex items-center gap-2 text-xs text-slate-600">
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 font-medium">
-                <Compass className="w-3.5 h-3.5 text-emerald-600" />
-                Using your coordinates
-              </span>
-              <select
-                value={radiusFilter}
-                onChange={(e) => setRadiusFilter(e.target.value ? Number(e.target.value) : "")}
-                className="px-2 py-1 text-xs bg-white border border-slate-200 rounded-lg text-slate-700 focus:outline-none"
-              >
-                <option value="">All Distances</option>
-                <option value="10">Within 10 km</option>
-                <option value="25">Within 25 km</option>
-                <option value="50">Within 50 km</option>
-                <option value="100">Within 100 km</option>
-              </select>
-              <button
-                type="button"
-                onClick={handleClearFilters}
-                className="text-xs text-slate-500 hover:text-slate-800 underline ml-2 cursor-pointer"
-              >
-                Reset filters
-              </button>
-            </div>
-          )}
-        </div>
+        {/* Active Radius Filter Pill if Location Active */}
+        {userCoords && (
+          <div className="mt-2.5 flex items-center gap-2 text-xs text-slate-600">
+            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 font-medium text-[11px]">
+              <Compass className="w-3.5 h-3.5 text-emerald-600" />
+              Using your coordinates
+            </span>
+            <select
+              value={radiusFilter}
+              onChange={(e) => setRadiusFilter(e.target.value ? Number(e.target.value) : "")}
+              className="px-2 py-1 text-xs bg-white border border-[#F3E9D1] rounded-lg text-[#053845] focus:outline-none"
+            >
+              <option value="">All Distances</option>
+              <option value="10">Within 10 km</option>
+              <option value="25">Within 25 km</option>
+              <option value="50">Within 50 km</option>
+              <option value="100">Within 100 km</option>
+            </select>
+            <button
+              type="button"
+              onClick={handleClearFilters}
+              className="text-xs text-slate-500 hover:text-[#053845] underline ml-2 cursor-pointer"
+            >
+              Reset filters
+            </button>
+          </div>
+        )}
       </section>
 
       {/* Main Content: Camp Listing */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-8">
-        {/* Results Header */}
-        <div className="flex items-center justify-between pb-4 border-b border-[#F3E9D1]">
-          <h2 className="text-base sm:text-lg font-bold text-[#053845] font-serif flex items-center gap-2">
-            <span>Upcoming Drives</span>
-            <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-[#FAF6EE] text-[#317786] border border-[#F3E9D1]">
-              {camps.length} camps available
-            </span>
-          </h2>
-
-          <button
-            type="button"
-            onClick={fetchCamps}
-            disabled={isLoading}
-            className="text-xs font-medium text-slate-500 hover:text-[#053845] flex items-center gap-1 cursor-pointer"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin" : ""}`} />
-            <span>Refresh</span>
-          </button>
-        </div>
-
+      <section aria-label="Available Blood Camps List">
         {/* Error State */}
         {error && (
-          <div className="mt-6 p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 flex items-start gap-3">
+          <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-800 flex items-start gap-3">
             <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-            <div className="flex-1 text-sm">
-              <p className="font-semibold">Unable to load blood camps</p>
+            <div className="flex-1 text-xs">
+              <p className="font-semibold text-sm">Unable to load blood camps</p>
               <p className="text-amber-700 mt-0.5">{error}</p>
             </div>
             <button
@@ -350,24 +350,24 @@ export default function DonorCampDiscoveryPage() {
         {isLoading && (
           <div className="py-20 flex flex-col items-center justify-center text-slate-400 gap-3">
             <Loader2 className="w-8 h-8 animate-spin text-[#317786]" />
-            <p className="text-sm">Discovering verified blood camps nearby...</p>
+            <p className="text-xs font-medium text-slate-500">Discovering verified blood camps nearby...</p>
           </div>
         )}
 
         {/* Empty State */}
         {!isLoading && !error && camps.length === 0 && (
-          <div className="mt-10 p-12 text-center bg-white rounded-2xl border border-[#F3E9D1] max-w-lg mx-auto">
-            <div className="w-12 h-12 rounded-2xl bg-[#FAF6EE] border border-[#F3E9D1] flex items-center justify-center mx-auto text-[#317786] mb-4">
+          <div className="p-10 sm:p-14 text-center bg-white rounded-3xl border border-[#F3E9D1] shadow-2xs max-w-md mx-auto my-6">
+            <div className="w-12 h-12 rounded-2xl bg-[#317786]/10 border border-[#317786]/20 flex items-center justify-center mx-auto text-[#317786] mb-4">
               <Tent className="w-6 h-6" />
             </div>
             <h3 className="font-serif text-lg font-bold text-[#053845]">No blood donation camps found</h3>
-            <p className="text-sm text-slate-500 mt-2">
+            <p className="text-xs text-slate-500 mt-2 leading-relaxed">
               There are currently no upcoming published camps matching your selected filters. Try broadening your location or date parameters.
             </p>
             <button
               type="button"
               onClick={handleClearFilters}
-              className="mt-5 px-4 py-2 rounded-xl bg-[#FAF6EE] text-[#053845] border border-[#F3E9D1] text-xs font-semibold hover:bg-[#F3E9D1]/50 cursor-pointer transition-all"
+              className="mt-5 px-4 py-2 rounded-xl bg-[#317786] hover:bg-[#245964] text-white text-xs font-semibold shadow-2xs cursor-pointer transition-all"
             >
               Clear Search Filters
             </button>
@@ -376,7 +376,7 @@ export default function DonorCampDiscoveryPage() {
 
         {/* Cards Grid */}
         {!isLoading && !error && camps.length > 0 && (
-          <div className="mt-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
             {camps.map((camp) => {
               const isRegistered = registeredCampIds.has(camp.campid);
               const isWalkInOnly = !camp.isregistrationrequired;
@@ -385,27 +385,27 @@ export default function DonorCampDiscoveryPage() {
               return (
                 <div
                   key={camp.campid}
-                  className="bg-white rounded-2xl border border-[#F3E9D1] shadow-sm hover:shadow-md transition-all flex flex-col overflow-hidden group"
+                  className="bg-white rounded-2xl border border-[#F3E9D1] shadow-2xs hover:shadow-xs transition-all flex flex-col overflow-hidden group"
                 >
                   {/* Card Header Banner */}
-                  <div className="p-5 pb-4 border-b border-[#F3E9D1]/60 flex items-start justify-between gap-3 bg-[#FAF6EE]/30">
-                    <div>
+                  <div className="p-4 sm:p-5 pb-3.5 border-b border-[#F3E9D1]/70 flex items-start justify-between gap-3 bg-[#FAF6EE]/40">
+                    <div className="min-w-0 flex-1">
                       {/* Walk-in vs Registration Pill */}
                       {isWalkInOnly ? (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-blue-50 text-blue-700 border border-blue-200 mb-2">
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-[#317786]/10 text-[#317786] border border-[#317786]/20 mb-2">
                           Walk-in Welcome
                         </span>
                       ) : camp.isregistrationopen ? (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 mb-2">
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 mb-2">
                           Registration Open
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-600 border border-slate-200 mb-2">
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-600 border border-slate-200 mb-2">
                           Registration Closed
                         </span>
                       )}
 
-                      <h3 className="font-serif text-base font-bold text-[#053845] group-hover:text-[#317786] transition-colors line-clamp-1">
+                      <h3 className="font-serif text-base font-bold text-[#053845] group-hover:text-[#317786] transition-colors truncate">
                         {camp.campname}
                       </h3>
                       <p className="text-xs text-slate-500 flex items-center gap-1 mt-0.5">
@@ -416,7 +416,7 @@ export default function DonorCampDiscoveryPage() {
 
                     {/* Already Registered Indicator */}
                     {isRegistered && (
-                      <span className="px-2 py-1 rounded-lg bg-emerald-100 text-emerald-800 text-[10px] font-bold shrink-0 flex items-center gap-1">
+                      <span className="px-2 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-bold shrink-0 flex items-center gap-1">
                         <CheckCircle2 className="w-3 h-3 text-emerald-600" />
                         Registered
                       </span>
@@ -424,14 +424,14 @@ export default function DonorCampDiscoveryPage() {
                   </div>
 
                   {/* Card Body */}
-                  <div className="p-5 flex-1 flex flex-col justify-between space-y-4">
+                  <div className="p-4 sm:p-5 flex-1 flex flex-col justify-between space-y-4">
                     <div className="space-y-2.5 text-xs text-slate-600">
                       {/* Date & Time */}
                       <div className="flex items-center gap-2">
-                        <div className="w-6 h-6 rounded-lg bg-[#FAF6EE] flex items-center justify-center shrink-0 text-[#317786]">
+                        <div className="w-6 h-6 rounded-lg bg-[#317786]/10 flex items-center justify-center shrink-0 text-[#317786]">
                           <Calendar className="w-3.5 h-3.5" />
                         </div>
-                        <span className="font-semibold text-slate-800">
+                        <span className="font-semibold text-[#053845]">
                           {formatCampDate(camp.campdate)}
                         </span>
                         <span className="text-slate-400">•</span>
@@ -442,7 +442,7 @@ export default function DonorCampDiscoveryPage() {
 
                       {/* Location & Distance */}
                       <div className="flex items-start gap-2">
-                        <div className="w-6 h-6 rounded-lg bg-[#FAF6EE] flex items-center justify-center shrink-0 text-[#317786] mt-0.5">
+                        <div className="w-6 h-6 rounded-lg bg-[#317786]/10 flex items-center justify-center shrink-0 text-[#317786] mt-0.5">
                           <MapPin className="w-3.5 h-3.5" />
                         </div>
                         <div className="min-w-0 flex-1">
@@ -462,13 +462,13 @@ export default function DonorCampDiscoveryPage() {
                       {/* Capacity Status */}
                       {!isWalkInOnly && camp.maxcapacity && (
                         <div className="flex items-center gap-2 pt-1">
-                          <div className="w-6 h-6 rounded-lg bg-[#FAF6EE] flex items-center justify-center shrink-0 text-[#317786]">
+                          <div className="w-6 h-6 rounded-lg bg-[#317786]/10 flex items-center justify-center shrink-0 text-[#317786]">
                             <Users className="w-3.5 h-3.5" />
                           </div>
                           <div className="flex-1">
                             <div className="flex items-center justify-between text-[11px] mb-1">
                               <span className="text-slate-500">Slots:</span>
-                              <span className="font-bold text-slate-800">
+                              <span className="font-bold text-[#053845]">
                                 {camp.remainingcapacity ?? 0} left of {camp.maxcapacity}
                               </span>
                             </div>
@@ -491,13 +491,13 @@ export default function DonorCampDiscoveryPage() {
                     </div>
 
                     {/* Footer Button */}
-                    <div className="pt-3 border-t border-[#F3E9D1]/50">
+                    <div className="pt-3 border-t border-[#F3E9D1]/60">
                       <Link
                         href={`/donor/camps/${camp.campid}`}
-                        className={`w-full py-2.5 px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+                        className={`w-full py-2.5 px-4 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all shadow-2xs ${
                           isRegistered
                             ? "bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200"
-                            : "bg-[#053845] hover:bg-[#074b5c] text-white shadow-sm"
+                            : "bg-[#317786] hover:bg-[#245964] text-white"
                         }`}
                       >
                         {isRegistered ? (
@@ -524,7 +524,7 @@ export default function DonorCampDiscoveryPage() {
             })}
           </div>
         )}
-      </main>
+      </section>
     </div>
   );
 }

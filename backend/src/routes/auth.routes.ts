@@ -294,6 +294,23 @@ router.post("/register", async (req: Request, res: Response) => {
             contactNumber = otpVerification.identifier;
         }
 
+        // Prevent duplicate phone number registration across all accounts
+        if (contactNumber) {
+            const phoneVariants = getPhoneVariants(contactNumber);
+            const existingPhoneUser = await prisma.users.findFirst({
+                where: {
+                    phonenumber: { in: phoneVariants },
+                },
+            });
+
+            if (existingPhoneUser) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Phone number is already registered with another account",
+                });
+            }
+        }
+
         // Optional coordinate validation
         let validatedCoords: { latitude?: number; longitude?: number } = {};
         if (
@@ -325,6 +342,8 @@ router.post("/register", async (req: Request, res: Response) => {
                         phonenumber: contactNumber,
                         password: hashedPassword,
                         role: user_role.DONOR,
+                        isactive: true,
+                        emailverified: true,
                     },
                 });
 
@@ -359,6 +378,7 @@ router.post("/register", async (req: Request, res: Response) => {
                 donor: result.donor,
                 requester: null,
                 hospital: null,
+                bloodbank: null,
             });
         }
 
@@ -377,6 +397,8 @@ router.post("/register", async (req: Request, res: Response) => {
                         phonenumber: contactNumber,
                         password: hashedPassword,
                         role: user_role.REQUESTER,
+                        isactive: true,
+                        emailverified: true,
                     },
                 });
 
@@ -405,6 +427,7 @@ router.post("/register", async (req: Request, res: Response) => {
                 donor: null,
                 requester: result.requester,
                 hospital: null,
+                bloodbank: null,
             });
         }
 
@@ -455,6 +478,8 @@ router.post("/register", async (req: Request, res: Response) => {
                         phonenumber: rawContactPhone,
                         password: hashedPassword,
                         role: user_role.HOSPITAL,
+                        isactive: true,
+                        emailverified: true,
                     },
                 });
 
@@ -489,6 +514,7 @@ router.post("/register", async (req: Request, res: Response) => {
                 donor: null,
                 requester: null,
                 hospital: result.hospital,
+                bloodbank: null,
             });
         }
 
@@ -581,8 +607,36 @@ router.post("/register", async (req: Request, res: Response) => {
             success: false,
             message: "Unsupported registration role",
         });
-    } catch (error) {
+    } catch (error: any) {
         console.error("Register Error:", error);
+
+        if (error?.code === "P2002") {
+            const target = String(error?.meta?.target || "");
+            if (target.includes("email")) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Email already exists",
+                });
+            }
+            if (target.includes("phonenumber")) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Phone number is already registered with another account",
+                });
+            }
+            if (target.includes("registrationnumber")) {
+                return res.status(400).json({
+                    success: false,
+                    message: "A hospital with this registration number already exists",
+                });
+            }
+            if (target.includes("licensenumber")) {
+                return res.status(400).json({
+                    success: false,
+                    message: "A blood bank with this license number already exists",
+                });
+            }
+        }
 
         return res.status(500).json({
             success: false,

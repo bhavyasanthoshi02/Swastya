@@ -186,7 +186,7 @@ async function runE2EIntegrationTests() {
         reqForm.append("patientcontact", "9876543210");
         reqForm.append("bloodgroup", "O_POSITIVE");
         reqForm.append("bloodcomponent", "WHOLE_BLOOD");
-        reqForm.append("unitsrequired", "2");
+        reqForm.append("unitsrequired", "1");
         reqForm.append("urgencylevel", "CRITICAL");
         reqForm.append("isemergency", "true");
         reqForm.append("requiredby", new Date(Date.now() + 86400000).toISOString());
@@ -229,7 +229,7 @@ async function runE2EIntegrationTests() {
         const newReqNotif = hospANotifsData.notifications.find((n: any) => n.requestid === createdRequest.requestid);
         assert(Boolean(newReqNotif), "3b. Hospital A received notification for new requisition");
         assert(newReqNotif.title === "New Blood Requisition Received", "3c. Notification title verified");
-        assert(newReqNotif.message.includes("Rajesh Sharma"), "3d. Notification message references patient name");
+        assert(newReqNotif.message.includes("unit") && !newReqNotif.message.includes("Rajesh Sharma"), "3d. Notification message omits unaccepted patient PII per privacy standards");
         hospitalANotifId = newReqNotif.notificationid;
 
         // Isolation: Hospital B received 0 notifications
@@ -352,24 +352,7 @@ async function runE2EIntegrationTests() {
             "6d-rx. Hospital A verified clinical prescription (VERIFIED)"
         );
 
-        // Permitted progression: DONOR_MATCHING -> BLOOD_ARRANGED
-        const arrangeRes = await fetch(`${API_BASE}/bloodrequests/${createdRequest.requestid}`, {
-            method: "PUT",
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${hospAToken}`,
-            },
-            body: JSON.stringify({
-                status: "BLOOD_ARRANGED",
-                remarks: "Donor arrived; units collected, tested, and cross-matched successfully.",
-                notes: "Cross-match verified against patient sample; unit labeled for Surgery Ward.",
-            }),
-        });
-        const arrangeData: any = await arrangeRes.json();
-        assert(arrangeRes.status === 200, "6e. Hospital advanced status to BLOOD_ARRANGED (HTTP 200)");
-
-        console.log("\n--- 7. Workflow Step 9: Donor Transit Milestones Tracking ---");
-        // Requester accepts volunteer commitment before donor starts journey
+        // Requester accepts volunteer commitment before transit begins
         const acceptVolRes = await fetch(
             `${API_BASE}/bloodrequests/${createdRequest.requestid}/volunteers/${getReqData.volunteers[0].deliveryId}/decision`,
             {
@@ -381,9 +364,10 @@ async function runE2EIntegrationTests() {
                 body: JSON.stringify({ decision: "ACCEPTED" }),
             }
         );
-        assert(acceptVolRes.status === 200, "7-accept. Requester accepted volunteer commitment before transit");
+        assert(acceptVolRes.status === 200, "6d-vol. Requester accepted volunteer commitment before transit");
 
-        // Donor updates transit: STARTED -> REACHED_LOCATION; Hospital confirms COMPLETED
+        console.log("\n--- 7. Workflow Step 9: Donor Transit Milestones Tracking ---");
+        // Donor updates transit: STARTED -> REACHED_LOCATION
         const transitStart = await fetch(`${API_BASE}/bloodrequests/${createdRequest.requestid}/transit-status`, {
             method: "PATCH",
             headers: {
@@ -404,6 +388,7 @@ async function runE2EIntegrationTests() {
         });
         assert(transitReached.status === 200, "7b. Donor transit updated to REACHED_LOCATION");
 
+        // Assigned hospital confirms blood collected / transit completed
         const transitDone = await fetch(`${API_BASE}/bloodrequests/${createdRequest.requestid}/transit-status`, {
             method: "PATCH",
             headers: {
@@ -412,7 +397,9 @@ async function runE2EIntegrationTests() {
             },
             body: JSON.stringify({ status: "COMPLETED", donorUserId: donorUser.userid }),
         });
+        const transitDoneData: any = await transitDone.json();
         assert(transitDone.status === 200, "7c. Assigned hospital confirmed transit COMPLETED");
+        assert(transitDoneData.bloodArranged === true, "6e. Status automatically transitioned to BLOOD_ARRANGED upon completed units");
 
         console.log("\n--- 8. Workflow Step 10: Physical Transfusion Verification & Fulfillment ---");
         // Requester cannot fulfill

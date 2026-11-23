@@ -1083,7 +1083,7 @@ router.put("/:id", authenticate, requireApprovedHospital, async (req: Request, r
         }
 
         // Terminal status protection: Cannot modify, reverse, or cancel already terminal requests
-        const terminalStatuses = ["FULFILLED", "CANCELLED", "EXPIRED", "BLOOD_ARRANGED"];
+        const terminalStatuses = ["FULFILLED", "CANCELLED", "EXPIRED"];
         if (terminalStatuses.includes(existing.status || "")) {
             return res.status(400).json({
                 success: false,
@@ -1208,7 +1208,7 @@ router.put("/:id", authenticate, requireApprovedHospital, async (req: Request, r
             }
 
             // Terminal status protection: Cannot modify, reverse, or cancel already terminal requests
-            const terminalStatuses = ["FULFILLED", "CANCELLED", "EXPIRED", "BLOOD_ARRANGED"];
+            const terminalStatuses = ["FULFILLED", "CANCELLED", "EXPIRED"];
             if (terminalStatuses.includes(currentStatus)) {
                 throw Object.assign(
                     new Error(`Cannot modify or update a requisition that is already ${String(currentStatus).toLowerCase()}`),

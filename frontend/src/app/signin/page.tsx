@@ -109,8 +109,8 @@ function SignInForm() {
     const newErrors: { email?: string; password?: string } = {};
     if (!email.trim()) {
       newErrors.email = "Email is required";
-    } else if (!email.includes("@")) {
-      newErrors.email = "Please enter a valid email address";
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      newErrors.email = "Please enter a valid email address (e.g. name@example.com)";
     }
 
     if (!password) {

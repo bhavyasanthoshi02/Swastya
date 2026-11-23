@@ -189,13 +189,15 @@ export default function SignUpPage() {
       return;
     }
 
-    if (!email.trim() || !email.includes("@")) {
-      setErrorMessage("A valid email address is required");
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!email.trim() || !emailRegex.test(email.trim())) {
+      setErrorMessage("Please enter a valid email address (e.g. name@example.com)");
       return;
     }
 
-    if (!phone.trim()) {
-      setErrorMessage("Contact phone number is required");
+    const digitsOnly = phone.replace(/\D/g, "");
+    if (!phone.trim() || digitsOnly.length < 10) {
+      setErrorMessage("Please enter a valid 10-digit contact phone number");
       return;
     }
 
@@ -291,6 +293,15 @@ export default function SignUpPage() {
       }
       if (!instPincode.trim()) {
         setErrorMessage("Area PIN code is required");
+        return;
+      }
+    } else if (role === "patient") {
+      if (!fullName.trim()) {
+        setErrorMessage("Full name is required");
+        return;
+      }
+      if (!patientCity.trim()) {
+        setErrorMessage("City or PIN code is required");
         return;
       }
     }

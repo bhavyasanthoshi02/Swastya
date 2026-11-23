@@ -20,6 +20,8 @@ import {
   Tent,
   Wrench,
   MessageSquare,
+  SlidersHorizontal,
+  Layers,
 } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { api } from "@/lib/api";
@@ -45,6 +47,8 @@ export function BloodBankTopNav({
   const pathname = usePathname();
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const [isOperationsOpen, setIsOperationsOpen] = useState(false);
+  const [isAssetsOpen, setIsAssetsOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [notifications, setNotifications] = useState<
@@ -60,6 +64,8 @@ export function BloodBankTopNav({
 
   const profileRef = useRef<HTMLDivElement>(null);
   const notificationsRef = useRef<HTMLDivElement>(null);
+  const operationsRef = useRef<HTMLDivElement>(null);
+  const assetsRef = useRef<HTMLDivElement>(null);
 
   const fetchNotifications = async () => {
     try {
@@ -88,6 +94,8 @@ export function BloodBankTopNav({
   const handleSignOut = () => {
     setIsProfileOpen(false);
     setIsMobileMenuOpen(false);
+    setIsOperationsOpen(false);
+    setIsAssetsOpen(false);
     clearAuthToken();
     router.push("/signin");
   };
@@ -119,17 +127,17 @@ export function BloodBankTopNav({
   // Close dropdowns on outside clicks
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (
-        profileRef.current &&
-        !profileRef.current.contains(event.target as Node)
-      ) {
+      if (profileRef.current && !profileRef.current.contains(event.target as Node)) {
         setIsProfileOpen(false);
       }
-      if (
-        notificationsRef.current &&
-        !notificationsRef.current.contains(event.target as Node)
-      ) {
+      if (notificationsRef.current && !notificationsRef.current.contains(event.target as Node)) {
         setIsNotificationsOpen(false);
+      }
+      if (operationsRef.current && !operationsRef.current.contains(event.target as Node)) {
+        setIsOperationsOpen(false);
+      }
+      if (assetsRef.current && !assetsRef.current.contains(event.target as Node)) {
+        setIsAssetsOpen(false);
       }
     };
 
@@ -143,6 +151,8 @@ export function BloodBankTopNav({
       if (e.key === "Escape") {
         setIsProfileOpen(false);
         setIsNotificationsOpen(false);
+        setIsOperationsOpen(false);
+        setIsAssetsOpen(false);
         setIsMobileMenuOpen(false);
       }
     }
@@ -155,10 +165,12 @@ export function BloodBankTopNav({
     setIsMobileMenuOpen(false);
     setIsProfileOpen(false);
     setIsNotificationsOpen(false);
+    setIsOperationsOpen(false);
+    setIsAssetsOpen(false);
   }, [pathname]);
 
-  // Five core navigation items (Profile removed from navbar items)
-  const navLinks = [
+  // Primary 3 core navigation links
+  const coreLinks = [
     {
       href: "/bloodbank/dashboard",
       label: "Dashboard",
@@ -177,43 +189,53 @@ export function BloodBankTopNav({
       icon: ClipboardList,
       active: pathname.startsWith("/bloodbank/requisitions"),
     },
+  ];
+
+  // Group 1: Clinical Processing & Logistics Operations
+  const operationLinks = [
     {
       href: "/bloodbank/screening",
-      label: "Screening",
+      label: "Screening & Testing",
+      desc: "Serological screening, viral markers & blood qualification",
       icon: FlaskConical,
       active: pathname.startsWith("/bloodbank/screening"),
     },
     {
       href: "/bloodbank/dispatch",
-      label: "Dispatch",
+      label: "Dispatch & Logistics",
+      desc: "Cold-chain hospital delivery, custody logs & transit tracking",
       icon: Truck,
       active: pathname.startsWith("/bloodbank/dispatch"),
     },
+  ];
+
+  // Group 2: Outreach, Assets & Regional Intelligence
+  const assetLinks = [
     {
       href: "/bloodbank/camps",
-      label: "Blood Camps",
+      label: "Blood Donation Camps",
+      desc: "Community drives, schedule dates & voluntary donor registration",
       icon: Tent,
       active: pathname.startsWith("/bloodbank/camps"),
     },
     {
-      href: "/bloodbank/insights",
-      label: "AI Insights",
-      icon: TrendingUp,
-      active: pathname.startsWith("/bloodbank/insights"),
-    },
-    {
       href: "/bloodbank/equipment",
-      label: "Equipment",
+      label: "Equipment & Calibration",
+      desc: "Asset registry, maintenance records & calibration compliance",
       icon: Wrench,
       active: pathname.startsWith("/bloodbank/equipment"),
     },
     {
       href: "/bloodbank/sms",
       label: "Custom SMS",
+      desc: "Send personalized broadcast & emergency donor SMS alerts",
       icon: MessageSquare,
       active: pathname.startsWith("/bloodbank/sms"),
     },
   ];
+
+  const isOperationsActive = operationLinks.some((l) => l.active);
+  const isAssetsActive = assetLinks.some((l) => l.active);
 
   const getInitials = (name: string) => {
     return name
@@ -226,9 +248,9 @@ export function BloodBankTopNav({
 
   return (
     <header className="sticky top-0 z-40 w-full bg-white/95 backdrop-blur-md border-b border-[#F3E9D1] transition-all">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-3 lg:gap-6">
         {/* Left: Brand Logo & Navigation */}
-        <div className="flex items-center gap-6 lg:gap-8 min-w-0">
+        <div className="flex items-center gap-4 lg:gap-7 min-w-0">
           <Link
             href="/bloodbank/dashboard"
             className="flex items-center gap-2 group focus:outline-none shrink-0"
@@ -245,28 +267,163 @@ export function BloodBankTopNav({
             </div>
           </Link>
 
-          {/* Desktop Nav Links */}
+          {/* Desktop Navigation Links (Grouped & Spacious) */}
           <nav
-            className="hidden md:flex items-center gap-1.5"
+            className="hidden md:flex items-center gap-1 lg:gap-1.5"
             aria-label="Blood Bank Primary Navigation"
           >
-            {navLinks.map((link) => {
+            {/* 1. Core Workflow Links */}
+            {coreLinks.map((link) => {
               const Icon = link.icon;
               return (
                 <Link
                   key={link.href}
                   href={link.href}
-                  className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
                     link.active
                       ? "text-[#053845] bg-[#FAF6EE] border border-[#F3E9D1] shadow-2xs font-bold"
                       : "text-slate-600 hover:text-[#053845] hover:bg-[#FAF6EE]/70"
                   }`}
                 >
                   <Icon className="w-3.5 h-3.5 shrink-0" />
-                  <span className="whitespace-nowrap">{link.label}</span>
+                  <span>{link.label}</span>
                 </Link>
               );
             })}
+
+            {/* 2. Operations Dropdown (Screening + Dispatch) */}
+            <div className="relative" ref={operationsRef}>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsOperationsOpen(!isOperationsOpen);
+                  setIsAssetsOpen(false);
+                  setIsProfileOpen(false);
+                  setIsNotificationsOpen(false);
+                }}
+                className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
+                  isOperationsActive || isOperationsOpen
+                    ? "text-[#053845] bg-[#FAF6EE] border border-[#F3E9D1] shadow-2xs font-bold"
+                    : "text-slate-600 hover:text-[#053845] hover:bg-[#FAF6EE]/70"
+                }`}
+                aria-expanded={isOperationsOpen}
+                aria-label="Operations Menu"
+              >
+                <SlidersHorizontal className="w-3.5 h-3.5 shrink-0" />
+                <span>Operations</span>
+                <ChevronDown
+                  className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-150 ${
+                    isOperationsOpen ? "rotate-180" : ""
+                  }`}
+                />
+              </button>
+
+              {isOperationsOpen && (
+                <div className="absolute left-0 mt-2 w-80 rounded-2xl bg-white border border-[#F3E9D1] shadow-2xl p-2 z-50 animate-in fade-in zoom-in-95 duration-150">
+                  <div className="px-3 py-2 border-b border-[#F3E9D1]/50 mb-1">
+                    <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400">
+                      Processing & Logistics
+                    </span>
+                  </div>
+                  <div className="space-y-1">
+                    {operationLinks.map((item) => {
+                      const ItemIcon = item.icon;
+                      return (
+                        <Link
+                          key={item.href}
+                          href={item.href}
+                          onClick={() => setIsOperationsOpen(false)}
+                          className={`flex items-start gap-3 p-2.5 rounded-xl transition-all ${
+                            item.active
+                              ? "bg-[#FAF6EE] border border-[#F3E9D1] text-[#053845]"
+                              : "hover:bg-[#FAF6EE]/60 text-slate-700"
+                          }`}
+                        >
+                          <div className="w-7 h-7 rounded-lg bg-[#317786]/10 text-[#317786] flex items-center justify-center shrink-0 mt-0.5">
+                            <ItemIcon className="w-3.5 h-3.5" />
+                          </div>
+                          <div className="space-y-0.5 min-w-0">
+                            <span className="block text-xs font-bold text-[#053845]">
+                              {item.label}
+                            </span>
+                            <span className="block text-[11px] text-slate-500 leading-tight">
+                              {item.desc}
+                            </span>
+                          </div>
+                        </Link>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 3. Outreach & Assets Dropdown (Camps + Equipment + AI Insights) */}
+            <div className="relative" ref={assetsRef}>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAssetsOpen(!isAssetsOpen);
+                  setIsOperationsOpen(false);
+                  setIsProfileOpen(false);
+                  setIsNotificationsOpen(false);
+                }}
+                className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
+                  isAssetsActive || isAssetsOpen
+                    ? "text-[#053845] bg-[#FAF6EE] border border-[#F3E9D1] shadow-2xs font-bold"
+                    : "text-slate-600 hover:text-[#053845] hover:bg-[#FAF6EE]/70"
+                }`}
+                aria-expanded={isAssetsOpen}
+                aria-label="Outreach and Facility Assets Menu"
+              >
+                <Layers className="w-3.5 h-3.5 shrink-0" />
+                <span>Outreach & Assets</span>
+                <ChevronDown
+                  className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-150 ${
+                    isAssetsOpen ? "rotate-180" : ""
+                  }`}
+                />
+              </button>
+
+              {isAssetsOpen && (
+                <div className="absolute left-0 mt-2 w-84 rounded-2xl bg-white border border-[#F3E9D1] shadow-2xl p-2 z-50 animate-in fade-in zoom-in-95 duration-150">
+                  <div className="px-3 py-2 border-b border-[#F3E9D1]/50 mb-1">
+                    <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400">
+                      Community Drives, Facility & AI
+                    </span>
+                  </div>
+                  <div className="space-y-1">
+                    {assetLinks.map((item) => {
+                      const ItemIcon = item.icon;
+                      return (
+                        <Link
+                          key={item.href}
+                          href={item.href}
+                          onClick={() => setIsAssetsOpen(false)}
+                          className={`flex items-start gap-3 p-2.5 rounded-xl transition-all ${
+                            item.active
+                              ? "bg-[#FAF6EE] border border-[#F3E9D1] text-[#053845]"
+                              : "hover:bg-[#FAF6EE]/60 text-slate-700"
+                          }`}
+                        >
+                          <div className="w-7 h-7 rounded-lg bg-[#317786]/10 text-[#317786] flex items-center justify-center shrink-0 mt-0.5">
+                            <ItemIcon className="w-3.5 h-3.5" />
+                          </div>
+                          <div className="space-y-0.5 min-w-0">
+                            <span className="block text-xs font-bold text-[#053845]">
+                              {item.label}
+                            </span>
+                            <span className="block text-[11px] text-slate-500 leading-tight">
+                              {item.desc}
+                            </span>
+                          </div>
+                        </Link>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
           </nav>
         </div>
 
@@ -278,6 +435,8 @@ export function BloodBankTopNav({
               onClick={() => {
                 setIsNotificationsOpen(!isNotificationsOpen);
                 setIsProfileOpen(false);
+                setIsOperationsOpen(false);
+                setIsAssetsOpen(false);
               }}
               className="relative p-2 rounded-xl text-slate-500 hover:text-[#053845] hover:bg-[#FAF6EE] transition-colors focus:outline-none cursor-pointer"
               aria-label="View notifications"
@@ -361,6 +520,8 @@ export function BloodBankTopNav({
               onClick={() => {
                 setIsProfileOpen(!isProfileOpen);
                 setIsNotificationsOpen(false);
+                setIsOperationsOpen(false);
+                setIsAssetsOpen(false);
               }}
               className="flex items-center gap-2 p-1 rounded-full sm:rounded-xl hover:bg-[#FAF6EE] border border-transparent hover:border-[#F3E9D1] transition-all focus:outline-none cursor-pointer"
               aria-label="Facility Profile Menu"
@@ -442,25 +603,29 @@ export function BloodBankTopNav({
 
       {/* Mobile Menu Drawer */}
       {isMobileMenuOpen && (
-        <div className="md:hidden border-b border-[#F3E9D1] bg-white px-4 pt-2 pb-4 space-y-2 animate-in slide-in-from-top-2 duration-150">
-          <div className="p-3 bg-[#FAF6EE] rounded-xl border border-[#F3E9D1] mb-2">
+        <div className="md:hidden border-b border-[#F3E9D1] bg-white px-4 pt-2 pb-4 space-y-3 animate-in slide-in-from-top-2 duration-150">
+          <div className="p-3 bg-[#FAF6EE] rounded-xl border border-[#F3E9D1]">
             <span className="block text-xs font-bold text-[#053845] truncate">
               {bloodBankName}
             </span>
             <span className="block text-[11px] text-slate-500">
-              {city}
+              {city} &bull; {licenseNumber}
             </span>
           </div>
 
-          <nav className="space-y-1">
-            {navLinks.map((link) => {
+          {/* 1. Core Section */}
+          <div className="space-y-1">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider px-2">
+              Core Workflows
+            </span>
+            {coreLinks.map((link) => {
               const Icon = link.icon;
               return (
                 <Link
                   key={link.href}
                   href={link.href}
                   onClick={() => setIsMobileMenuOpen(false)}
-                  className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold ${
+                  className={`flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-semibold ${
                     link.active
                       ? "text-[#053845] bg-[#FAF6EE] border border-[#F3E9D1] font-bold"
                       : "text-slate-600 hover:bg-[#FAF6EE]/70"
@@ -471,12 +636,62 @@ export function BloodBankTopNav({
                 </Link>
               );
             })}
-          </nav>
+          </div>
+
+          {/* 2. Operations Section */}
+          <div className="space-y-1 pt-1 border-t border-[#F3E9D1]/50">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider px-2">
+              Clinical Operations
+            </span>
+            {operationLinks.map((link) => {
+              const Icon = link.icon;
+              return (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  onClick={() => setIsMobileMenuOpen(false)}
+                  className={`flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-semibold ${
+                    link.active
+                      ? "text-[#053845] bg-[#FAF6EE] border border-[#F3E9D1] font-bold"
+                      : "text-slate-600 hover:bg-[#FAF6EE]/70"
+                  }`}
+                >
+                  <Icon className="w-4 h-4 shrink-0 text-[#317786]" />
+                  <span>{link.label}</span>
+                </Link>
+              );
+            })}
+          </div>
+
+          {/* 3. Outreach & Assets Section */}
+          <div className="space-y-1 pt-1 border-t border-[#F3E9D1]/50">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider px-2">
+              Outreach, Assets & AI
+            </span>
+            {assetLinks.map((link) => {
+              const Icon = link.icon;
+              return (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  onClick={() => setIsMobileMenuOpen(false)}
+                  className={`flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-semibold ${
+                    link.active
+                      ? "text-[#053845] bg-[#FAF6EE] border border-[#F3E9D1] font-bold"
+                      : "text-slate-600 hover:bg-[#FAF6EE]/70"
+                  }`}
+                >
+                  <Icon className="w-4 h-4 shrink-0 text-[#317786]" />
+                  <span>{link.label}</span>
+                </Link>
+              );
+            })}
+          </div>
 
           <div className="pt-2 border-t border-[#F3E9D1]/70">
             <button
               onClick={handleSignOut}
-              className="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-medium text-rose-700 hover:bg-rose-50 cursor-pointer"
+              className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-medium text-rose-700 hover:bg-rose-50 cursor-pointer"
             >
               <LogOut className="w-4 h-4 text-rose-600" />
               <span>Sign Out</span>

@@ -266,84 +266,100 @@ export default function SurgeryPlanDetailPage({
   const isTerminal = plan.status === "COMPLETED" || plan.status === "CANCELLED";
 
   return (
-    <div className="min-h-screen bg-[#FAF6EE] text-[#053845] pb-24">
-      {/* Top Header */}
-      <div className="bg-white border-b border-[#F3E9D1]">
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-            <div>
-              <Link
-                href="/hospital/surgeries"
-                className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#317786] hover:underline mb-2"
-              >
-                <ArrowLeft className="w-3.5 h-3.5" />
-                <span>Back to All Surgeries</span>
-              </Link>
-              <div className="flex items-center gap-3">
-                <h1 className="text-2xl font-serif font-bold text-[#053845]">
-                  Surgery: {plan.procedurename}
-                </h1>
-                <span
-                  className={`px-3 py-1 rounded-full text-xs font-semibold border ${statusInfo.badge}`}
-                >
-                  {statusInfo.label}
-                </span>
-              </div>
-              <p className="text-xs text-slate-500 mt-1">
-                Case Ref: <span className="font-semibold text-slate-700">{plan.patientreference}</span> •
-                Scheduled for {formatDate(plan.scheduleddate)} at{" "}
-                {new Date(plan.scheduleddate).toLocaleTimeString([], {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })}
-              </p>
-            </div>
+    <div className="space-y-5 pb-16">
+      {/* 1. Page Breadcrumb */}
+      <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-xs text-slate-500">
+        <Link
+          href="/hospital/dashboard"
+          className="hover:text-[#053845] transition-colors"
+        >
+          Dashboard
+        </Link>
+        <span className="text-slate-300">/</span>
+        <Link
+          href="/hospital/surgeries"
+          className="hover:text-[#053845] transition-colors"
+        >
+          Surgery Planner
+        </Link>
+        <span className="text-slate-300">/</span>
+        <span className="font-semibold text-slate-700 truncate max-w-xs">{plan.procedurename}</span>
+      </nav>
 
-            {/* Quick Actions */}
-            <div className="flex items-center gap-2">
-              {!isTerminal && (
-                <>
-                  <button
-                    onClick={handleCheckAvailability}
-                    disabled={isCheckingStock}
-                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#317786] text-white text-xs font-medium hover:bg-[#286370] shadow-sm transition disabled:opacity-50"
-                  >
-                    {isCheckingStock ? (
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <Droplets className="w-3.5 h-3.5" />
-                    )}
-                    <span>Check Live Stock</span>
-                  </button>
-
-                  {plan.status !== "READY_FOR_SURGERY" &&
-                    (plan.status === "BLOOD_AVAILABLE" ||
-                      plan.status === "BLOOD_REQUESTED" ||
-                      plan.finalunits === 0) && (
-                      <button
-                        onClick={handleConfirmReadiness}
-                        className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 shadow-sm transition"
-                      >
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        <span>Confirm Readiness</span>
-                      </button>
-                    )}
-
-                  <button
-                    onClick={() => setShowCancelModal(true)}
-                    className="px-3 py-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 text-xs font-medium transition"
-                  >
-                    <Ban className="w-3.5 h-3.5 inline mr-1 text-slate-400" />
-                    <span>Cancel Surgery</span>
-                  </button>
-                </>
-              )}
-            </div>
+      {/* 2. Compact Page Header */}
+      <header className="pb-4 border-b border-[#317786]/15 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <h1 className="font-serif text-2xl sm:text-3xl font-bold text-[#053845] tracking-tight">
+              Surgery: {plan.procedurename}
+            </h1>
+            <span
+              className={`px-2.5 py-0.5 rounded-full text-xs font-semibold border ${statusInfo.badge}`}
+            >
+              {statusInfo.label}
+            </span>
           </div>
+          <p className="text-xs text-slate-500 mt-1">
+            Case Ref: <span className="font-semibold text-[#053845]">{plan.patientreference}</span> •
+            Scheduled for {formatDate(plan.scheduleddate)} at{" "}
+            {new Date(plan.scheduleddate).toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
+          </p>
         </div>
-      </div>
 
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 mt-6 space-y-6">
+        {/* Quick Actions */}
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <Link
+            href="/hospital/surgeries"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[#F3E9D1] bg-white text-xs font-semibold text-[#053845] hover:bg-[#FAF6EE] shadow-2xs transition-all"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span>All Surgeries</span>
+          </Link>
+
+          {!isTerminal && (
+            <>
+              <button
+                onClick={handleCheckAvailability}
+                disabled={isCheckingStock}
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-[#317786] text-white text-xs font-semibold hover:bg-[#245964] shadow-2xs transition disabled:opacity-50 cursor-pointer"
+              >
+                {isCheckingStock ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Droplets className="w-3.5 h-3.5" />
+                )}
+                <span>Check Live Stock</span>
+              </button>
+
+              {plan.status !== "READY_FOR_SURGERY" &&
+                (plan.status === "BLOOD_AVAILABLE" ||
+                  plan.status === "BLOOD_REQUESTED" ||
+                  plan.finalunits === 0) && (
+                  <button
+                    onClick={handleConfirmReadiness}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 shadow-2xs transition cursor-pointer"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>Confirm Readiness</span>
+                  </button>
+                )}
+
+              <button
+                onClick={() => setShowCancelModal(true)}
+                className="px-3 py-1.5 rounded-xl border border-[#F3E9D1] bg-white text-slate-600 hover:bg-[#fdf2f2] hover:text-[#A2363A] text-xs font-semibold transition cursor-pointer shadow-2xs"
+              >
+                <Ban className="w-3.5 h-3.5 inline mr-1 text-slate-400" />
+                <span>Cancel</span>
+              </button>
+            </>
+          )}
+        </div>
+      </header>
+
+      <div className="space-y-6">
         {/* Success Alert */}
         {actionSuccess && (
           <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm flex items-center justify-between">

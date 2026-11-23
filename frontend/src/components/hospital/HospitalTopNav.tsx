@@ -19,6 +19,7 @@ import {
   TrendingUp,
   Stethoscope,
   MessageSquare,
+  MoreHorizontal,
 } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { api } from "@/lib/api";
@@ -44,6 +45,7 @@ export function HospitalTopNav({
   const pathname = usePathname();
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const [isMoreOpen, setIsMoreOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [notifications, setNotifications] = useState<
@@ -59,6 +61,7 @@ export function HospitalTopNav({
 
   const profileRef = useRef<HTMLDivElement>(null);
   const notificationsRef = useRef<HTMLDivElement>(null);
+  const moreRef = useRef<HTMLDivElement>(null);
 
   const fetchNotifications = async () => {
     try {
@@ -87,6 +90,7 @@ export function HospitalTopNav({
   const handleSignOut = () => {
     setIsProfileOpen(false);
     setIsMobileMenuOpen(false);
+    setIsMoreOpen(false);
     clearAuthToken();
     router.push("/signin");
   };
@@ -130,6 +134,12 @@ export function HospitalTopNav({
       ) {
         setIsNotificationsOpen(false);
       }
+      if (
+        moreRef.current &&
+        !moreRef.current.contains(event.target as Node)
+      ) {
+        setIsMoreOpen(false);
+      }
     };
 
     document.addEventListener("mousedown", handleClickOutside);
@@ -142,6 +152,7 @@ export function HospitalTopNav({
       if (e.key === "Escape") {
         setIsProfileOpen(false);
         setIsNotificationsOpen(false);
+        setIsMoreOpen(false);
         setIsMobileMenuOpen(false);
       }
     }
@@ -154,10 +165,11 @@ export function HospitalTopNav({
     setIsMobileMenuOpen(false);
     setIsProfileOpen(false);
     setIsNotificationsOpen(false);
+    setIsMoreOpen(false);
   }, [pathname]);
 
-  // Clean 3 core links matching Donor and Requester
-  const navLinks = [
+  // Primary navigation links visible in top bar (Core workflow links)
+  const primaryNavLinks = [
     {
       href: "/hospital/dashboard",
       label: "Dashboard",
@@ -171,35 +183,52 @@ export function HospitalTopNav({
       active: pathname.startsWith("/hospital/requests") && pathname !== "/hospital/requests/new",
     },
     {
-      href: "/hospital/receipt",
-      label: "Delivery Receipt",
-      icon: Truck,
-      active: pathname.startsWith("/hospital/receipt"),
-    },
-    {
-      href: "/hospital/donors",
-      label: "Donor Registry",
-      icon: Users,
-      active: pathname.startsWith("/hospital/donors"),
-    },
-    {
       href: "/hospital/surgeries",
       label: "Surgery Planner",
       icon: Stethoscope,
       active: pathname.startsWith("/hospital/surgeries"),
     },
     {
-      href: "/hospital/insights",
-      label: "AI Insights",
-      icon: TrendingUp,
-      active: pathname.startsWith("/hospital/insights"),
+      href: "/hospital/receipt",
+      label: "Delivery Receipt",
+      icon: Truck,
+      hideBelowXl: true,
+      active: pathname.startsWith("/hospital/receipt"),
+    },
+  ];
+
+  // Secondary navigation links organized in "More" dropdown
+  const secondaryNavLinks = [
+    {
+      href: "/hospital/receipt",
+      label: "Delivery Receipt",
+      icon: Truck,
+      desc: "Log blood unit delivery receipts and physical chain-of-custody",
+      active: pathname.startsWith("/hospital/receipt"),
+      hideOnXl: true,
+    },
+    {
+      href: "/hospital/donors",
+      label: "Donor Registry",
+      icon: Users,
+      desc: "Manage hospital voluntary donor registry and contact roster",
+      active: pathname.startsWith("/hospital/donors"),
     },
     {
       href: "/hospital/sms",
       label: "Custom SMS",
       icon: MessageSquare,
+      desc: "Dispatch customized patient and emergency blood notifications",
       active: pathname.startsWith("/hospital/sms"),
     },
+  ];
+
+  const isSecondaryActive = secondaryNavLinks.some((l) => l.active);
+
+  // All navigation links for mobile drawer
+  const allMobileNavLinks = [
+    ...primaryNavLinks,
+    ...secondaryNavLinks,
   ];
 
   const getInitials = (name: string) => {
@@ -213,9 +242,9 @@ export function HospitalTopNav({
 
   return (
     <header className="sticky top-0 z-40 w-full bg-white/95 backdrop-blur-md border-b border-[#F3E9D1] transition-all">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
-        {/* Left: Brand Logo & Clean 3-link Navigation */}
-        <div className="flex items-center gap-6 lg:gap-8 min-w-0">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-3 lg:gap-6">
+        {/* Left: Brand Logo & Primary Navigation Links */}
+        <div className="flex items-center gap-4 lg:gap-6 min-w-0">
           <Link
             href="/hospital/dashboard"
             className="flex items-center gap-2 group focus:outline-none shrink-0"
@@ -226,43 +255,97 @@ export function HospitalTopNav({
               <span className="font-serif text-xl font-bold tracking-tight text-[#053845]">
                 Swastya
               </span>
-              <span className="text-[10px] tracking-wider uppercase font-semibold text-[#317786] bg-[#FAF6EE] border border-[#F3E9D1] px-2 py-0.5 rounded-full hidden sm:inline-block whitespace-nowrap">
+              <span className="text-[10px] tracking-wider uppercase font-semibold text-[#317786] bg-[#FAF6EE] border border-[#F3E9D1] px-2 py-0.5 rounded-full hidden xl:inline-block whitespace-nowrap">
                 Hospital Portal
               </span>
             </div>
           </Link>
 
-          {/* Desktop Nav Links */}
+          {/* Desktop Navigation Links */}
           <nav
-            className="hidden md:flex items-center gap-1.5"
+            className="hidden md:flex items-center gap-1 lg:gap-1.5"
             aria-label="Hospital Primary Navigation"
           >
-            {navLinks.map((link) => {
+            {primaryNavLinks.map((link) => {
               const Icon = link.icon;
               return (
                 <Link
                   key={link.href}
                   href={link.href}
-                  className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
+                  className={`${link.hideBelowXl ? "hidden xl:inline-flex" : "inline-flex"} items-center gap-1.5 px-2.5 lg:px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
                     link.active
                       ? "text-[#053845] bg-[#FAF6EE] border border-[#F3E9D1] shadow-2xs font-bold"
                       : "text-slate-600 hover:text-[#053845] hover:bg-[#FAF6EE]/70"
                   }`}
                 >
                   <Icon className="w-3.5 h-3.5 shrink-0" />
-                  <span className="whitespace-nowrap">{link.label}</span>
+                  <span>{link.label}</span>
                 </Link>
               );
             })}
+
+            {/* "More" Dropdown Menu (Prevents congestion and button collisions) */}
+            <div className="relative" ref={moreRef}>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsMoreOpen(!isMoreOpen);
+                  setIsProfileOpen(false);
+                  setIsNotificationsOpen(false);
+                }}
+                className={`inline-flex items-center gap-1 px-2.5 lg:px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
+                  isSecondaryActive || isMoreOpen
+                    ? "text-[#053845] bg-[#FAF6EE] border border-[#F3E9D1] shadow-2xs font-bold"
+                    : "text-slate-600 hover:text-[#053845] hover:bg-[#FAF6EE]/70"
+                }`}
+                aria-expanded={isMoreOpen}
+                aria-haspopup="true"
+              >
+                <span>More</span>
+                <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${isMoreOpen ? "rotate-180" : ""}`} />
+              </button>
+
+              {isMoreOpen && (
+                <div className="absolute left-0 mt-2 w-64 rounded-2xl bg-white border border-[#F3E9D1] shadow-xl p-1.5 z-50 animate-in fade-in zoom-in-95 duration-150">
+                  {secondaryNavLinks.map((sec) => {
+                    const SecIcon = sec.icon;
+                    return (
+                      <Link
+                        key={sec.href}
+                        href={sec.href}
+                        onClick={() => setIsMoreOpen(false)}
+                        className={`${sec.hideOnXl ? "xl:hidden " : ""}flex items-start gap-2.5 p-2.5 rounded-xl transition-all ${
+                          sec.active
+                            ? "bg-[#FAF6EE] text-[#053845] border border-[#F3E9D1]/80 font-bold"
+                            : "hover:bg-[#FAF6EE]/60 text-slate-700"
+                        }`}
+                      >
+                        <div className="w-7 h-7 rounded-lg bg-[#317786]/10 text-[#317786] flex items-center justify-center shrink-0 mt-0.5">
+                          <SecIcon className="w-3.5 h-3.5" />
+                        </div>
+                        <div className="min-w-0">
+                          <span className="block text-xs font-semibold text-[#053845]">
+                            {sec.label}
+                          </span>
+                          <span className="block text-[11px] text-slate-500 line-clamp-1">
+                            {sec.desc}
+                          </span>
+                        </div>
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </nav>
         </div>
 
-        {/* Right: Create Request, Notifications, Profile, Mobile Menu */}
+        {/* Right Section: Create Request Action, Notifications, Profile, Mobile Menu */}
         <div className="flex items-center gap-2 sm:gap-3 shrink-0">
           {/* Quick Action: Create Request */}
           <Link
             href="/hospital/requests/new"
-            className="hidden sm:inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold text-white bg-[#053845] hover:bg-[#317786] transition-all shadow-2xs hover:scale-[1.02]"
+            className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-white bg-[#053845] hover:bg-[#317786] transition-all shadow-2xs shrink-0"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>Create Request</span>
@@ -275,6 +358,7 @@ export function HospitalTopNav({
               onClick={() => {
                 setIsNotificationsOpen(!isNotificationsOpen);
                 setIsProfileOpen(false);
+                setIsMoreOpen(false);
               }}
               className="relative p-2 rounded-xl text-slate-600 hover:text-[#053845] hover:bg-[#FAF6EE] border border-transparent hover:border-[#F3E9D1] transition-all cursor-pointer"
               aria-label={`Notifications (${unreadCount} unread)`}
@@ -360,6 +444,7 @@ export function HospitalTopNav({
               onClick={() => {
                 setIsProfileOpen(!isProfileOpen);
                 setIsNotificationsOpen(false);
+                setIsMoreOpen(false);
               }}
               className="flex items-center gap-2 p-1 rounded-full sm:rounded-xl hover:bg-[#FAF6EE] border border-transparent hover:border-[#F3E9D1] transition-all focus:outline-none cursor-pointer"
               aria-label="Facility Profile Menu"
@@ -402,6 +487,14 @@ export function HospitalTopNav({
                   >
                     <Droplets className="w-3.5 h-3.5 text-[#317786]" />
                     <span>Blood Requests</span>
+                  </Link>
+                  <Link
+                    href="/hospital/surgeries"
+                    onClick={() => setIsProfileOpen(false)}
+                    className="flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium text-slate-700 hover:text-[#053845] hover:bg-[#FAF6EE] transition-colors"
+                  >
+                    <Stethoscope className="w-3.5 h-3.5 text-[#317786]" />
+                    <span>Surgery Planner</span>
                   </Link>
                   <Link
                     href="/hospital/donors"
@@ -460,7 +553,7 @@ export function HospitalTopNav({
           </div>
 
           <div className="space-y-1">
-            {navLinks.map((link) => {
+            {allMobileNavLinks.map((link) => {
               const Icon = link.icon;
               return (
                 <Link
@@ -500,7 +593,7 @@ export function HospitalTopNav({
             <button
               type="button"
               onClick={handleSignOut}
-              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium text-rose-600 hover:bg-rose-50 text-left"
+              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium text-rose-600 hover:bg-rose-50 text-left cursor-pointer"
             >
               <LogOut className="w-4 h-4 text-rose-500" />
               <span>Sign Out</span>

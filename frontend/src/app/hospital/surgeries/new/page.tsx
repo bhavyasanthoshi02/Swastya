@@ -172,34 +172,52 @@ export default function NewSurgeryPlanPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#FAF6EE] text-[#053845] pb-20">
-      {/* Top Header */}
-      <div className="bg-white border-b border-[#F3E9D1]">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6">
-          <Link
-            href="/hospital/surgeries"
-            className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#317786] hover:underline mb-2"
-          >
-            <ArrowLeft className="w-3.5 h-3.5" />
-            <span>Back to Surgeries</span>
-          </Link>
-          <div className="flex items-center gap-2">
-            <div className="w-9 h-9 rounded-lg bg-[#317786]/10 text-[#317786] flex items-center justify-center">
-              <Stethoscope className="w-5 h-5" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-serif font-bold text-[#053845]">
-                Plan New Surgical Procedure
-              </h1>
-              <p className="text-xs text-slate-500">
-                Pre-operative blood requirement planning and hospital MSBOS guideline crossmatch.
-              </p>
-            </div>
+    <div className="max-w-4xl mx-auto space-y-5 pb-16">
+      {/* 1. Page Breadcrumb */}
+      <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-xs text-slate-500">
+        <Link
+          href="/hospital/dashboard"
+          className="hover:text-[#053845] transition-colors"
+        >
+          Dashboard
+        </Link>
+        <span className="text-slate-300">/</span>
+        <Link
+          href="/hospital/surgeries"
+          className="hover:text-[#053845] transition-colors"
+        >
+          Surgery Planner
+        </Link>
+        <span className="text-slate-300">/</span>
+        <span className="font-semibold text-slate-700">Plan New Surgery</span>
+      </nav>
+
+      {/* 2. Compact Page Header */}
+      <header className="pb-4 border-b border-[#317786]/15 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-2xl bg-[#317786]/10 border border-[#317786]/20 text-[#317786] flex items-center justify-center shrink-0">
+            <Stethoscope className="w-5 h-5" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-serif font-bold text-[#053845]">
+              Plan New Surgical Procedure
+            </h1>
+            <p className="text-xs text-slate-500">
+              Pre-operative blood requirement planning and hospital MSBOS guideline crossmatch.
+            </p>
           </div>
         </div>
-      </div>
 
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 mt-8">
+        <Link
+          href="/hospital/surgeries"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[#F3E9D1] bg-white text-xs font-semibold text-[#053845] hover:bg-[#FAF6EE] shadow-2xs transition-all self-start sm:self-auto"
+        >
+          <ArrowLeft className="w-3.5 h-3.5" />
+          <span>Back to Surgeries</span>
+        </Link>
+      </header>
+
+      <div className="mt-2">
         {errorMessage && (
           <div className="mb-6 p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-sm flex items-center gap-3">
             <AlertCircle className="w-5 h-5 shrink-0 text-rose-600" />

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
 import {
   Stethoscope,
@@ -9,7 +9,6 @@ import {
   Filter,
   Calendar,
   Clock,
-  AlertTriangle,
   CheckCircle2,
   FileCheck2,
   RefreshCw,
@@ -18,6 +17,9 @@ import {
   AlertCircle,
   HelpCircle,
   ShieldAlert,
+  ArrowLeft,
+  X,
+  Building2,
 } from "lucide-react";
 import {
   api,
@@ -55,14 +57,19 @@ export default function SurgeryPlannerPage() {
   const [plans, setPlans] = useState<SurgeryPlanItem[]>([]);
   const [summary, setSummary] = useState<SurgeryPlanSummary | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Filters
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
   const [searchQuery, setSearchQuery] = useState<string>("");
 
-  const fetchData = useCallback(async () => {
-    setIsLoading(true);
+  const fetchData = useCallback(async (background = false) => {
+    if (background) {
+      setIsRefreshing(true);
+    } else {
+      setIsLoading(true);
+    }
     setError(null);
     try {
       const [plansRes, summaryRes] = await Promise.all([
@@ -74,16 +81,17 @@ export default function SurgeryPlannerPage() {
       ]);
 
       if (plansRes.success) {
-        setPlans(plansRes.data);
+        setPlans(plansRes.data || []);
       }
       if (summaryRes.success) {
-        setSummary(summaryRes.data);
+        setSummary(summaryRes.data || null);
       }
     } catch (err: any) {
       console.error("Error loading surgery planner data:", err);
       setError(err?.message || "Failed to load surgery plans. Please try again.");
     } finally {
       setIsLoading(false);
+      setIsRefreshing(false);
     }
   }, [statusFilter, searchQuery]);
 
@@ -91,332 +99,414 @@ export default function SurgeryPlannerPage() {
     fetchData();
   }, [fetchData]);
 
+  // Client-side filtered plans
+  const filteredPlans = useMemo(() => {
+    return plans.filter((p) => {
+      // 1. Search Query
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase().trim();
+        const matchesRef = p.patientreference.toLowerCase().includes(q);
+        const matchesProc = p.procedurename.toLowerCase().includes(q);
+        const matchesCategory = (p.category || "").toLowerCase().includes(q);
+        const matchesBlood = (p.patientbloodgroup || "").toLowerCase().includes(q);
+        if (!matchesRef && !matchesProc && !matchesCategory && !matchesBlood) {
+          return false;
+        }
+      }
+
+      // 2. Status Filter
+      if (statusFilter !== "ALL" && p.status !== statusFilter) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [plans, searchQuery, statusFilter]);
+
+  const hasActiveFilters = Boolean(searchQuery.trim()) || statusFilter !== "ALL";
+
+  const resetFilters = () => {
+    setSearchQuery("");
+    setStatusFilter("ALL");
+  };
+
   return (
-    <div className="min-h-screen bg-[#FAF6EE] text-[#053845] pb-16">
-      {/* Header Banner */}
-      <div className="bg-white border-b border-[#F3E9D1]">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2 text-[#317786] text-sm font-semibold uppercase tracking-wider mb-1">
-                <Stethoscope className="w-4 h-4" />
-                <span>Pre-Operative Care & Blood Planning</span>
-              </div>
-              <h1 className="text-3xl font-serif font-bold text-[#053845]">
+    <div className="space-y-5 pb-12">
+      {/* Top Breadcrumb Navigation */}
+      <div className="flex items-center justify-between gap-3">
+        <Link
+          href="/hospital/dashboard"
+          className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#053845] hover:text-[#317786] transition-colors"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          <span>Back to Hospital Dashboard</span>
+        </Link>
+
+        {!isLoading && !error && (
+          <span className="text-xs text-slate-500">
+            Showing {filteredPlans.length} of {plans.length}{" "}
+            {plans.length === 1 ? "procedure plan" : "procedure plans"}
+          </span>
+        )}
+      </div>
+
+      {/* 1. Compact Page Header directly on cream background */}
+      <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#317786]/15">
+        <div className="flex items-center gap-3.5 min-w-0">
+          <div className="w-11 h-11 rounded-2xl bg-[#317786]/10 border border-[#317786]/20 text-[#317786] flex items-center justify-center shrink-0">
+            <Stethoscope className="w-5 h-5 text-[#317786]" />
+          </div>
+          <div className="space-y-0.5 min-w-0">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <h1 className="font-serif text-2xl sm:text-3xl font-bold text-[#053845] tracking-tight">
                 Surgery Blood Requirement Planner
               </h1>
-              <p className="text-sm text-slate-600 mt-1 max-w-2xl">
-                Plan blood component needs for upcoming surgeries, verify against hospital-approved
-                clinical guidelines, inspect blood bank stock, and eliminate day-of-surgery shortages.
-              </p>
+              {!isLoading && !error && (
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-[#317786]/10 border border-[#317786]/20 text-[#317786]">
+                  {plans.length} Planned
+                </span>
+              )}
             </div>
-
-            <div className="flex items-center gap-3">
-              <button
-                onClick={() => fetchData()}
-                className="p-2.5 rounded-lg border border-[#F3E9D1] hover:bg-slate-50 text-slate-600 transition"
-                title="Refresh Plans"
-              >
-                <RefreshCw className="w-4 h-4" />
-              </button>
-
-              <Link
-                href="/hospital/surgeries/new"
-                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-[#317786] text-white hover:bg-[#286370] font-medium shadow-sm transition"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Plan New Surgery</span>
-              </Link>
-            </div>
-          </div>
-
-          {/* Metric Overview Cards */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-8">
-            {/* 1. Total Upcoming */}
-            <div className="bg-[#FAF8F5] border border-[#F3E9D1] rounded-xl p-4 flex items-center justify-between">
-              <div>
-                <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider block">
-                  Upcoming Surgeries
-                </span>
-                <span className="text-2xl font-serif font-bold text-[#053845] mt-1 block">
-                  {summary ? summary.upcomingTotal : "—"}
-                </span>
-                <span className="text-xs text-slate-500 mt-0.5 block">
-                  {summary?.next7Days ?? 0} in the next 7 days
-                </span>
-              </div>
-              <div className="w-10 h-10 rounded-lg bg-[#317786]/10 text-[#317786] flex items-center justify-center">
-                <Calendar className="w-5 h-5" />
-              </div>
-            </div>
-
-            {/* 2. Awaiting Review */}
-            <div className="bg-[#FAF8F5] border border-[#F3E9D1] rounded-xl p-4 flex items-center justify-between">
-              <div>
-                <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider block">
-                  Awaiting Clinical Signoff
-                </span>
-                <span className="text-2xl font-serif font-bold text-amber-700 mt-1 block">
-                  {summary ? summary.awaitingReview : "—"}
-                </span>
-                <span className="text-xs text-slate-500 mt-0.5 block">
-                  Requires clinician review
-                </span>
-              </div>
-              <div className="w-10 h-10 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center">
-                <FileCheck2 className="w-5 h-5" />
-              </div>
-            </div>
-
-            {/* 3. Shortages Identified */}
-            <div className="bg-[#FAF8F5] border border-[#F3E9D1] rounded-xl p-4 flex items-center justify-between">
-              <div>
-                <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider block">
-                  Shortage Identified
-                </span>
-                <span className="text-2xl font-serif font-bold text-rose-600 mt-1 block">
-                  {summary ? summary.shortageIdentified : "—"}
-                </span>
-                <span className="text-xs text-slate-500 mt-0.5 block">
-                  Action required before surgery
-                </span>
-              </div>
-              <div className="w-10 h-10 rounded-lg bg-rose-100 text-rose-700 flex items-center justify-center">
-                <ShieldAlert className="w-5 h-5" />
-              </div>
-            </div>
-
-            {/* 4. Ready / Arranged */}
-            <div className="bg-[#FAF8F5] border border-[#F3E9D1] rounded-xl p-4 flex items-center justify-between">
-              <div>
-                <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider block">
-                  Blood Ready / Arranged
-                </span>
-                <span className="text-2xl font-serif font-bold text-emerald-700 mt-1 block">
-                  {summary ? summary.bloodArranged : "—"}
-                </span>
-                <span className="text-xs text-slate-500 mt-0.5 block">
-                  Eligible inventory verified
-                </span>
-              </div>
-              <div className="w-10 h-10 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center">
-                <CheckCircle2 className="w-5 h-5" />
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Main Content Area */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-8">
-        {/* Filters Bar */}
-        <div className="bg-white border border-[#F3E9D1] rounded-xl p-4 mb-6 shadow-sm">
-          <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
-            {/* Search */}
-            <div className="relative flex-1">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Search by patient ID/reference or procedure name..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-4 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#317786]/20 focus:border-[#317786]"
-              />
-            </div>
-
-            {/* Status Filter */}
-            <div className="flex items-center gap-2 shrink-0">
-              <Filter className="w-4 h-4 text-slate-500" />
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className="px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#317786]/20 focus:border-[#317786] text-slate-700"
-              >
-                <option value="ALL">All Statuses</option>
-                <option value="AWAITING_CLINICAL_REVIEW">Awaiting Clinical Review</option>
-                <option value="REQUIREMENT_ESTIMATED">Requirement Estimated</option>
-                <option value="SHORTAGE_IDENTIFIED">Shortage Identified</option>
-                <option value="BLOOD_AVAILABLE">Blood Available</option>
-                <option value="BLOOD_REQUESTED">Blood Requested</option>
-                <option value="READY_FOR_SURGERY">Ready For Surgery</option>
-                <option value="PLANNED">Planned</option>
-                <option value="COMPLETED">Completed</option>
-                <option value="CANCELLED">Cancelled</option>
-              </select>
-            </div>
-          </div>
-        </div>
-
-        {/* Error Banner */}
-        {error && (
-          <div className="mb-6 p-4 rounded-xl bg-rose-50 border border-rose-200 flex items-center gap-3 text-rose-800 text-sm">
-            <AlertCircle className="w-5 h-5 shrink-0 text-rose-600" />
-            <p>{error}</p>
-          </div>
-        )}
-
-        {/* Table / List */}
-        {isLoading ? (
-          <div className="bg-white border border-[#F3E9D1] rounded-xl p-12 text-center text-slate-500">
-            <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-3 text-[#317786]" />
-            <p className="text-sm">Loading scheduled surgeries and blood readiness...</p>
-          </div>
-        ) : plans.length === 0 ? (
-          <div className="bg-white border border-[#F3E9D1] rounded-2xl p-12 text-center">
-            <div className="w-16 h-16 rounded-full bg-[#FAF6EE] border border-[#F3E9D1] flex items-center justify-center mx-auto mb-4 text-[#317786]">
-              <Stethoscope className="w-8 h-8" />
-            </div>
-            <h3 className="text-lg font-serif font-bold text-[#053845]">
-              No scheduled surgeries found
-            </h3>
-            <p className="text-sm text-slate-600 max-w-md mx-auto mt-1 mb-6">
-              Start planning upcoming surgical procedures to estimate blood requirements and check
-              blood bank availability well in advance.
+            <p className="text-sm text-slate-600">
+              Plan blood component needs for upcoming surgeries, verify against hospital-approved clinical guidelines, and eliminate day-of-surgery shortages.
             </p>
-            <Link
-              href="/hospital/surgeries/new"
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-[#317786] text-white hover:bg-[#286370] font-medium text-sm transition"
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2.5 shrink-0 self-start sm:self-center">
+          <button
+            type="button"
+            onClick={() => fetchData(true)}
+            disabled={isRefreshing}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-slate-700 bg-white hover:bg-[#FAF6EE] border border-[#F3E9D1] shadow-2xs transition-colors cursor-pointer disabled:opacity-50"
+            title="Refresh surgery plans"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 text-slate-500 ${isRefreshing ? "animate-spin" : ""}`} />
+            <span>Refresh</span>
+          </button>
+
+          <Link
+            href="/hospital/surgeries/new"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold text-white bg-[#053845] hover:bg-[#317786] transition-all shadow-2xs"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>Plan New Surgery</span>
+          </Link>
+        </div>
+      </header>
+
+      {/* 2. Metric Overview Cards directly on cream background */}
+      <section aria-label="Surgery Summary Metrics" className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
+        {/* 1. Total Upcoming */}
+        <div className="bg-white rounded-2xl border border-[#F3E9D1] p-4 shadow-2xs flex items-center justify-between">
+          <div>
+            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">
+              Upcoming Surgeries
+            </span>
+            <span className="text-2xl font-serif font-bold text-[#053845] mt-0.5 block">
+              {summary ? summary.upcomingTotal : (isLoading ? "…" : "0")}
+            </span>
+            <span className="text-xs text-slate-500 mt-0.5 block">
+              {summary?.next7Days ?? 0} in next 7 days
+            </span>
+          </div>
+          <div className="w-10 h-10 rounded-2xl bg-[#317786]/10 border border-[#317786]/20 text-[#317786] flex items-center justify-center shrink-0">
+            <Calendar className="w-5 h-5" />
+          </div>
+        </div>
+
+        {/* 2. Awaiting Review */}
+        <div className="bg-white rounded-2xl border border-[#F3E9D1] p-4 shadow-2xs flex items-center justify-between">
+          <div>
+            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">
+              Clinical Review
+            </span>
+            <span className="text-2xl font-serif font-bold text-amber-700 mt-0.5 block">
+              {summary ? summary.awaitingReview : (isLoading ? "…" : "0")}
+            </span>
+            <span className="text-xs text-slate-500 mt-0.5 block">
+              Requires clinician review
+            </span>
+          </div>
+          <div className="w-10 h-10 rounded-2xl bg-amber-50 border border-amber-200 text-amber-700 flex items-center justify-center shrink-0">
+            <FileCheck2 className="w-5 h-5" />
+          </div>
+        </div>
+
+        {/* 3. Shortages Identified */}
+        <div className="bg-white rounded-2xl border border-[#F3E9D1] p-4 shadow-2xs flex items-center justify-between">
+          <div>
+            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">
+              Shortage Identified
+            </span>
+            <span className="text-2xl font-serif font-bold text-rose-600 mt-0.5 block">
+              {summary ? summary.shortageIdentified : (isLoading ? "…" : "0")}
+            </span>
+            <span className="text-xs text-slate-500 mt-0.5 block">
+              Action required before surgery
+            </span>
+          </div>
+          <div className="w-10 h-10 rounded-2xl bg-rose-50 border border-rose-200 text-rose-700 flex items-center justify-center shrink-0">
+            <ShieldAlert className="w-5 h-5" />
+          </div>
+        </div>
+
+        {/* 4. Ready / Arranged */}
+        <div className="bg-white rounded-2xl border border-[#F3E9D1] p-4 shadow-2xs flex items-center justify-between">
+          <div>
+            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">
+              Blood Ready / Arranged
+            </span>
+            <span className="text-2xl font-serif font-bold text-emerald-700 mt-0.5 block">
+              {summary ? summary.bloodArranged : (isLoading ? "…" : "0")}
+            </span>
+            <span className="text-xs text-slate-500 mt-0.5 block">
+              Eligible inventory verified
+            </span>
+          </div>
+          <div className="w-10 h-10 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-700 flex items-center justify-center shrink-0">
+            <CheckCircle2 className="w-5 h-5" />
+          </div>
+        </div>
+      </section>
+
+      {/* 3. Compact Search & Filter Toolbar directly on cream background */}
+      <section
+        aria-label="Search and filter surgical procedure plans"
+        className="flex flex-col lg:flex-row lg:items-center justify-between gap-3"
+      >
+        <div className="relative w-full lg:w-96">
+          <Search className="w-4 h-4 text-[#317786] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <input
+            type="text"
+            placeholder="Search by patient ID, procedure name, category..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full pl-10 pr-8 py-2 text-xs rounded-xl border border-[#F3E9D1] bg-white shadow-2xs focus:outline-none focus:border-[#317786] transition-colors text-[#053845]"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery("")}
+              aria-label="Clear search"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
             >
-              <Plus className="w-4 h-4" />
-              <span>Plan First Surgery</span>
-            </Link>
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+
+        {/* Status Filter Dropdown */}
+        <div className="flex items-center gap-2 self-start lg:self-auto">
+          <Filter className="w-3.5 h-3.5 text-[#317786] shrink-0" />
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="px-3 py-2 text-xs rounded-xl border border-[#F3E9D1] bg-white text-[#053845] shadow-2xs focus:outline-none focus:border-[#317786] transition-colors cursor-pointer"
+          >
+            <option value="ALL">All Statuses</option>
+            <option value="AWAITING_CLINICAL_REVIEW">Awaiting Clinical Review</option>
+            <option value="REQUIREMENT_ESTIMATED">Requirement Estimated</option>
+            <option value="SHORTAGE_IDENTIFIED">Shortage Identified</option>
+            <option value="BLOOD_AVAILABLE">Blood Available</option>
+            <option value="BLOOD_REQUESTED">Blood Requested</option>
+            <option value="READY_FOR_SURGERY">Ready For Surgery</option>
+            <option value="PLANNED">Planned</option>
+            <option value="COMPLETED">Completed</option>
+            <option value="CANCELLED">Cancelled</option>
+          </select>
+
+          {hasActiveFilters && (
+            <button
+              type="button"
+              onClick={resetFilters}
+              className="text-xs text-slate-500 hover:text-[#053845] underline ml-1 cursor-pointer"
+            >
+              Reset
+            </button>
+          )}
+        </div>
+      </section>
+
+      {/* Error Alert */}
+      {error && (
+        <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-800 text-xs flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      {/* 4. Surgery Plans Table / Listing Area */}
+      {isLoading ? (
+        <div className="bg-white border border-[#F3E9D1] rounded-2xl p-14 text-center text-slate-500 shadow-2xs">
+          <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-3 text-[#317786]" />
+          <p className="text-xs font-medium">Loading scheduled surgeries and blood readiness...</p>
+        </div>
+      ) : plans.length === 0 ? (
+        <div className="bg-white border border-[#F3E9D1] rounded-3xl p-10 sm:p-14 text-center shadow-2xs max-w-md mx-auto my-6">
+          <div className="w-12 h-12 rounded-2xl bg-[#317786]/10 border border-[#317786]/20 flex items-center justify-center mx-auto mb-4 text-[#317786]">
+            <Stethoscope className="w-6 h-6" />
           </div>
-        ) : (
-          <div className="bg-white border border-[#F3E9D1] rounded-xl shadow-sm overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead className="bg-[#FAF8F5] border-b border-[#F3E9D1] text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                  <tr>
-                    <th className="py-3.5 px-4">Patient Reference</th>
-                    <th className="py-3.5 px-4">Procedure & Category</th>
-                    <th className="py-3.5 px-4">Scheduled Date</th>
-                    <th className="py-3.5 px-4">Blood Requirement</th>
-                    <th className="py-3.5 px-4">Readiness Status</th>
-                    <th className="py-3.5 px-4 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {plans.map((p) => {
-                    const statusInfo = formatStatus(p.status);
-                    const unitsRequired = p.finalunits !== null ? p.finalunits : p.baselineunits;
-                    const component = p.finalcomponent || p.baselinecomponent;
+          <h3 className="text-lg font-serif font-bold text-[#053845]">
+            No scheduled surgeries found
+          </h3>
+          <p className="text-xs text-slate-600 max-w-xs mx-auto mt-1 mb-6 leading-relaxed">
+            Start planning upcoming surgical procedures to estimate blood requirements and check blood bank availability well in advance.
+          </p>
+          <Link
+            href="/hospital/surgeries/new"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#317786] hover:bg-[#245964] text-white font-semibold text-xs transition shadow-2xs"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Plan First Surgery</span>
+          </Link>
+        </div>
+      ) : filteredPlans.length === 0 ? (
+        <div className="bg-white border border-[#F3E9D1] rounded-2xl p-10 text-center shadow-2xs">
+          <p className="text-xs text-slate-600">No surgery plans match your current filter parameters.</p>
+          <button
+            type="button"
+            onClick={resetFilters}
+            className="mt-3 px-3.5 py-1.5 rounded-xl bg-[#FAF6EE] text-[#053845] border border-[#F3E9D1] text-xs font-semibold hover:bg-[#F3E9D1]/50 cursor-pointer"
+          >
+            Clear Filters
+          </button>
+        </div>
+      ) : (
+        <div className="bg-white border border-[#F3E9D1] rounded-2xl shadow-2xs overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-[#FAF6EE]/50 border-b border-[#F3E9D1] text-[11px] font-semibold text-[#053845] uppercase tracking-wider">
+                <tr>
+                  <th className="py-3 px-4">Patient Reference</th>
+                  <th className="py-3 px-4">Procedure & Category</th>
+                  <th className="py-3 px-4">Scheduled Date</th>
+                  <th className="py-3 px-4">Blood Requirement</th>
+                  <th className="py-3 px-4">Readiness Status</th>
+                  <th className="py-3 px-4 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#F3E9D1]/50">
+                {filteredPlans.map((p) => {
+                  const statusInfo = formatStatus(p.status);
+                  const unitsRequired = p.finalunits !== null ? p.finalunits : p.baselineunits;
+                  const component = p.finalcomponent || p.baselinecomponent;
 
-                    return (
-                      <tr
-                        key={p.surgeryid}
-                        className="hover:bg-slate-50/70 transition"
-                      >
-                        {/* Patient info */}
-                        <td className="py-4 px-4 align-top">
-                          <div className="font-semibold text-[#053845]">
-                            {p.patientreference}
-                          </div>
-                          <div className="text-xs text-slate-500 mt-0.5">
-                            {p.patientage} yrs • {p.patientgender}
-                          </div>
-                          <div className="mt-1">
-                            {p.patientbloodgroup ? (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200">
-                                <Droplets className="w-3 h-3" />
-                                {p.patientbloodgroup.replace("_POSITIVE", "+").replace("_NEGATIVE", "-")}
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200">
-                                <HelpCircle className="w-3 h-3" />
-                                Typing Pending
-                              </span>
-                            )}
-                          </div>
-                        </td>
-
-                        {/* Procedure */}
-                        <td className="py-4 px-4 align-top">
-                          <div className="font-medium text-[#053845]">
-                            {p.procedurename}
-                          </div>
-                          <div className="text-xs text-slate-500 mt-0.5">
-                            {p.category || "General Surgery"}
-                          </div>
-                          {p.procedureconfig && (
-                            <span className="inline-block mt-1 text-[11px] text-[#317786] bg-[#317786]/10 px-2 py-0.5 rounded border border-[#317786]/20">
-                              MSBOS: {p.procedureconfig.guidelinesource.split(" ")[0]} v{p.procedureconfig.guidelineversion}
+                  return (
+                    <tr
+                      key={p.surgeryid}
+                      className="hover:bg-[#FAF6EE]/30 transition-colors"
+                    >
+                      {/* Patient info */}
+                      <td className="py-3.5 px-4 align-top">
+                        <div className="font-semibold text-[#053845]">
+                          {p.patientreference}
+                        </div>
+                        <div className="text-[11px] text-slate-500 mt-0.5">
+                          {p.patientage} yrs • {p.patientgender}
+                        </div>
+                        <div className="mt-1">
+                          {p.patientbloodgroup ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold bg-rose-50 text-rose-700 border border-rose-200">
+                              <Droplets className="w-3 h-3" />
+                              {p.patientbloodgroup.replace("_POSITIVE", "+").replace("_NEGATIVE", "-")}
                             </span>
-                          )}
-                        </td>
-
-                        {/* Scheduled Date */}
-                        <td className="py-4 px-4 align-top">
-                          <div className="flex items-center gap-1.5 text-slate-800 font-medium">
-                            <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                            <span>{formatDate(p.scheduleddate)}</span>
-                          </div>
-                          <div className="flex items-center gap-1.5 text-xs text-slate-500 mt-0.5">
-                            <Clock className="w-3 h-3 text-slate-400" />
-                            <span>
-                              {new Date(p.scheduleddate).toLocaleTimeString([], {
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              })}
-                              {p.expecteddurationminutes && ` (${p.expecteddurationminutes} mins)`}
-                            </span>
-                          </div>
-                        </td>
-
-                        {/* Blood Requirement */}
-                        <td className="py-4 px-4 align-top">
-                          {unitsRequired !== null && unitsRequired !== undefined ? (
-                            <div>
-                              <div className="font-semibold text-slate-800">
-                                {unitsRequired} unit(s) {component || "RBC"}
-                              </div>
-                              <div className="text-xs text-slate-500 mt-0.5">
-                                {p.finalunits !== null ? (
-                                  <span className="text-emerald-700 font-medium">Clinically Approved</span>
-                                ) : (
-                                  <span>Guideline Estimate</span>
-                                )}
-                              </div>
-                            </div>
                           ) : (
-                            <div className="text-xs text-amber-700 italic">
-                              Estimate unavailable (clinical review required)
-                            </div>
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200">
+                              <HelpCircle className="w-3 h-3" />
+                              Typing Pending
+                            </span>
                           )}
-                        </td>
+                        </div>
+                      </td>
 
-                        {/* Status */}
-                        <td className="py-4 px-4 align-top">
-                          <span
-                            className={`inline-block px-2.5 py-1 rounded-full text-xs font-medium border ${statusInfo.badge}`}
-                          >
-                            {statusInfo.label}
+                      {/* Procedure */}
+                      <td className="py-3.5 px-4 align-top">
+                        <div className="font-semibold text-[#053845]">
+                          {p.procedurename}
+                        </div>
+                        <div className="text-[11px] text-slate-500 mt-0.5">
+                          {p.category || "General Surgery"}
+                        </div>
+                        {p.procedureconfig && (
+                          <span className="inline-block mt-1 text-[10px] text-[#317786] bg-[#317786]/10 px-2 py-0.5 rounded border border-[#317786]/20 font-medium">
+                            MSBOS: {p.procedureconfig.guidelinesource.split(" ")[0]} v{p.procedureconfig.guidelineversion}
                           </span>
-                          {p.linkedrequest && (
-                            <div className="mt-1 text-[11px] text-indigo-700 font-medium">
-                              Linked Requisition Active
-                            </div>
-                          )}
-                        </td>
+                        )}
+                      </td>
 
-                        {/* Actions */}
-                        <td className="py-4 px-4 align-top text-right">
-                          <Link
-                            href={`/hospital/surgeries/${p.surgeryid}`}
-                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-[#F3E9D1] bg-white text-xs font-medium text-[#053845] hover:bg-[#FAF8F5] transition"
-                          >
-                            <span>Manage Plan</span>
-                            <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
-                          </Link>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                      {/* Scheduled Date */}
+                      <td className="py-3.5 px-4 align-top">
+                        <div className="flex items-center gap-1.5 text-[#053845] font-semibold">
+                          <Calendar className="w-3.5 h-3.5 text-[#317786]" />
+                          <span>{formatDate(p.scheduleddate)}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-[11px] text-slate-500 mt-0.5">
+                          <Clock className="w-3 h-3 text-slate-400" />
+                          <span>
+                            {new Date(p.scheduleddate).toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                            {p.expecteddurationminutes && ` (${p.expecteddurationminutes} mins)`}
+                          </span>
+                        </div>
+                      </td>
+
+                      {/* Blood Requirement */}
+                      <td className="py-3.5 px-4 align-top">
+                        {unitsRequired !== null && unitsRequired !== undefined ? (
+                          <div>
+                            <div className="font-semibold text-[#053845]">
+                              {unitsRequired} unit(s) {component || "RBC"}
+                            </div>
+                            <div className="text-[11px] text-slate-500 mt-0.5">
+                              {p.finalunits !== null ? (
+                                <span className="text-emerald-700 font-medium">Clinically Approved</span>
+                              ) : (
+                                <span>Guideline Estimate</span>
+                              )}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-[11px] text-amber-700 italic">
+                            Estimate unavailable (clinical review required)
+                          </div>
+                        )}
+                      </td>
+
+                      {/* Readiness Status */}
+                      <td className="py-3.5 px-4 align-top">
+                        <span
+                          className={`inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${statusInfo.badge}`}
+                        >
+                          {statusInfo.label}
+                        </span>
+                        {p.linkedrequest && (
+                          <div className="mt-1 text-[10px] text-indigo-700 font-medium">
+                            Linked Requisition Active
+                          </div>
+                        )}
+                      </td>
+
+                      {/* Actions */}
+                      <td className="py-3.5 px-4 align-top text-right">
+                        <Link
+                          href={`/hospital/surgeries/${p.surgeryid}`}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border border-[#F3E9D1] bg-white text-xs font-semibold text-[#053845] hover:bg-[#FAF6EE] shadow-2xs transition-all"
+                        >
+                          <span>Manage Plan</span>
+                          <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
+                        </Link>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
