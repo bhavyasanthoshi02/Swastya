@@ -16,11 +16,13 @@ import {
   Inbox,
   Heart,
   Navigation,
+  Tent,
+  SlidersHorizontal,
 } from "lucide-react";
 import { api, NotificationItem } from "@/lib/api";
 import { formatTimeAgo, mapBloodGroupToDisplay, cleanNotificationMessage } from "@/lib/mappers";
 
-type DonorFilterTab = "all" | "unread" | "emergency";
+type DonorFilterTab = "all" | "unread" | "emergency" | "camps";
 
 function isEmergencyNotification(item: NotificationItem): boolean {
   const lowerType = item.type?.toLowerCase() || "";
@@ -32,6 +34,17 @@ function isEmergencyNotification(item: NotificationItem): boolean {
     lowerTitle.includes("emergency") ||
     lowerTitle.includes("urgent") ||
     urgency === "CRITICAL"
+  );
+}
+
+function isCampNotification(item: NotificationItem): boolean {
+  const lowerType = item.type?.toLowerCase() || "";
+  const lowerTitle = item.title?.toLowerCase() || "";
+  return (
+    lowerType === "camp" ||
+    Boolean(item.campid) ||
+    Boolean(item.camp) ||
+    lowerTitle.includes("camp")
   );
 }
 
@@ -165,10 +178,16 @@ export default function DonorNotificationsPage() {
     [notifications]
   );
 
+  const campCount = useMemo(
+    () => notifications.filter(isCampNotification).length,
+    [notifications]
+  );
+
   const filteredNotifications = useMemo(() => {
     return notifications.filter((item) => {
       if (filter === "unread") return !item.isread;
       if (filter === "emergency") return isEmergencyNotification(item);
+      if (filter === "camps") return isCampNotification(item);
       return true;
     });
   }, [notifications, filter]);
@@ -183,6 +202,14 @@ export default function DonorNotificationsPage() {
         icon: AlertTriangle,
         iconColor: "text-[#A2363A]",
         iconBg: "bg-rose-50",
+      };
+    }
+    if (isCampNotification(item)) {
+      return {
+        label: "Blood Camp Alert",
+        icon: Tent,
+        iconColor: "text-red-600",
+        iconBg: "bg-red-50",
       };
     }
     if (lowerTitle.includes("receipt") || lowerTitle.includes("completed")) {
@@ -263,8 +290,17 @@ export default function DonorNotificationsPage() {
           </p>
         </div>
 
-        {/* Refresh & Mark All as Read */}
-        <div className="flex items-center gap-2 self-start sm:self-center shrink-0">
+        {/* Refresh, Preferences & Mark All as Read */}
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-center shrink-0">
+          <Link
+            href="/donor/settings/notifications"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium text-slate-600 bg-white border border-[#F3E9D1] hover:bg-[#FAF6EE] hover:text-[#053845] transition-colors cursor-pointer shadow-2xs"
+            title="Notification preferences"
+          >
+            <SlidersHorizontal className="w-3.5 h-3.5 text-[#317786]" />
+            <span>Preferences</span>
+          </Link>
+
           <button
             type="button"
             onClick={() => fetchNotifications(false)}
@@ -359,6 +395,30 @@ export default function DonorNotificationsPage() {
               </span>
             )}
           </button>
+
+          <button
+            type="button"
+            onClick={() => setFilter("camps")}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer inline-flex items-center gap-1.5 ${
+              filter === "camps"
+                ? "bg-red-600 text-white shadow-2xs"
+                : "text-slate-600 hover:text-red-600 hover:bg-red-50/70"
+            }`}
+          >
+            <Tent className="w-3.5 h-3.5" />
+            <span>Blood Camps</span>
+            {hasLoadedSuccessfully && campCount > 0 && (
+              <span
+                className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+                  filter === "camps"
+                    ? "bg-white/20 text-white"
+                    : "bg-red-50 text-red-600"
+                }`}
+              >
+                {campCount}
+              </span>
+            )}
+          </button>
         </div>
 
         {hasLoadedSuccessfully && (
@@ -368,6 +428,8 @@ export default function DonorNotificationsPage() {
               ? "unread"
               : filter === "emergency"
               ? "emergency"
+              : filter === "camps"
+              ? "blood camp"
               : "total"}{" "}
             {filteredNotifications.length === 1 ? "notification" : "notifications"}
           </div>
@@ -420,6 +482,8 @@ export default function DonorNotificationsPage() {
               <CheckCheck className="w-5 h-5 text-[#317786]" />
             ) : filter === "emergency" ? (
               <AlertTriangle className="w-5 h-5 text-[#317786]" />
+            ) : filter === "camps" ? (
+              <Tent className="w-5 h-5 text-red-600" />
             ) : (
               <Inbox className="w-5 h-5 text-[#317786]" />
             )}
@@ -430,6 +494,8 @@ export default function DonorNotificationsPage() {
               ? "No unread notifications"
               : filter === "emergency"
               ? "No emergency alerts"
+              : filter === "camps"
+              ? "No blood camp notifications"
               : "You're all caught up"}
           </h2>
 
@@ -438,6 +504,8 @@ export default function DonorNotificationsPage() {
               ? "You've read all recent alerts. Switch to All to view earlier notifications."
               : filter === "emergency"
               ? "Urgent matching blood requests in your area will appear here."
+              : filter === "camps"
+              ? "Nearby blood camps, registration confirmations and schedule reminders will appear here."
               : "New blood requests, donor responses and important updates will appear here."}
           </p>
 
@@ -463,10 +531,33 @@ export default function DonorNotificationsPage() {
             const TypeIcon = typeConfig.icon;
             const isUnread = !item.isread;
             const isEmergency = isEmergencyNotification(item);
+            const isCamp = isCampNotification(item);
             const relatedRequestId = item.requestid || item.bloodrequests?.requestid;
-            const actionHref = relatedRequestId
-              ? `/donor/requests?requestId=${relatedRequestId}`
-              : "/donor/dashboard";
+            
+            // Resolve action target
+            let actionHref = "/donor/dashboard";
+            let actionLabel = "Open Dashboard";
+            let actionIcon = ArrowRight;
+
+            if (item.actionurl) {
+              actionHref = item.actionurl;
+              if (item.actionurl.includes("/my-camps")) {
+                actionLabel = "My Registrations";
+              } else if (item.actionurl.includes("/camps/")) {
+                actionLabel = "View Camp";
+              } else {
+                actionLabel = "View Details";
+              }
+            } else if (item.campid || item.camp?.campid) {
+              actionHref = `/donor/camps/${item.campid || item.camp?.campid}`;
+              actionLabel = "View Camp Details";
+            } else if (isCamp) {
+              actionHref = "/donor/camps";
+              actionLabel = "Discover Camps";
+            } else if (relatedRequestId) {
+              actionHref = `/donor/requests?requestId=${relatedRequestId}`;
+              actionLabel = `REQ-${relatedRequestId.slice(0, 8).toUpperCase()}`;
+            }
 
             return (
               <article
@@ -530,18 +621,28 @@ export default function DonorNotificationsPage() {
                               handleMarkAsRead(item.notificationid);
                             }
                           }}
-                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-[#FAF6EE] border border-[#F3E9D1] text-[#317786] hover:text-[#053845] hover:border-[#317786]/40 transition-colors"
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors ${
+                            isCamp
+                              ? "bg-red-50 border border-red-200 text-red-700 hover:bg-red-100"
+                              : "bg-[#FAF6EE] border border-[#F3E9D1] text-[#317786] hover:text-[#053845] hover:border-[#317786]/40"
+                          }`}
                         >
-                          {relatedRequestId ? (
-                            <>
-                              <Droplet className="w-3 h-3 text-[#B94F30] fill-current" />
-                              <span>REQ-{relatedRequestId.slice(0, 8).toUpperCase()}</span>
-                            </>
-                          ) : (
-                            <span>Open Dashboard</span>
-                          )}
+                          {isCamp ? (
+                            <Tent className="w-3 h-3 text-red-600" />
+                          ) : relatedRequestId ? (
+                            <Droplet className="w-3 h-3 text-[#B94F30] fill-current" />
+                          ) : null}
+                          <span>{actionLabel}</span>
                           <ArrowRight className="w-3 h-3" />
                         </Link>
+
+                        {item.camp && (
+                          <span className="text-[11px] text-slate-500 font-medium inline-flex items-center gap-1">
+                            <span className="text-red-700 font-semibold">{item.camp.campname}</span>
+                            <span>&middot;</span>
+                            <span>{item.camp.venuename}, {item.camp.city}</span>
+                          </span>
+                        )}
 
                         {item.bloodrequests && (
                           <span className="text-[11px] text-slate-500">

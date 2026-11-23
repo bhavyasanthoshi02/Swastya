@@ -10,6 +10,7 @@ import { approval_status, blood_group, blood_component, inventory_operation_type
 import { UnitTraceabilityService, validateTtiPanelAndOverallStatus } from "../services/unitTraceability.service";
 import { BloodDemandForecastService } from "../services/bloodDemandForecast.service";
 import { BloodExpiryPredictionService } from "../services/bloodExpiryPrediction.service";
+import { RegionalAiInsightsService } from "../services/regionalAiInsights.service";
 import { buildScopedIdempotencyKey } from "../utils/idempotency";
 
 const router = Router();
@@ -354,6 +355,21 @@ router.get(
             const timeframeDays = req.query.timeframeDays ? parseInt(String(req.query.timeframeDays), 10) : 30;
             const bloodGroup = req.query.bloodGroup as blood_group | undefined;
             const bloodComponent = req.query.bloodComponent as blood_component | undefined;
+            const scopeQuery = String(req.query.scope || "").toUpperCase();
+
+            if (scopeQuery === "DISTRICT" || scopeQuery === "STATE") {
+                const regional = await RegionalAiInsightsService.getBloodBankInsights({
+                    bloodBankId: bloodBank.bloodbankid,
+                    scope: scopeQuery as "DISTRICT" | "STATE",
+                    timeframeDays,
+                    bloodGroup,
+                    bloodComponent,
+                });
+                return res.status(200).json({
+                    success: true,
+                    data: regional,
+                });
+            }
 
             const forecast = await BloodDemandForecastService.calculateDemandForecast({
                 facilityType: "BLOOD_BANK",
@@ -393,6 +409,21 @@ router.get(
             const timeframeDays = req.query.timeframeDays ? parseInt(String(req.query.timeframeDays), 10) : 30;
             const bloodGroup = req.query.bloodGroup as blood_group | undefined;
             const bloodComponent = req.query.bloodComponent as blood_component | undefined;
+            const scopeQuery = String(req.query.scope || "").toUpperCase();
+
+            if (scopeQuery === "DISTRICT" || scopeQuery === "STATE") {
+                const regional = await RegionalAiInsightsService.getBloodBankInsights({
+                    bloodBankId,
+                    scope: scopeQuery as "DISTRICT" | "STATE",
+                    timeframeDays,
+                    bloodGroup,
+                    bloodComponent,
+                });
+                return res.status(200).json({
+                    success: true,
+                    data: regional,
+                });
+            }
 
             const forecast = await BloodDemandForecastService.calculateDemandForecast({
                 facilityType: "BLOOD_BANK",
@@ -411,6 +442,98 @@ router.get(
             return res.status(500).json({
                 success: false,
                 message: error.message || "Failed to generate blood demand forecast",
+            });
+        }
+    }
+);
+
+/*
+ * GET REGIONAL AI INSIGHTS FOR AUTHENTICATED BLOOD BANK
+ * GET /bloodbanks/me/analytics/regional-insights
+ */
+router.get(
+    "/me/analytics/regional-insights",
+    authenticate,
+    authorize("BLOOD_BANK", "ADMIN"),
+    requireApprovedBloodBank,
+    async (req: Request, res: Response) => {
+        try {
+            const user = (req as any).user;
+            const bloodBank = await prisma.bloodbanks.findUnique({
+                where: { userid: user.userid },
+            });
+
+            if (!bloodBank) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Blood bank facility profile not found",
+                });
+            }
+
+            const rawScope = String(req.query.scope || "INVENTORY").toUpperCase();
+            const scope = (rawScope === "DISTRICT" || rawScope === "STATE") ? rawScope : "INVENTORY";
+            const timeframeDays = req.query.timeframeDays ? parseInt(String(req.query.timeframeDays), 10) : 30;
+            const bloodGroup = req.query.bloodGroup as blood_group | undefined;
+            const bloodComponent = req.query.bloodComponent as blood_component | undefined;
+
+            const insights = await RegionalAiInsightsService.getBloodBankInsights({
+                bloodBankId: bloodBank.bloodbankid,
+                scope,
+                timeframeDays,
+                bloodGroup,
+                bloodComponent,
+            });
+
+            return res.status(200).json({
+                success: true,
+                data: insights,
+            });
+        } catch (error: any) {
+            console.error("Error generating blood bank regional AI insights:", error);
+            return res.status(500).json({
+                success: false,
+                message: error.message || "Failed to generate blood bank regional AI insights",
+            });
+        }
+    }
+);
+
+/*
+ * GET REGIONAL AI INSIGHTS FOR SPECIFIC BLOOD BANK (ADMIN OR OWNER)
+ * GET /bloodbanks/:bloodBankId/analytics/regional-insights
+ */
+router.get(
+    "/:bloodBankId/analytics/regional-insights",
+    authenticate,
+    authorize("BLOOD_BANK", "ADMIN"),
+    checkBloodBankOwnership,
+    requireApprovedBloodBank,
+    async (req: Request, res: Response) => {
+        try {
+            const bloodBankId = req.params.bloodBankId as string;
+            const rawScope = String(req.query.scope || "INVENTORY").toUpperCase();
+            const scope = (rawScope === "DISTRICT" || rawScope === "STATE") ? rawScope : "INVENTORY";
+            const timeframeDays = req.query.timeframeDays ? parseInt(String(req.query.timeframeDays), 10) : 30;
+            const bloodGroup = req.query.bloodGroup as blood_group | undefined;
+            const bloodComponent = req.query.bloodComponent as blood_component | undefined;
+
+            const insights = await RegionalAiInsightsService.getBloodBankInsights({
+                bloodBankId,
+                scope,
+                timeframeDays,
+                bloodGroup,
+                bloodComponent,
+            });
+
+            return res.status(200).json({
+                success: true,
+                data: insights,
+            });
+        } catch (error: any) {
+            console.error("Error generating blood bank regional AI insights by ID:", error);
+            return res.status(500).json({
+                success: false,
+                message: error.message || "Failed to generate blood bank regional AI insights",
             });
         }
     }

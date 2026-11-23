@@ -31,6 +31,7 @@ model bloodbanks {
   requisitionassignments requisitionassignments[]
   bloodreservations  bloodreservations[]
   unitdispositionhistory unitdispositionhistory[]
+  donationcamps      donationcamps[]
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -71,6 +72,7 @@ model bloodrequests {
   requisitionassignments requisitionassignments[]
   bloodreservations    bloodreservations[]
   clinicalcrossmatches clinicalcrossmatches[]
+  surgeryplans         surgeryplans[]
 
   @@index([status], map: "idx_bloodrequests_status")
 }
@@ -116,6 +118,8 @@ model donors {
   donationhistory    donationhistory[]
   hospitaldonors     hospitaldonors[]
   broadcastdeliveries broadcastdeliveries[]
+  campregistrations  campregistrations[]
+  notificationpreferences donornotificationpreferences?
   users              users                @relation(fields: [userid], references: [userid], onDelete: Cascade, onUpdate: NoAction, map: "fk_donor_user")
 
   @@index([bloodgroup], map: "idx_donors_bloodgroup")
@@ -159,6 +163,8 @@ model hospitals {
   users                                                               users                  @relation(fields: [userid], references: [userid], onDelete: Cascade, onUpdate: NoAction, map: "fk_hospital_user")
   prescription                                                        prescription[]
   prescriptionhistory                                                 prescriptionhistory[]
+  procedurebloodconfigs                                               procedurebloodconfigs[]
+  surgeryplans                                                        surgeryplans[]
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -187,17 +193,25 @@ model notification {
   notificationid String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userid         String            @db.Uuid
   requestid      String?           @db.Uuid
+  campid         String?           @db.Uuid
+  registrationid String?           @db.Uuid
   type           notification_type
   title          String            @db.VarChar(255)
   message        String
   isread         Boolean?          @default(false)
   sentat         DateTime?         @default(now()) @db.Timestamp(6)
   readat         DateTime?         @db.Timestamp(6)
+  actionurl      String?           @db.VarChar(255)
+  idempotencykey String?           @unique(map: "uq_notification_idempotencykey") @db.VarChar(255)
   bloodrequests  bloodrequests?    @relation(fields: [requestid], references: [requestid], onDelete: NoAction, onUpdate: NoAction, map: "fk_notification_request")
+  camp           donationcamps?    @relation(fields: [campid], references: [campid], onDelete: SetNull, onUpdate: NoAction, map: "fk_notification_camp")
+  registration   campregistrations? @relation(fields: [registrationid], references: [registrationid], onDelete: SetNull, onUpdate: NoAction, map: "fk_notification_camp_reg")
   users          users             @relation(fields: [userid], references: [userid], onDelete: Cascade, onUpdate: NoAction, map: "fk_notification_user")
   broadcastdeliveries broadcastdeliveries[]
 
   @@index([userid], map: "idx_notification_user")
+  @@index([campid], map: "idx_notification_camp")
+  @@index([registrationid], map: "idx_notification_camp_reg")
 }
 
 model prescription {
@@ -364,6 +378,8 @@ model users {
   role                 user_role
   isactive             Boolean?               @default(true)
   emailverified        Boolean?               @default(false)
+  isclinicalreviewer   Boolean?               @default(false)
+  medicalcouncilregno  String?                @db.VarChar(100)
   createdat            DateTime?              @default(now()) @db.Timestamp(6)
   updatedat            DateTime?              @default(now()) @db.Timestamp(6)
   bloodbanks           bloodbanks?
@@ -387,6 +403,14 @@ model users {
   clinicalcrossmatches_testedby clinicalcrossmatches[] @relation("CrossmatchTestedBy")
   clinicalcrossmatches_verifiedby clinicalcrossmatches[] @relation("CrossmatchVerifiedBy")
   unitdispositionhistory_actor unitdispositionhistory[] @relation("DispositionActor")
+  surgeries_created            surgeryplans[]           @relation("SurgeryCreatedBy")
+  surgeries_reviewed           surgeryplans[]           @relation("SurgeryReviewedBy")
+  surgery_history_changed      surgeryplanstatushistory[] @relation("SurgeryHistoryChangedBy")
+  camps_created                donationcamps[]          @relation("CampCreatedBy")
+  camp_history_changed         campstatushistory[]      @relation("CampHistoryChangedBy")
+  camp_audit_records           campaudithistory[]       @relation("CampAuditChangedBy")
+  camp_regs_cancelled          campregistrations[]      @relation("CampRegCancelledBy")
+  camp_regs_attendance_updated campregistrations[]      @relation("CampRegAttendanceUpdatedBy")
 
   @@index([email], map: "idx_users_email")
 }
@@ -617,6 +641,94 @@ model unitdispositionhistory {
   actor              users          @relation("DispositionActor", fields: [actoruserid], references: [userid], onDelete: Restrict, onUpdate: NoAction, map: "fk_disposition_actor")
 }
 
+model procedurebloodconfigs {
+  configid               String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  hospitalid             String?         @db.Uuid
+  procedurename          String          @db.VarChar(150)
+  category               String          @db.VarChar(100)
+  defaultcomponent       blood_component
+  defaultunits           Int             @default(0)
+  secondarycomponent     blood_component?
+  secondaryunits         Int?            @default(0)
+  typicalbloodlossml     Int?            @default(0)
+  transfusionprobability Decimal?        @db.Decimal(5, 2)
+  guidelinesource        String          @db.VarChar(255)
+  guidelineversion       String          @db.VarChar(255)
+  approvalauthority      String          @db.VarChar(255)
+  effectivedate          DateTime        @db.Date
+  clinicalrationale      String?
+  guidelinecitation      String?         @db.VarChar(500)
+  requireshospitalapproval Boolean       @default(false)
+  isactive               Boolean         @default(true)
+  createdat              DateTime?       @default(now()) @db.Timestamp(6)
+  updatedat              DateTime?       @default(now()) @db.Timestamp(6)
+  hospitals              hospitals?      @relation(fields: [hospitalid], references: [hospitalid], onDelete: Cascade, onUpdate: NoAction, map: "fk_config_hospital")
+  surgeryplans           surgeryplans[]
+
+  @@unique([hospitalid, procedurename], map: "uq_hospital_procedure")
+  @@index([hospitalid], map: "idx_procedure_configs_hospital")
+  @@index([procedurename], map: "idx_procedure_configs_procedure")
+}
+
+model surgeryplans {
+  surgeryid                   String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  hospitalid                  String                      @db.Uuid
+  createdbyuserid             String                      @db.Uuid
+  patientreference            String                      @db.VarChar(100)
+  patientage                  Int
+  patientgender               gender_type
+  patientbloodgroup           blood_group?
+  procedurename               String                      @db.VarChar(150)
+  category                    String?                     @db.VarChar(100)
+  scheduleddate               DateTime                    @db.Timestamp(6)
+  expecteddurationminutes     Int?
+  clinicianspecifiedcomponent blood_component?
+  clinicianspecifiedunits     Int?
+  configid                    String?                     @db.Uuid
+  baselinecomponent           blood_component?
+  baselineunits               Int?
+  secondarybaselinecomponent  blood_component?
+  secondarybaselineunits      Int?
+  baselinerationale           String?
+  finalcomponent              blood_component?
+  finalunits                  Int?
+  secondaryfinalcomponent     blood_component?
+  secondaryfinalunits         Int?
+  adjustmentreason            String?
+  reviewedbyuserid            String?                     @db.Uuid
+  reviewedat                  DateTime?                   @db.Timestamp(6)
+  status                      surgery_status              @default(PLANNED)
+  linkedrequestid             String?                     @db.Uuid
+  clinicalnotes               String?
+  lastavailabilitycheckat     DateTime?                   @db.Timestamp(6)
+  createdat                   DateTime?                   @default(now()) @db.Timestamp(6)
+  updatedat                   DateTime?                   @default(now()) @db.Timestamp(6)
+  hospitals                   hospitals                   @relation(fields: [hospitalid], references: [hospitalid], onDelete: Cascade, onUpdate: NoAction, map: "fk_surgery_hospital")
+  createdby                   users                       @relation("SurgeryCreatedBy", fields: [createdbyuserid], references: [userid], onDelete: Restrict, onUpdate: NoAction, map: "fk_surgery_creator")
+  reviewedby                  users?                      @relation("SurgeryReviewedBy", fields: [reviewedbyuserid], references: [userid], onDelete: SetNull, onUpdate: NoAction, map: "fk_surgery_reviewer")
+  procedureconfig             procedurebloodconfigs?      @relation(fields: [configid], references: [configid], onDelete: SetNull, onUpdate: NoAction, map: "fk_surgery_config")
+  linkedrequest               bloodrequests?              @relation(fields: [linkedrequestid], references: [requestid], onDelete: SetNull, onUpdate: NoAction, map: "fk_surgery_request")
+  statushistory               surgeryplanstatushistory[]
+
+  @@index([hospitalid], map: "idx_surgeryplans_hospital")
+  @@index([scheduleddate], map: "idx_surgeryplans_scheduleddate")
+  @@index([status], map: "idx_surgeryplans_status")
+}
+
+model surgeryplanstatushistory {
+  historyid       String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  surgeryid       String          @db.Uuid
+  oldstatus       surgery_status?
+  newstatus       surgery_status
+  changedbyuserid String?         @db.Uuid
+  reason          String?
+  createdat       DateTime?       @default(now()) @db.Timestamp(6)
+  surgeryplan     surgeryplans    @relation(fields: [surgeryid], references: [surgeryid], onDelete: Cascade, onUpdate: NoAction, map: "fk_surgery_statushistory_plan")
+  changedby       users?          @relation("SurgeryHistoryChangedBy", fields: [changedbyuserid], references: [userid], onDelete: SetNull, onUpdate: NoAction, map: "fk_surgery_statushistory_user")
+
+  @@index([surgeryid], map: "idx_surgery_statushistory_surgery")
+}
+
 enum approval_status {
   PENDING
   APPROVED
@@ -665,6 +777,7 @@ enum notification_type {
   INVENTORY
   VERIFICATION
   SYSTEM
+  CAMP
 }
 
 enum prescription_status {
@@ -705,3 +818,169 @@ enum verification_status {
   VERIFIED
   REJECTED
 }
+
+enum surgery_status {
+  PLANNED
+  REQUIREMENT_ESTIMATED
+  AWAITING_CLINICAL_REVIEW
+  BLOOD_AVAILABLE
+  SHORTAGE_IDENTIFIED
+  BLOOD_REQUESTED
+  READY_FOR_SURGERY
+  COMPLETED
+  CANCELLED
+}
+
+enum camp_status {
+  DRAFT
+  PUBLISHED
+  COMPLETED
+  CANCELLED
+}
+
+enum camp_registration_availability {
+  OPEN
+  CLOSED
+}
+
+enum camp_registration_status {
+  REGISTERED
+  CANCELLED
+}
+
+enum camp_attendance_status {
+  PENDING
+  ATTENDED
+  NOT_ATTENDED
+}
+
+model donationcamps {
+  campid                   String                         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bloodbankid              String                         @db.Uuid
+  createdbyuserid          String                         @db.Uuid
+  campname                 String                         @db.VarChar(255)
+  description              String?                        @db.Text
+  organizername            String                         @db.VarChar(255)
+  contactperson            String                         @db.VarChar(100)
+  contactphone             String?                        @db.VarChar(20)
+  campdate                 DateTime                       @db.Date
+  starttime                DateTime                       @db.Time(6)
+  endtime                  DateTime                       @db.Time(6)
+  timezone                 String                         @default("Asia/Kolkata") @db.VarChar(50)
+  registrationopeningdate  DateTime                       @db.Timestamp(6)
+  registrationdeadline     DateTime                       @db.Timestamp(6)
+  venuename                String                         @db.VarChar(255)
+  address                  String                         @db.VarChar(255)
+  city                     String                         @db.VarChar(100)
+  district                 String                         @db.VarChar(100)
+  state                    String                         @db.VarChar(100)
+  pincode                  String                         @db.VarChar(10)
+  latitude                 Decimal?                       @db.Decimal(9, 6)
+  longitude                Decimal?                       @db.Decimal(9, 6)
+  isregistrationrequired   Boolean                        @default(true)
+  maxcapacity              Int?
+  registrationinstructions String?                        @db.Text
+  donorinstructions        String?                        @db.Text
+  eligibilitynotes         String?                        @db.Text
+  status                   camp_status                    @default(DRAFT)
+  registrationstatus       camp_registration_availability @default(OPEN)
+  cancellationreason       String?                        @db.Text
+  createdat                DateTime?                      @default(now()) @db.Timestamp(6)
+  updatedat                DateTime?                      @default(now()) @db.Timestamp(6)
+
+  bloodbanks               bloodbanks                     @relation(fields: [bloodbankid], references: [bloodbankid], onDelete: Restrict, onUpdate: NoAction, map: "fk_camp_bloodbank")
+  createdby                users                          @relation("CampCreatedBy", fields: [createdbyuserid], references: [userid], onDelete: Restrict, onUpdate: NoAction, map: "fk_camp_creator")
+  registrations            campregistrations[]
+  statushistory            campstatushistory[]
+  audithistory             campaudithistory[]
+  notifications            notification[]
+
+  @@index([bloodbankid], map: "idx_camps_bloodbank")
+  @@index([campdate], map: "idx_camps_campdate")
+  @@index([status], map: "idx_camps_status")
+  @@index([city], map: "idx_camps_city")
+  @@index([district], map: "idx_camps_district")
+  @@index([state], map: "idx_camps_state")
+}
+
+model campregistrations {
+  registrationid             String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  campid                     String                   @db.Uuid
+  donorid                    String                   @db.Uuid
+  registrationreference      String                   @unique @db.VarChar(50)
+  registrationdate           DateTime                 @default(now()) @db.Timestamp(6)
+  registrationstatus         camp_registration_status @default(REGISTERED)
+  attendancestatus           camp_attendance_status   @default(PENDING)
+  attendedat                 DateTime?                @db.Timestamp(6)
+  unitsdonated               Int?
+  attendancenotes            String?                  @db.Text
+  cancellationreason         String?                  @db.Text
+  cancelledat                DateTime?                @db.Timestamp(6)
+  cancelledbyuserid          String?                  @db.Uuid
+  attendanceupdatedbyuserid  String?                  @db.Uuid
+  previouscancellationreason String?                  @db.Text
+  previouscancelledat        DateTime?                @db.Timestamp(6)
+  cancellationhistory        Json?                    @default("[]")
+  reregisteredat             DateTime?                @db.Timestamp(6)
+  createdat                  DateTime?                @default(now()) @db.Timestamp(6)
+  updatedat                  DateTime?                @default(now()) @db.Timestamp(6)
+
+  camp                       donationcamps            @relation(fields: [campid], references: [campid], onDelete: Restrict, onUpdate: NoAction, map: "fk_campreg_camp")
+  donor                      donors                   @relation(fields: [donorid], references: [donorid], onDelete: Restrict, onUpdate: NoAction, map: "fk_campreg_donor")
+  cancelledby                users?                   @relation("CampRegCancelledBy", fields: [cancelledbyuserid], references: [userid], onDelete: SetNull, onUpdate: NoAction, map: "fk_campreg_canceller")
+  attendanceupdatedby        users?                   @relation("CampRegAttendanceUpdatedBy", fields: [attendanceupdatedbyuserid], references: [userid], onDelete: SetNull, onUpdate: NoAction, map: "fk_campreg_attendance_updater")
+  notifications              notification[]
+
+  @@unique([campid, donorid], map: "uq_camp_donor_registration")
+  @@index([campid], map: "idx_campreg_camp")
+  @@index([donorid], map: "idx_campreg_donor")
+  @@index([registrationstatus], map: "idx_campreg_status")
+  @@index([attendancestatus], map: "idx_campreg_attendance")
+  @@index([attendanceupdatedbyuserid], map: "idx_campreg_attendance_updater")
+}
+
+model campstatushistory {
+  historyid       String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  campid          String        @db.Uuid
+  oldstatus       camp_status?
+  newstatus       camp_status
+  changedbyuserid String        @db.Uuid
+  reason          String?       @db.Text
+  createdat       DateTime?     @default(now()) @db.Timestamp(6)
+
+  camp            donationcamps @relation(fields: [campid], references: [campid], onDelete: Restrict, onUpdate: NoAction, map: "fk_camphist_camp")
+  changedby       users         @relation("CampHistoryChangedBy", fields: [changedbyuserid], references: [userid], onDelete: Restrict, onUpdate: NoAction, map: "fk_camphist_user")
+
+  @@index([campid], map: "idx_camphist_camp")
+}
+
+model campaudithistory {
+  auditid         String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  campid          String        @db.Uuid
+  action          String        @db.VarChar(50)
+  changedbyuserid String        @db.Uuid
+  details         String?       @db.Text
+  createdat       DateTime?     @default(now()) @db.Timestamp(6)
+
+  camp            donationcamps @relation(fields: [campid], references: [campid], onDelete: Restrict, onUpdate: NoAction, map: "fk_campaudit_camp")
+  changedby       users         @relation("CampAuditChangedBy", fields: [changedbyuserid], references: [userid], onDelete: Restrict, onUpdate: NoAction, map: "fk_campaudit_user")
+
+  @@index([campid], map: "idx_campaudit_camp")
+}
+
+model donornotificationpreferences {
+  preferenceid       String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  donorid            String    @unique @db.Uuid
+  nearbycamps        Boolean   @default(true)
+  campreminders      Boolean   @default(true)
+  campupdates        Boolean   @default(true)
+  campcancellations  Boolean   @default(true)
+  preferredcity      String?   @db.VarChar(100)
+  preferredradiuskm  Int?      @default(25)
+  createdat          DateTime? @default(now()) @db.Timestamp(6)
+  updatedat          DateTime? @default(now()) @db.Timestamp(6)
+  donor              donors    @relation(fields: [donorid], references: [donorid], onDelete: Cascade, onUpdate: NoAction, map: "fk_donor_notif_pref")
+
+  @@index([donorid], map: "idx_donor_notif_pref_donor")
+}
+

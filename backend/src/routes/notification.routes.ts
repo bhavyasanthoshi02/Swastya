@@ -65,13 +65,28 @@ export function sanitizeNotificationForResponse(n: any, callerUserId?: string) {
         };
     }
 
-    const { bloodrequests, ...rest } = n;
+    let sanitizedCamp = undefined;
+    if (n.camp) {
+        sanitizedCamp = {
+            campid: n.camp.campid,
+            campname: n.camp.campname,
+            campdate: n.camp.campdate,
+            starttime: typeof n.camp.starttime === "string" ? n.camp.starttime : (n.camp.starttime instanceof Date ? n.camp.starttime.toTimeString().slice(0, 5) : String(n.camp.starttime || "")),
+            endtime: typeof n.camp.endtime === "string" ? n.camp.endtime : (n.camp.endtime instanceof Date ? n.camp.endtime.toTimeString().slice(0, 5) : String(n.camp.endtime || "")),
+            venuename: n.camp.venuename,
+            city: n.camp.city,
+            status: n.camp.status,
+        };
+    }
+
+    const { bloodrequests, camp, ...rest } = n;
 
     return {
         ...rest,
         message: cleanMessage,
         createdat: n.sentat,
         ...(sanitizedRequest ? { bloodrequests: sanitizedRequest } : {}),
+        ...(sanitizedCamp ? { camp: sanitizedCamp } : {}),
     };
 }
 
@@ -111,6 +126,18 @@ router.get("/", authenticate, async (req: Request, res: Response) => {
                             patientname: true,
                             bloodgroup: true,
                             urgencylevel: true,
+                            status: true,
+                        },
+                    },
+                    camp: {
+                        select: {
+                            campid: true,
+                            campname: true,
+                            campdate: true,
+                            starttime: true,
+                            endtime: true,
+                            venuename: true,
+                            city: true,
                             status: true,
                         },
                     },

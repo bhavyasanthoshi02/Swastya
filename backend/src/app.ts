@@ -10,6 +10,9 @@ import bloodbankRoutes from "./routes/bloodbank.routes";
 import bloodrequestRoutes from "./routes/bloodrequest.routes";
 import authRoutes from "./routes/auth.routes";
 import notificationRoutes from "./routes/notification.routes";
+import surgeryPlannerRoutes from "./routes/surgeryPlanner.routes";
+import campRoutes from "./routes/camp.routes";
+import campPublicRoutes from "./routes/campPublic.routes";
 
 const app = express();
 app.disable("x-powered-by");
@@ -193,8 +196,11 @@ app.use("/users", userRoutes);
 app.use("/donors", donorRoutes);
 app.use("/requesters", requesterRoutes);
 app.use("/hospitals/me/donors/import", uploadRateLimiter);
+app.use("/hospitals/me/surgeries", surgeryPlannerRoutes);
 app.use("/hospitals", hospitalRoutes);
+app.use("/bloodbanks/me/camps", campRoutes);
 app.use("/bloodbanks", bloodbankRoutes);
+app.use("/camps", campPublicRoutes);
 app.use("/bloodrequests", (req: Request, res: Response, next: NextFunction) => {
     if (req.method === "POST") {
         return uploadRateLimiter(req, res, next);

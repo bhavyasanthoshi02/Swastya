@@ -6,6 +6,8 @@ import { checkDonorOwnership } from "../middleware/ownership.middleware";
 import { blood_group, gender_type, availability_status, request_status, notification_type } from "../generated/prisma/enums";
 import { validateCoordinates, evaluateLocationDistance } from "../utils/distance";
 import { isDonorCompatibleWithRecipient } from "../utils/bloodCompatibility";
+import { CampService } from "../services/camp.service";
+import { CampNotificationService } from "../services/campNotification.service";
 
 // Helper: sanitize blood request for donor feeds (protect patient privacy)
 function sanitizeRequestForDonor(req: any, hasResponded: boolean = false, isAccepted: boolean = false) {
@@ -1975,6 +1977,109 @@ router.put(
             });
         }
     }
+);
+
+/*
+ * GET DONOR CAMP REGISTRATIONS
+ * GET /donors/me/camp-registrations
+ */
+router.get(
+    "/me/camp-registrations",
+    authenticate,
+    authorize("DONOR"),
+    async (req: Request, res: Response) => {
+        try {
+            const user = (req as any).user;
+            const registrations = await CampService.getDonorRegistrations(user.userid);
+            return res.status(200).json({ success: true, data: registrations });
+        } catch (error: any) {
+            console.error("Error fetching donor camp registrations:", error);
+            const status = error.message.includes("required") ? 404 : 500;
+            return res.status(status).json({ success: false, message: error.message || "Failed to fetch camp registrations" });
+        }
+    }
+);
+
+/*
+ * GET DONOR NOTIFICATION PREFERENCES
+ * GET /donors/me/notification-preferences
+ */
+router.get(
+    "/me/notification-preferences",
+    authenticate,
+    authorize("DONOR"),
+    async (req: Request, res: Response) => {
+        try {
+            const user = (req as any).user;
+            const prefs = await CampNotificationService.getDonorPreferences(user.userid);
+            return res.status(200).json({ success: true, data: prefs });
+        } catch (error: any) {
+            console.error("Error fetching donor notification preferences:", error);
+            return res.status(500).json({
+                success: false,
+                message: error.message || "Failed to fetch notification preferences",
+            });
+        }
+    }
+);
+
+/*
+ * UPDATE DONOR NOTIFICATION PREFERENCES
+ * PUT /donors/me/notification-preferences
+ */
+router.put(
+    "/me/notification-preferences",
+    authenticate,
+    authorize("DONOR"),
+    async (req: Request, res: Response) => {
+        try {
+            const user = (req as any).user;
+            const updated = await CampNotificationService.updateDonorPreferences(user.userid, req.body || {});
+            return res.status(200).json({
+                success: true,
+                data: updated,
+                message: "Notification preferences updated successfully",
+            });
+        } catch (error: any) {
+            console.error("Error updating donor notification preferences:", error);
+            const status = error.message.includes("required") ? 404 : 400;
+            return res.status(status).json({
+                success: false,
+                message: error.message || "Failed to update notification preferences",
+            });
+        }
+    }
+);
+
+/*
+ * CANCEL DONOR CAMP REGISTRATION
+ * POST /donors/me/camp-registrations/:id/cancel and PATCH /donors/me/camp-registrations/:id/cancel
+ */
+const handleCancelCampRegistration = async (req: Request, res: Response) => {
+    try {
+        const user = (req as any).user;
+        const reason = req.body?.reason;
+        const cancelled = await CampService.cancelDonorRegistration(user.userid, String(req.params.id), reason);
+        return res.status(200).json({ success: true, data: cancelled, message: "Camp registration cancelled successfully" });
+    } catch (error: any) {
+        console.error("Error cancelling donor camp registration:", error);
+        const status = error.message.includes("not found") ? 404 : 400;
+        return res.status(status).json({ success: false, message: error.message || "Failed to cancel camp registration" });
+    }
+};
+
+router.patch(
+    "/me/camp-registrations/:id/cancel",
+    authenticate,
+    authorize("DONOR"),
+    handleCancelCampRegistration
+);
+
+router.post(
+    "/me/camp-registrations/:id/cancel",
+    authenticate,
+    authorize("DONOR"),
+    handleCancelCampRegistration
 );
 
 /*

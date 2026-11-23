@@ -12,16 +12,21 @@ import {
   Droplets,
   Layers,
   ShieldAlert,
-  ArrowUpRight,
   Info,
   Clock,
   Sparkles,
-  FlaskConical,
-  ClipboardList,
+  Building2,
+  MapPin,
+  Globe,
+  ChevronDown,
+  ChevronUp,
+  HeartHandshake,
+  ArrowRight,
   ShieldCheck,
-  Check,
-  X,
-  ExternalLink,
+  Package,
+  ClockAlert,
+  Archive,
+  ArrowUpRight,
 } from "lucide-react";
 import { api } from "@/lib/api";
 
@@ -45,157 +50,196 @@ const COMPONENTS = [
   { value: "RBC", label: "Packed RBC" },
 ];
 
+type InsightScope = "INVENTORY" | "DISTRICT" | "STATE";
+
 export default function BloodBankInsightsPage() {
-  const [activeTab, setActiveTab] = useState<"EXPIRY" | "DEMAND">("EXPIRY");
+  const [activeScope, setActiveScope] = useState<InsightScope>("INVENTORY");
+  const [timeframeDays, setTimeframeDays] = useState<number>(30);
   const [selectedGroup, setSelectedGroup] = useState<string>("");
   const [selectedComponent, setSelectedComponent] = useState<string>("");
-  const [timeframeDays, setTimeframeDays] = useState<number>(30);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [insights, setInsights] = useState<any | null>(null);
+  const [showHowItWorks, setShowHowItWorks] = useState<boolean>(false);
 
-  // Data states
-  const [expiryData, setExpiryData] = useState<any | null>(null);
-  const [demandData, setDemandData] = useState<any | null>(null);
-
-  // Safety test feedback
-  const [safetyFeedback, setSafetyFeedback] = useState<{
-    unitBarcode: string;
-    isSafe: boolean;
-    message: string;
-  } | null>(null);
-
-  const fetchAnalytics = useCallback(async () => {
+  const fetchInsights = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [expRes, demRes] = await Promise.all([
-        api.bloodbank.getExpiryPrediction({
-          bloodGroup: selectedGroup || undefined,
-          bloodComponent: selectedComponent || undefined,
-        }),
-        api.bloodbank.getDemandForecast({
-          timeframeDays,
-          bloodGroup: selectedGroup || undefined,
-          bloodComponent: selectedComponent || undefined,
-        }),
-      ]);
+      const scopeParam =
+        activeScope === "INVENTORY"
+          ? "inventory"
+          : activeScope === "DISTRICT"
+          ? "district"
+          : "state";
 
-      if (expRes.success && expRes.data) {
-        setExpiryData(expRes.data);
-      }
-      if (demRes.success && demRes.data) {
-        setDemandData(demRes.data);
+      const res = await api.bloodbank.getRegionalInsights({
+        scope: scopeParam,
+        timeframeDays,
+        bloodGroup: selectedGroup || undefined,
+        bloodComponent: selectedComponent || undefined,
+      });
+
+      if (res.success && res.data) {
+        setInsights(res.data);
+      } else {
+        setError("Failed to load blood bank insights.");
       }
     } catch (err: any) {
-      console.error("Error loading blood bank analytics:", err);
+      console.error("Error loading blood bank insights:", err);
       setError(err.message || "Failed to retrieve blood bank insights.");
     } finally {
       setLoading(false);
     }
-  }, [selectedGroup, selectedComponent, timeframeDays]);
+  }, [activeScope, timeframeDays, selectedGroup, selectedComponent]);
 
   useEffect(() => {
-    fetchAnalytics();
-  }, [fetchAnalytics]);
+    fetchInsights();
+  }, [fetchInsights]);
 
-  const testUnitSafety = async (unit: any) => {
-    try {
-      const res = await api.bloodbank.validateUnitSafety(
-        expiryData?.bloodBankId || "",
-        unit.unitid
-      );
-      setSafetyFeedback({
-        unitBarcode: unit.unitbarcode,
-        isSafe: res.isSafe,
-        message: res.message,
-      });
-    } catch (err: any) {
-      setSafetyFeedback({
-        unitBarcode: unit.unitbarcode,
-        isSafe: false,
-        message: err.message || "Safety validation failed.",
-      });
-    }
-  };
+  const location = insights?.location;
+  const inventoryOverview = insights?.inventoryOverview;
+  const regionalDemand = insights?.regionalDemand;
+  const regionalSupply = insights?.regionalSupply;
+  const regionalContext = insights?.regionalContext;
 
   return (
     <div className="min-h-screen bg-[#FAF6EE] text-[#053845] pb-16">
-      {/* Header Strip */}
+      {/* Top Header Strip */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 pb-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-[#F3E9D1] pb-6">
           <div>
             <div className="flex items-center gap-2 mb-1">
               <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-[#053845]/10 text-[#053845]">
                 <Sparkles className="w-3.5 h-3.5 text-[#317786]" />
-                Clinical AI & Analytics
+                Inventory & Regional Supply Intelligence
               </span>
               <span className="text-xs text-slate-500">
-                Blood Bank Intelligence
+                Blood Bank Operations
               </span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-serif font-bold text-[#053845] tracking-tight">
-              Blood Expiry & Demand Intelligence
+              Blood Inventory & Demand Insights
             </h1>
             <p className="text-sm text-slate-600 mt-1 max-w-2xl">
-              FEFO allocation queuing, prospective wastage prediction via velocity models, and prospective demand forecasting.
+              Track units to use first (FEFO queue), prevent wastage before expiry, and balance district and state blood supply against hospital requirements.
             </p>
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
             <button
-              onClick={fetchAnalytics}
+              onClick={fetchInsights}
               disabled={loading}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium rounded-lg bg-white border border-[#F3E9D1] text-[#053845] hover:bg-[#FAF6EE] transition-colors shadow-sm disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium rounded-lg bg-white border border-[#F3E9D1] text-[#053845] hover:bg-[#FAF6EE] transition-colors shadow-xs disabled:opacity-50"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
-              Refresh Data
+              Refresh
             </button>
             <Link
               href="/bloodbank/inventory"
-              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-lg bg-[#053845] text-white hover:bg-[#074d5f] transition-colors shadow-sm"
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-lg bg-[#053845] text-white hover:bg-[#074d5f] transition-colors shadow-xs"
             >
-              <Droplets className="w-3.5 h-3.5 text-red-300" />
+              <Package className="w-3.5 h-3.5 text-emerald-300" />
               Manage Inventory
             </Link>
           </div>
         </div>
 
-        {/* View Switcher Tabs & Filters */}
-        <div className="mt-6 flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white rounded-xl border border-[#F3E9D1] p-4 shadow-sm">
-          {/* Main Navigation Tabs */}
-          <div className="flex items-center bg-[#FAF6EE] p-1 rounded-lg border border-[#F3E9D1]">
+        {/* View Selection Tabs (3 Views) */}
+        <div className="mt-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="inline-flex p-1 bg-[#EBE3D0] rounded-xl border border-[#D8CEB8]">
             <button
-              onClick={() => setActiveTab("EXPIRY")}
-              className={`px-4 py-2 text-xs font-semibold rounded-md transition-all flex items-center gap-1.5 ${
-                activeTab === "EXPIRY"
-                  ? "bg-[#053845] text-white shadow-xs"
+              onClick={() => setActiveScope("INVENTORY")}
+              className={`inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg transition-all ${
+                activeScope === "INVENTORY"
+                  ? "bg-white text-[#053845] shadow-xs"
                   : "text-slate-600 hover:text-[#053845]"
               }`}
             >
-              <Clock className="w-3.5 h-3.5" />
-              Expiry & Wastage Prediction (Feature 2)
+              <Package className="w-4 h-4 text-[#317786]" />
+              My Inventory
             </button>
             <button
-              onClick={() => setActiveTab("DEMAND")}
-              className={`px-4 py-2 text-xs font-semibold rounded-md transition-all flex items-center gap-1.5 ${
-                activeTab === "DEMAND"
-                  ? "bg-[#053845] text-white shadow-xs"
+              onClick={() => setActiveScope("DISTRICT")}
+              className={`inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg transition-all ${
+                activeScope === "DISTRICT"
+                  ? "bg-white text-[#053845] shadow-xs"
                   : "text-slate-600 hover:text-[#053845]"
               }`}
             >
-              <TrendingUp className="w-3.5 h-3.5" />
-              Demand Forecasting (Feature 1)
+              <MapPin className="w-4 h-4 text-emerald-600" />
+              My District
+              {location?.displayDistrict && (
+                <span className="text-[10px] font-normal px-1.5 py-0.2 bg-[#FAF6EE] text-slate-600 rounded">
+                  {location.displayDistrict}
+                </span>
+              )}
+            </button>
+            <button
+              onClick={() => setActiveScope("STATE")}
+              className={`inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg transition-all ${
+                activeScope === "STATE"
+                  ? "bg-white text-[#053845] shadow-xs"
+                  : "text-slate-600 hover:text-[#053845]"
+              }`}
+            >
+              <Globe className="w-4 h-4 text-indigo-600" />
+              My State
+              {location?.displayState && (
+                <span className="text-[10px] font-normal px-1.5 py-0.2 bg-[#FAF6EE] text-slate-600 rounded">
+                  {location.displayState}
+                </span>
+              )}
             </button>
           </div>
 
-          {/* Filter dropdowns */}
+          <div className="text-xs text-slate-500 flex items-center gap-2">
+            <Clock className="w-3.5 h-3.5 text-slate-400" />
+            <span>Blood Bank:</span>
+            <span className="font-semibold text-[#053845]">
+              {insights?.bloodBankName || "Authenticated Facility"}
+            </span>
+            {location?.displayDistrict && location?.displayState && (
+              <span className="text-slate-400">
+                • {location.displayDistrict}, {location.displayState}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Filter Controls Toolbar */}
+        <div className="mt-4 bg-white rounded-xl border border-[#F3E9D1] p-4 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex flex-wrap items-center gap-3">
+            {/* Timeframe Selector (for district and state tabs) */}
+            {activeScope !== "INVENTORY" && (
+              <div className="flex items-center bg-[#FAF6EE] p-1 rounded-lg border border-[#F3E9D1]">
+                {[
+                  { days: 7, label: "7 Days" },
+                  { days: 30, label: "30 Days" },
+                  { days: 90, label: "90 Days" },
+                ].map((tf) => (
+                  <button
+                    key={tf.days}
+                    onClick={() => setTimeframeDays(tf.days)}
+                    className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+                      timeframeDays === tf.days
+                        ? "bg-[#053845] text-white shadow-xs"
+                        : "text-slate-600 hover:text-[#053845]"
+                    }`}
+                  >
+                    {tf.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Blood Group Filter */}
             <div className="flex items-center gap-1.5">
               <label className="text-xs text-slate-500 font-medium">Group:</label>
               <select
                 value={selectedGroup}
                 onChange={(e) => setSelectedGroup(e.target.value)}
-                className="text-xs bg-[#FAF6EE] border border-[#F3E9D1] rounded-lg px-2.5 py-1.5 font-medium text-[#053845] focus:outline-none"
+                className="text-xs bg-[#FAF6EE] border border-[#F3E9D1] rounded-lg px-2.5 py-1.5 font-medium text-[#053845] focus:outline-none focus:ring-1 focus:ring-[#053845]"
               >
                 {BLOOD_GROUPS.map((g) => (
                   <option key={g.value} value={g.value}>
@@ -205,12 +249,13 @@ export default function BloodBankInsightsPage() {
               </select>
             </div>
 
+            {/* Component Filter */}
             <div className="flex items-center gap-1.5">
               <label className="text-xs text-slate-500 font-medium">Component:</label>
               <select
                 value={selectedComponent}
                 onChange={(e) => setSelectedComponent(e.target.value)}
-                className="text-xs bg-[#FAF6EE] border border-[#F3E9D1] rounded-lg px-2.5 py-1.5 font-medium text-[#053845] focus:outline-none"
+                className="text-xs bg-[#FAF6EE] border border-[#F3E9D1] rounded-lg px-2.5 py-1.5 font-medium text-[#053845] focus:outline-none focus:ring-1 focus:ring-[#053845]"
               >
                 {COMPONENTS.map((c) => (
                   <option key={c.value} value={c.value}>
@@ -220,227 +265,281 @@ export default function BloodBankInsightsPage() {
               </select>
             </div>
           </div>
+
+          <div className="text-[11px] text-slate-500 italic">
+            * Only units verified safe (TTI Passed) and unexpired are marked allocation-eligible.
+          </div>
         </div>
 
-        {/* Safety Feedback Banner */}
-        {safetyFeedback && (
-          <div
-            className={`mt-4 p-4 rounded-xl border flex items-start justify-between gap-3 shadow-xs ${
-              safetyFeedback.isSafe
-                ? "bg-emerald-50 border-emerald-200 text-emerald-900"
-                : "bg-red-50 border-red-200 text-red-900"
-            }`}
-          >
-            <div className="flex items-start gap-2.5 text-xs">
-              {safetyFeedback.isSafe ? (
-                <CheckCircle2 className="w-4 h-4 text-emerald-600 mt-0.5" />
-              ) : (
-                <AlertTriangle className="w-4 h-4 text-red-600 mt-0.5" />
-              )}
-              <div>
-                <div className="font-bold">
-                  Clinical Safety Check: Unit {safetyFeedback.unitBarcode}
-                </div>
-                <div className="mt-0.5">{safetyFeedback.message}</div>
+        {/* Location Notice (if location is missing or incomplete) */}
+        {location && !location.isValid && (
+          <div className="mt-4 p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 flex items-start gap-3 shadow-xs">
+            <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+            <div className="text-xs">
+              <div className="font-semibold text-amber-950 mb-0.5">
+                Location Details Incomplete
               </div>
+              <p className="text-amber-800 leading-relaxed">
+                {location.missingLocationMessage ||
+                  "City or state is missing in your facility profile. Update address to enable accurate district and state supply-demand balancing."}
+              </p>
             </div>
-            <button
-              onClick={() => setSafetyFeedback(null)}
-              className="text-slate-400 hover:text-slate-600"
-            >
-              <X className="w-4 h-4" />
-            </button>
           </div>
         )}
 
-        {/* Early Warnings from Expiry Service */}
-        {expiryData?.earlyWarnings?.length > 0 && (
-          <div className="mt-4 space-y-2">
-            {expiryData.earlyWarnings.map((warn: string, i: number) => (
-              <div
-                key={i}
-                className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-center gap-2.5"
-              >
-                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-                <span className="font-medium">{warn}</span>
-              </div>
-            ))}
+        {/* Error Alert */}
+        {error && (
+          <div className="mt-4 p-4 rounded-xl bg-red-50 border border-red-200 text-red-900 flex items-center gap-3">
+            <AlertTriangle className="w-5 h-5 text-red-600 shrink-0" />
+            <div className="text-xs">{error}</div>
           </div>
         )}
 
         {/* ========================================================================= */}
-        {/* TAB 1: EXPIRY & WASTAGE PREDICTION (FEATURE 2)                           */}
+        {/* VIEW 1: MY INVENTORY                                                     */}
         {/* ========================================================================= */}
-        {activeTab === "EXPIRY" && (
-          <>
-            {/* KPI Cards: Expiry Status */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mt-6">
-              {/* Card 1: Active Units */}
-              <div className="bg-white rounded-xl border border-[#F3E9D1] p-5 shadow-sm">
-                <div className="text-xs text-slate-500 mb-1">Total Active Stock</div>
+        {activeScope === "INVENTORY" && (
+          <div className="mt-6 space-y-6">
+            {/* Inventory Overview Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+              {/* Card 1: Total Available Units */}
+              <div className="bg-white rounded-xl border border-[#F3E9D1] p-5 shadow-xs">
+                <div className="text-xs text-slate-500 mb-1">Available Units</div>
                 <div className="text-2xl font-bold text-[#053845]">
-                  {expiryData?.summary?.totalActiveUnits ?? (loading ? "..." : 0)}{" "}
-                  <span className="text-xs font-normal text-slate-500">units</span>
+                  {inventoryOverview?.totalAvailableUnits ?? (loading ? "..." : 0)}{" "}
+                  <span className="text-sm font-normal text-slate-500">units</span>
                 </div>
-                <div className="text-[11px] text-slate-500 mt-2 flex items-center gap-1">
-                  <Layers className="w-3 h-3 text-slate-400" />
-                  Available & Quarantined
-                </div>
-              </div>
-
-              {/* Card 2: Expiring Soon */}
-              <div className="bg-white rounded-xl border border-[#F3E9D1] p-5 shadow-sm">
-                <div className="text-xs text-slate-500 mb-1 flex items-center justify-between">
-                  <span>Expiring Soon</span>
-                  <span className="text-[10px] bg-amber-50 text-amber-700 font-semibold px-1.5 py-0.5 rounded border border-amber-200">
-                    ≤ 7 Days
-                  </span>
-                </div>
-                <div className="text-2xl font-bold text-amber-600">
-                  {expiryData?.summary?.expiringSoonCount ?? (loading ? "..." : 0)}{" "}
-                  <span className="text-xs font-normal text-slate-500">units</span>
-                </div>
-                <div className="text-[11px] text-amber-700 mt-2 font-medium">
-                  {expiryData?.summary?.expiringCriticalCount ?? 0} critical (≤ 72h)
+                <div className="text-xs text-slate-500 mt-2 flex items-center gap-1">
+                  <Package className="w-3.5 h-3.5 text-slate-400" />
+                  <span>In active stock</span>
                 </div>
               </div>
 
-              {/* Card 3: Expired Units */}
-              <div className="bg-white rounded-xl border border-[#F3E9D1] p-5 shadow-sm">
-                <div className="text-xs text-slate-500 mb-1 flex items-center justify-between">
-                  <span>Expired Stock</span>
-                  <span className="text-[10px] bg-red-50 text-red-700 font-semibold px-1.5 py-0.5 rounded border border-red-200">
-                    Disposal Required
+              {/* Card 2: Expiring in 3 Days */}
+              <div className="bg-white rounded-xl border border-[#F3E9D1] p-5 shadow-xs">
+                <div className="flex items-center justify-between text-xs text-slate-500 mb-1">
+                  <span>Expiring in ≤3 Days</span>
+                  <span className="text-[10px] bg-red-50 text-red-700 font-semibold px-2 py-0.5 rounded border border-red-200">
+                    High Urgency
                   </span>
                 </div>
                 <div className="text-2xl font-bold text-red-700">
-                  {expiryData?.summary?.expiredCount ?? (loading ? "..." : 0)}{" "}
-                  <span className="text-xs font-normal text-slate-500">units</span>
+                  {inventoryOverview?.expiringWithin3Days ?? (loading ? "..." : 0)}{" "}
+                  <span className="text-sm font-normal text-slate-500">units</span>
                 </div>
-                <div className="text-[11px] text-red-600 mt-2">
-                  Zero clinical allocation allowed
+                <div className="text-xs text-slate-500 mt-2 flex items-center gap-1">
+                  <ClockAlert className="w-3.5 h-3.5 text-red-500" />
+                  <span>Requires immediate use</span>
                 </div>
               </div>
 
-              {/* Card 4: Predicted Wastage */}
-              <div className="bg-white rounded-xl border border-[#F3E9D1] p-5 shadow-sm">
-                <div className="text-xs text-slate-500 mb-1 flex items-center justify-between">
-                  <span>Projected Wastage</span>
-                  <span className="text-[10px] bg-purple-50 text-purple-700 font-semibold px-1.5 py-0.5 rounded border border-purple-200">
-                    Next 7d
+              {/* Card 3: Expiring in 7 Days */}
+              <div className="bg-white rounded-xl border border-[#F3E9D1] p-5 shadow-xs">
+                <div className="flex items-center justify-between text-xs text-slate-500 mb-1">
+                  <span>Expiring in ≤7 Days</span>
+                  <span className="text-[10px] bg-amber-50 text-amber-700 font-semibold px-2 py-0.5 rounded border border-amber-200">
+                    Watchlist
                   </span>
                 </div>
-                <div className="text-2xl font-bold text-purple-700">
-                  {expiryData?.summary?.predictedWastageUnits7d ?? (loading ? "..." : 0)}{" "}
-                  <span className="text-xs font-normal text-slate-500">units</span>
+                <div className="text-2xl font-bold text-amber-700">
+                  {inventoryOverview?.expiringWithin7Days ?? (loading ? "..." : 0)}{" "}
+                  <span className="text-sm font-normal text-slate-500">units</span>
                 </div>
-                <div className="text-[11px] text-slate-500 mt-2">
-                  Burn rate surplus excess
+                <div className="text-xs text-slate-500 mt-2 flex items-center gap-1">
+                  <Calendar className="w-3.5 h-3.5 text-amber-500" />
+                  <span>Plan upcoming dispatch</span>
                 </div>
               </div>
 
-              {/* Card 5: FEFO Eligible */}
-              <div className="bg-white rounded-xl border border-[#F3E9D1] p-5 shadow-sm">
-                <div className="text-xs text-slate-500 mb-1 flex items-center justify-between">
-                  <span>FEFO Queued</span>
-                  <span className="text-[10px] bg-emerald-50 text-emerald-700 font-semibold px-1.5 py-0.5 rounded border border-emerald-200">
-                    Priority Safe
+              {/* Card 4: Allocation-Eligible Units */}
+              <div className="bg-white rounded-xl border border-[#F3E9D1] p-5 shadow-xs">
+                <div className="flex items-center justify-between text-xs text-slate-500 mb-1">
+                  <span>Allocation-Eligible</span>
+                  <span className="text-[10px] bg-emerald-50 text-emerald-700 font-semibold px-2 py-0.5 rounded border border-emerald-200">
+                    Safe
                   </span>
                 </div>
                 <div className="text-2xl font-bold text-emerald-700">
-                  {expiryData?.summary?.fefoEligibleUnitsCount ?? (loading ? "..." : 0)}{" "}
-                  <span className="text-xs font-normal text-slate-500">units</span>
+                  {inventoryOverview?.eligibleAllocationCount ?? (loading ? "..." : 0)}{" "}
+                  <span className="text-sm font-normal text-slate-500">units</span>
                 </div>
-                <div className="text-[11px] text-slate-500 mt-2">
-                  Earliest-expiring safe stock
+                <div className="text-xs text-slate-500 mt-2 flex items-center gap-1">
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>TTI passed + unexpired</span>
+                </div>
+              </div>
+
+              {/* Card 5: Expired Units */}
+              <div className="bg-white rounded-xl border border-[#F3E9D1] p-5 shadow-xs">
+                <div className="flex items-center justify-between text-xs text-slate-500 mb-1">
+                  <span>Expired / Discarded</span>
+                  <span className="text-[10px] bg-slate-100 text-slate-600 font-semibold px-2 py-0.5 rounded border border-slate-200">
+                    Isolated
+                  </span>
+                </div>
+                <div className="text-2xl font-bold text-slate-600">
+                  {inventoryOverview?.expiredCount ?? (loading ? "..." : 0)}{" "}
+                  <span className="text-sm font-normal text-slate-500">units</span>
+                </div>
+                <div className="text-xs text-slate-500 mt-2 flex items-center gap-1">
+                  <Archive className="w-3.5 h-3.5 text-slate-400" />
+                  <span>Excluded from active stock</span>
                 </div>
               </div>
             </div>
 
-            {/* FEFO Prioritization Queue Container */}
-            <div className="mt-8 bg-white rounded-xl border border-[#F3E9D1] p-6 shadow-sm">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4 pb-3 border-b border-[#F3E9D1]">
+            {/* Units to Use First (FEFO Queue) */}
+            <div className="bg-white rounded-xl border border-[#F3E9D1] p-6 shadow-xs">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between pb-4 border-b border-[#F3E9D1] gap-2">
                 <div>
                   <h3 className="text-base font-serif font-bold text-[#053845] flex items-center gap-2">
-                    <ShieldCheck className="w-5 h-5 text-emerald-600" />
-                    FEFO (First-Expiring, First-Out) Priority Allocation Queue
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    Units to Use First (Strict Expiry Order)
                   </h3>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    Units sorted strictly by earliest expiry date to prioritize compatible dispatch and minimize expiry losses.
+                  <p className="text-xs text-slate-500">
+                    Dispatched in First-Expiry-First-Out order. Expired, quarantined, or TTI-failed units are strictly excluded.
                   </p>
                 </div>
-                <span className="text-xs bg-[#FAF6EE] px-2.5 py-1 rounded border border-[#F3E9D1] text-[#053845] font-semibold">
-                  {expiryData?.fefoQueue?.length ?? 0} Eligible Units
+                <span className="text-[11px] font-mono bg-emerald-50 text-emerald-800 border border-emerald-200 px-2.5 py-1 rounded">
+                  Clinical Safety Verified
                 </span>
               </div>
 
-              {expiryData?.fefoQueue && expiryData.fefoQueue.length > 0 ? (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
+              {loading ? (
+                <div className="py-8 text-center text-xs text-slate-400">
+                  Loading allocation queue...
+                </div>
+              ) : (insights?.unitsToUseFirst?.length ?? 0) > 0 ? (
+                <div className="overflow-x-auto mt-4">
+                  <table className="w-full text-xs text-left">
                     <thead>
-                      <tr className="border-b border-[#F3E9D1] text-slate-500 bg-[#FAF6EE]/50">
-                        <th className="py-2.5 px-3 font-semibold">FEFO Rank</th>
-                        <th className="py-2.5 px-3 font-semibold">Barcode / DIN</th>
-                        <th className="py-2.5 px-3 font-semibold">Group</th>
+                      <tr className="border-b border-[#F3E9D1] text-slate-500">
+                        <th className="py-2.5 px-3 font-semibold">Priority</th>
+                        <th className="py-2.5 px-3 font-semibold">Unit Barcode</th>
+                        <th className="py-2.5 px-3 font-semibold">Blood Group</th>
                         <th className="py-2.5 px-3 font-semibold">Component</th>
-                        <th className="py-2.5 px-3 font-semibold">Actual Expiry Date</th>
-                        <th className="py-2.5 px-3 font-semibold">Days Left</th>
-                        <th className="py-2.5 px-3 font-semibold">TTI Screening</th>
-                        <th className="py-2.5 px-3 font-semibold">Storage Location</th>
-                        <th className="py-2.5 px-3 font-semibold text-right">Safety Guard</th>
+                        <th className="py-2.5 px-3 font-semibold">Expiry Date</th>
+                        <th className="py-2.5 px-3 font-semibold text-center">
+                          Days Remaining
+                        </th>
+                        <th className="py-2.5 px-3 font-semibold">Storage Bin</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-[#F3E9D1]/60">
-                      {expiryData.fefoQueue.slice(0, 8).map((unit: any, idx: number) => (
-                        <tr key={unit.unitid} className="hover:bg-[#FAF6EE]/40 transition-colors">
-                          <td className="py-3 px-3 font-bold text-slate-500">
-                            #{idx + 1}
-                          </td>
-                          <td className="py-3 px-3 font-mono font-medium text-[#053845]">
-                            {unit.unitbarcode}
+                    <tbody className="divide-y divide-[#F3E9D1]">
+                      {insights.unitsToUseFirst.map((unit: any, idx: number) => {
+                        const isCritical = unit.daysRemaining <= 3;
+                        return (
+                          <tr key={idx} className="hover:bg-[#FAF6EE]/50">
+                            <td className="py-3 px-3 font-mono font-bold text-slate-400">
+                              #{idx + 1}
+                            </td>
+                            <td className="py-3 px-3 font-mono font-bold text-[#053845]">
+                              {unit.unitBarcode}
+                            </td>
+                            <td className="py-3 px-3">
+                              <span className="inline-block px-2 py-0.5 rounded bg-red-50 text-red-700 font-mono font-bold border border-red-100">
+                                {unit.bloodGroupDisplay}
+                              </span>
+                            </td>
+                            <td className="py-3 px-3 text-slate-700">
+                              {unit.componentDisplay}
+                            </td>
+                            <td className="py-3 px-3 text-slate-600 font-mono">
+                              {new Date(unit.expiryDate).toLocaleDateString()}
+                            </td>
+                            <td className="py-3 px-3 text-center">
+                              <span
+                                className={`inline-block px-2.5 py-0.5 rounded-full font-semibold font-mono text-[11px] ${
+                                  isCritical
+                                    ? "bg-red-50 text-red-700 border border-red-200"
+                                    : "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                }`}
+                              >
+                                {unit.daysRemaining} days
+                              </span>
+                            </td>
+                            <td className="py-3 px-3 text-slate-500 font-mono">
+                              {unit.storageBin || "Unassigned"}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="py-12 text-center text-xs text-slate-500">
+                  No active eligible inventory units available for dispatch.
+                </div>
+              )}
+            </div>
+
+            {/* Units Expiring Soon Table */}
+            <div className="bg-white rounded-xl border border-[#F3E9D1] p-6 shadow-xs">
+              <div className="pb-3 border-b border-[#F3E9D1] mb-4">
+                <h3 className="text-base font-serif font-bold text-[#053845] flex items-center gap-2">
+                  <ClockAlert className="w-4 h-4 text-red-600" />
+                  Units Expiring Soon (Action List)
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Units reaching expiry within the next 7 days that require clinical priority or transfer.
+                </p>
+              </div>
+
+              {loading ? (
+                <div className="py-8 text-center text-xs text-slate-400">Loading...</div>
+              ) : (insights?.unitsExpiringSoon?.length ?? 0) > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs text-left">
+                    <thead>
+                      <tr className="border-b border-[#F3E9D1] text-slate-500">
+                        <th className="py-2.5 px-3 font-semibold">Barcode</th>
+                        <th className="py-2.5 px-3 font-semibold">Blood Group</th>
+                        <th className="py-2.5 px-3 font-semibold">Component</th>
+                        <th className="py-2.5 px-3 font-semibold">Expiry Date</th>
+                        <th className="py-2.5 px-3 font-semibold text-center">
+                          Days Left
+                        </th>
+                        <th className="py-2.5 px-3 font-semibold">Safety Status</th>
+                        <th className="py-2.5 px-3 font-semibold">Recommended Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#F3E9D1]">
+                      {insights.unitsExpiringSoon.map((unit: any, idx: number) => (
+                        <tr key={idx} className="hover:bg-[#FAF6EE]/50">
+                          <td className="py-3 px-3 font-mono font-bold text-[#053845]">
+                            {unit.unitBarcode}
                           </td>
                           <td className="py-3 px-3">
-                            <span className="inline-block px-2 py-0.5 rounded font-bold bg-red-50 text-red-700 text-xs">
+                            <span className="inline-block px-2 py-0.5 rounded bg-red-50 text-red-700 font-mono font-bold border border-red-100">
                               {unit.bloodGroupDisplay}
                             </span>
                           </td>
-                          <td className="py-3 px-3 text-slate-700 font-medium">
+                          <td className="py-3 px-3 text-slate-700">
                             {unit.componentDisplay}
                           </td>
-                          <td className="py-3 px-3 font-mono text-slate-600">
-                            {new Date(unit.expirydate).toISOString().split("T")[0]}
+                          <td className="py-3 px-3 text-slate-600 font-mono">
+                            {new Date(unit.expiryDate).toLocaleDateString()}
                           </td>
-                          <td className="py-3 px-3 font-semibold">
-                            {unit.daysRemaining <= 3 ? (
-                              <span className="text-red-600 font-bold">
-                                {unit.daysRemaining}d ({unit.hoursRemaining}h)
-                              </span>
-                            ) : unit.daysRemaining <= 7 ? (
-                              <span className="text-amber-600 font-bold">
-                                {unit.daysRemaining}d
-                              </span>
-                            ) : (
-                              <span className="text-emerald-700 font-medium">
-                                {unit.daysRemaining}d
-                              </span>
-                            )}
-                          </td>
-                          <td className="py-3 px-3">
-                            <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                              <Check className="w-3 h-3" />
-                              PASSED
+                          <td className="py-3 px-3 text-center">
+                            <span
+                              className={`inline-block px-2.5 py-0.5 rounded-full font-semibold font-mono text-[11px] ${
+                                unit.daysRemaining <= 3
+                                  ? "bg-red-50 text-red-700 border border-red-200"
+                                  : "bg-amber-50 text-amber-700 border border-amber-200"
+                              }`}
+                            >
+                              {unit.daysRemaining} days
                             </span>
                           </td>
-                          <td className="py-3 px-3 text-slate-500 font-mono text-[11px]">
-                            {unit.storagebinlocation || "Vault Bin A1"}
+                          <td className="py-3 px-3">
+                            <span className="inline-flex items-center gap-1 text-[11px] text-emerald-700 font-medium">
+                              <ShieldCheck className="w-3.5 h-3.5" />
+                              {unit.ttiStatus}
+                            </span>
                           </td>
-                          <td className="py-3 px-3 text-right">
-                            <button
-                              onClick={() => testUnitSafety(unit)}
-                              className="px-2.5 py-1 text-[11px] font-medium rounded bg-[#053845] text-white hover:bg-[#074d5f] transition-colors"
-                            >
-                              Verify Safety
-                            </button>
+                          <td className="py-3 px-3 text-slate-700 text-[11px]">
+                            {unit.recommendedAction}
                           </td>
                         </tr>
                       ))}
@@ -449,420 +548,241 @@ export default function BloodBankInsightsPage() {
                 </div>
               ) : (
                 <div className="py-8 text-center text-xs text-slate-500">
-                  No eligible unexpired units currently queued for FEFO dispatch.
+                  No units expiring within the next 7 days.
                 </div>
               )}
             </div>
 
-            {/* Comprehensive Unit Inventory Expiry Table */}
-            <div className="mt-8 bg-white rounded-xl border border-[#F3E9D1] p-6 shadow-sm">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4 pb-3 border-b border-[#F3E9D1]">
-                <div>
+            {/* Potential Wastage & Mitigation Tips */}
+            {insights?.wastageInsights && (
+              <div className="bg-white rounded-xl border border-[#F3E9D1] p-6 shadow-xs">
+                <div className="pb-3 border-b border-[#F3E9D1] mb-4">
                   <h3 className="text-base font-serif font-bold text-[#053845]">
-                    Active Inventory Units — Expiry & Viability Monitor
+                    Blood Wastage Mitigation
                   </h3>
                   <p className="text-xs text-slate-500">
-                    Tracked by unique barcode and actual collection and expiry timestamps
+                    Proactive steps to prevent discarding units nearing expiry
                   </p>
                 </div>
-                <span className="text-xs text-slate-400">
-                  Showing {expiryData?.units?.length ?? 0} tracked units
-                </span>
-              </div>
 
-              {expiryData?.units && expiryData.units.length > 0 ? (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
-                    <thead>
-                      <tr className="border-b border-[#F3E9D1] text-slate-500 bg-[#FAF6EE]/50">
-                        <th className="py-2.5 px-3 font-semibold">Barcode</th>
-                        <th className="py-2.5 px-3 font-semibold">Group</th>
-                        <th className="py-2.5 px-3 font-semibold">Component</th>
-                        <th className="py-2.5 px-3 font-semibold">Expiry Date</th>
-                        <th className="py-2.5 px-3 font-semibold">Status Category</th>
-                        <th className="py-2.5 px-3 font-semibold">TTI Status</th>
-                        <th className="py-2.5 px-3 font-semibold">Location</th>
-                        <th className="py-2.5 px-3 font-semibold text-right">Safety Action</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-[#F3E9D1]/60">
-                      {expiryData.units.map((unit: any) => {
-                        const isExpired = unit.category === "EXPIRED";
-                        const isCritical = unit.category === "EXPIRING_CRITICAL_3D";
-                        const isWarning = unit.category === "EXPIRING_SOON_7D";
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                  <div className="p-4 rounded-lg bg-[#FAF6EE] border border-[#F3E9D1] text-xs">
+                    <span className="text-slate-500">Historical Discarded Units</span>
+                    <div className="text-xl font-bold text-slate-700 mt-1">
+                      {insights.wastageInsights.historicalWastageUnits} units
+                    </div>
+                  </div>
+                  <div className="p-4 rounded-lg bg-amber-50/60 border border-amber-200 text-xs">
+                    <span className="text-amber-800">Units Currently at Expiry Risk</span>
+                    <div className="text-xl font-bold text-amber-900 mt-1">
+                      {insights.wastageInsights.unitsAtRiskOfExpiry} units
+                    </div>
+                  </div>
+                  <div className="p-4 rounded-lg bg-red-50/60 border border-red-200 text-xs">
+                    <span className="text-red-800">Estimated Potential Wastage</span>
+                    <div className="text-xl font-bold text-red-900 mt-1">
+                      {insights.wastageInsights.estimatedPotentialWastageUnits} units
+                    </div>
+                  </div>
+                </div>
 
-                        return (
-                          <tr
-                            key={unit.unitid}
-                            className={`hover:bg-[#FAF6EE]/40 transition-colors ${
-                              isExpired ? "bg-red-50/40" : ""
-                            }`}
+                {insights.wastageInsights.actionsToReduceWastage?.length > 0 && (
+                  <div className="space-y-2">
+                    <span className="text-xs font-semibold text-[#053845]">
+                      Actionable Mitigation Steps:
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      {insights.wastageInsights.actionsToReduceWastage.map(
+                        (tip: string, idx: number) => (
+                          <div
+                            key={idx}
+                            className="p-3 bg-[#FAF6EE]/50 rounded-lg border border-[#F3E9D1] text-xs text-slate-700 flex items-start gap-2"
                           >
-                            <td className="py-3 px-3 font-mono font-medium text-[#053845]">
-                              {unit.unitbarcode}
-                            </td>
-                            <td className="py-3 px-3 font-bold text-red-700">
-                              {unit.bloodGroupDisplay}
-                            </td>
-                            <td className="py-3 px-3 text-slate-600">
-                              {unit.componentDisplay}
-                            </td>
-                            <td className="py-3 px-3 font-mono text-slate-600">
-                              {new Date(unit.expirydate).toISOString().split("T")[0]}
-                            </td>
-                            <td className="py-3 px-3">
-                              {isExpired ? (
-                                <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-red-100 text-red-800 border border-red-300">
-                                  EXPIRED ({Math.abs(unit.daysRemaining)}d ago)
-                                </span>
-                              ) : isCritical ? (
-                                <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-red-50 text-red-700 border border-red-200">
-                                  CRITICAL ({unit.daysRemaining}d left)
-                                </span>
-                              ) : isWarning ? (
-                                <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
-                                  EXPIRING ({unit.daysRemaining}d left)
-                                </span>
-                              ) : (
-                                <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
-                                  SAFE ({unit.daysRemaining}d left)
-                                </span>
-                              )}
-                            </td>
-                            <td className="py-3 px-3">
-                              <span
-                                className={`text-[11px] font-semibold px-2 py-0.5 rounded ${
-                                  unit.ttiscreeningstatus === "PASSED"
-                                    ? "bg-emerald-50 text-emerald-700"
-                                    : "bg-amber-50 text-amber-700"
-                                }`}
-                              >
-                                {unit.ttiscreeningstatus}
-                              </span>
-                            </td>
-                            <td className="py-3 px-3 text-slate-500 font-mono text-[11px]">
-                              {unit.storagebinlocation || "Vault Bin A1"}
-                            </td>
-                            <td className="py-3 px-3 text-right">
-                              <button
-                                onClick={() => testUnitSafety(unit)}
-                                className={`px-2.5 py-1 text-[11px] font-medium rounded transition-colors ${
-                                  isExpired
-                                    ? "bg-red-700 text-white hover:bg-red-800"
-                                    : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-                                }`}
-                              >
-                                {isExpired ? "Audit Disposal" : "Validate Safety"}
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <div className="py-8 text-center text-xs text-slate-500">
-                  No active units found matching current filter criteria.
-                </div>
-              )}
-            </div>
-
-            {/* Wastage Risk Projections via Consumption Velocity Model */}
-            <div className="mt-8 bg-white rounded-xl border border-[#F3E9D1] p-6 shadow-sm">
-              <div className="mb-4 pb-3 border-b border-[#F3E9D1]">
-                <h3 className="text-base font-serif font-bold text-[#053845]">
-                  Turnover Velocity & Prospective Wastage Modeling
-                </h3>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Estimates potential expiry surplus by evaluating units expiring in 7 days against 30-day historical consumption velocity (burn rate).
-                </p>
+                            <ArrowRight className="w-3.5 h-3.5 text-[#317786] shrink-0 mt-0.5" />
+                            <span>{tip}</span>
+                          </div>
+                        )
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
-
-              {expiryData?.wastageProjections && expiryData.wastageProjections.length > 0 ? (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
-                    <thead>
-                      <tr className="border-b border-[#F3E9D1] text-slate-500 bg-[#FAF6EE]/50">
-                        <th className="py-2.5 px-3 font-semibold">Group</th>
-                        <th className="py-2.5 px-3 font-semibold">Component</th>
-                        <th className="py-2.5 px-3 font-semibold">Expiring ≤ 7d</th>
-                        <th className="py-2.5 px-3 font-semibold">Daily Burn Rate</th>
-                        <th className="py-2.5 px-3 font-semibold">Projected 7d Usage</th>
-                        <th className="py-2.5 px-3 font-semibold">Predicted Wastage Surplus</th>
-                        <th className="py-2.5 px-3 font-semibold">Risk Level</th>
-                        <th className="py-2.5 px-3 font-semibold">Mitigation Strategy</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-[#F3E9D1]/60">
-                      {expiryData.wastageProjections.map((p: any, idx: number) => {
-                        const riskStyles: Record<string, string> = {
-                          HIGH: "bg-red-50 text-red-700 border-red-200",
-                          MEDIUM: "bg-orange-50 text-orange-700 border-orange-200",
-                          LOW: "bg-amber-50 text-amber-700 border-amber-200",
-                          NONE: "bg-emerald-50 text-emerald-700 border-emerald-200",
-                        };
-
-                        return (
-                          <tr key={idx} className="hover:bg-[#FAF6EE]/40 transition-colors">
-                            <td className="py-3 px-3 font-bold text-[#053845]">
-                              {p.bloodGroupDisplay}
-                            </td>
-                            <td className="py-3 px-3 text-slate-600">
-                              {p.componentDisplay}
-                            </td>
-                            <td className="py-3 px-3 font-medium text-slate-800">
-                              {p.currentExpiringUnits7d} unit(s)
-                            </td>
-                            <td className="py-3 px-3 text-slate-600 font-mono">
-                              {p.historicalDailyBurnRate} u/day
-                            </td>
-                            <td className="py-3 px-3 text-slate-600 font-mono">
-                              {p.projected7dConsumption} unit(s)
-                            </td>
-                            <td className="py-3 px-3 font-bold">
-                              {p.predictedWastageUnits > 0 ? (
-                                <span className="text-red-700">
-                                  +{p.predictedWastageUnits} surplus unit(s)
-                                </span>
-                              ) : (
-                                <span className="text-emerald-700">0 units (absorbed)</span>
-                              )}
-                            </td>
-                            <td className="py-3 px-3">
-                              <span
-                                className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${
-                                  riskStyles[p.wastageRiskLevel] || riskStyles.NONE
-                                }`}
-                              >
-                                {p.wastageRiskLevel}
-                              </span>
-                            </td>
-                            <td className="py-3 px-3 text-slate-600 text-[11px] max-w-sm">
-                              {p.mitigationStrategy}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <div className="py-8 text-center text-xs text-slate-500">
-                  No expiring inventory units detected in the upcoming 7 days.
-                </div>
-              )}
-            </div>
-
-            {/* Actionable Recommendations */}
-            <div className="mt-8 bg-white rounded-xl border border-[#F3E9D1] p-6 shadow-sm">
-              <h3 className="text-base font-serif font-bold text-[#053845] mb-3 flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                Actionable Wastage Reduction Protocols
-              </h3>
-              <ul className="space-y-2 text-xs text-slate-700">
-                {expiryData?.actionableRecommendations?.map((rec: string, i: number) => (
-                  <li
-                    key={i}
-                    className="flex items-start gap-2.5 p-3 rounded-lg bg-[#FAF6EE] border border-[#F3E9D1]"
-                  >
-                    <ArrowUpRight className="w-4 h-4 text-[#317786] shrink-0 mt-0.5" />
-                    <span className="leading-relaxed">{rec}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </>
+            )}
+          </div>
         )}
 
         {/* ========================================================================= */}
-        {/* TAB 2: DEMAND FORECASTING (FEATURE 1)                                    */}
+        {/* VIEW 2: MY DISTRICT                                                      */}
         {/* ========================================================================= */}
-        {activeTab === "DEMAND" && (
-          <>
-            {/* KPI Cards: Demand Forecast */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-6">
-              <div className="bg-white rounded-xl border border-[#F3E9D1] p-5 shadow-sm">
-                <div className="text-xs text-slate-500 mb-1">Historical Fulfilled Demand</div>
-                <div className="text-2xl font-bold text-[#053845]">
-                  {demandData?.totalHistoricalUnits ?? (loading ? "..." : 0)}{" "}
-                  <span className="text-xs font-normal text-slate-500">units</span>
+        {activeScope === "DISTRICT" && (
+          <div className="mt-6 space-y-6">
+            {/* District Header Banner */}
+            <div className="bg-white rounded-xl border border-[#F3E9D1] p-6 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                    <MapPin className="w-3.5 h-3.5" />
+                    District Supply & Demand
+                  </span>
+                  <span className="text-xs text-slate-500">
+                    {location?.displayDistrict || "District"}, {location?.displayState || "State"}
+                  </span>
                 </div>
-                <div className="text-[11px] text-slate-500 mt-2">
-                  Past {timeframeDays} days across assignments
+                <h2 className="text-xl sm:text-2xl font-serif font-bold text-[#053845]">
+                  District Blood Supply vs. Hospital Demand
+                </h2>
+                <p className="text-xs text-slate-600 mt-1">
+                  Comparing hospital blood requests with available blood bank stock across {location?.displayDistrict || "this district"}.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-6 text-xs shrink-0">
+                <div className="text-right">
+                  <div className="text-lg font-bold text-[#053845]">
+                    {regionalDemand?.totalRequestsCount ?? 0}
+                  </div>
+                  <div className="text-[11px] text-slate-500">Hospital Requisitions</div>
+                </div>
+                <div className="text-right">
+                  <div className="text-lg font-bold text-emerald-700">
+                    {regionalSupply?.participatingBloodBanksCount ?? 1}
+                  </div>
+                  <div className="text-[11px] text-slate-500">District Blood Banks</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Overview Summary Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {/* Card 1: Regional Demand */}
+              <div className="bg-white rounded-xl border border-[#F3E9D1] p-5 shadow-xs">
+                <div className="text-xs text-slate-500 mb-1">District Hospital Demand</div>
+                <div className="text-2xl font-bold text-[#053845]">
+                  {regionalDemand?.totalUnitsRequested ?? (loading ? "..." : 0)}{" "}
+                  <span className="text-sm font-normal text-slate-500">units</span>
+                </div>
+                <div className="text-xs text-slate-500 mt-2">
+                  Past {timeframeDays} days requested
                 </div>
               </div>
 
-              <div className="bg-white rounded-xl border border-[#F3E9D1] p-5 shadow-sm">
-                <div className="text-xs text-slate-500 mb-1 flex items-center justify-between">
-                  <span>7-Day Forecast</span>
-                  <span className="text-[10px] bg-emerald-50 text-emerald-700 font-semibold px-1.5 py-0.5 rounded border border-emerald-200">
-                    WMA Projection
-                  </span>
+              {/* Card 2: 7-Day Projected Demand */}
+              <div className="bg-white rounded-xl border border-[#F3E9D1] p-5 shadow-xs">
+                <div className="text-xs text-slate-500 mb-1">Next 7 Days Demand</div>
+                <div className="text-2xl font-bold text-indigo-700">
+                  {regionalDemand?.estimatedUpcoming7d ?? (loading ? "..." : 0)}{" "}
+                  <span className="text-sm font-normal text-slate-500">units</span>
                 </div>
-                <div className="text-2xl font-bold text-[#053845]">
-                  {demandData?.predictedDemand?.totalProjected7d ?? (loading ? "..." : 0)}{" "}
-                  <span className="text-xs font-normal text-slate-500">units</span>
-                </div>
-                <div className="text-[11px] text-slate-500 mt-2">
-                  14d: {demandData?.predictedDemand?.totalProjected14d ?? 0}u | 30d:{" "}
-                  {demandData?.predictedDemand?.totalProjected30d ?? 0}u
+                <div className="text-xs text-slate-500 mt-2">
+                  Expected district hospital requirements
                 </div>
               </div>
 
-              <div className="bg-white rounded-xl border border-[#F3E9D1] p-5 shadow-sm">
-                <div className="text-xs text-slate-500 mb-1 flex items-center justify-between">
-                  <span>Top Requested Group</span>
-                  <span className="text-[10px] bg-red-50 text-red-700 font-semibold px-1.5 py-0.5 rounded border border-red-200">
-                    Highest Volume
-                  </span>
+              {/* Card 3: District Available Supply */}
+              <div className="bg-white rounded-xl border border-[#F3E9D1] p-5 shadow-xs">
+                <div className="text-xs text-slate-500 mb-1">Available District Stock</div>
+                <div className="text-2xl font-bold text-emerald-700">
+                  {regionalSupply?.totalAvailableUnits ?? (loading ? "..." : 0)}{" "}
+                  <span className="text-sm font-normal text-slate-500">units</span>
                 </div>
+                <div className="text-xs text-slate-500 mt-2">
+                  Ready unexpired units across district
+                </div>
+              </div>
+
+              {/* Card 4: Top Needed Blood Group */}
+              <div className="bg-white rounded-xl border border-[#F3E9D1] p-5 shadow-xs">
+                <div className="text-xs text-slate-500 mb-1">Most Needed Blood Group</div>
                 <div className="text-2xl font-bold text-red-700">
-                  {demandData?.frequentlyRequestedGroups?.[0]?.displayName ?? (loading ? "..." : "N/A")}
+                  {regionalDemand?.mostRequestedGroup?.displayName ??
+                    (loading ? "..." : "None")}
                 </div>
-                <div className="text-[11px] text-slate-500 mt-2">
-                  {demandData?.frequentlyRequestedGroups?.[0]
-                    ? `${demandData.frequentlyRequestedGroups[0].percentage}% of total bank demand`
-                    : "No assignments"}
-                </div>
-              </div>
-
-              <div className="bg-white rounded-xl border border-[#F3E9D1] p-5 shadow-sm">
-                <div className="text-xs text-slate-500 mb-1 flex items-center justify-between">
-                  <span>Inventory Shortage Alerts</span>
-                  <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded border bg-amber-50 text-amber-700 border-amber-200">
-                    Vault Deficit
-                  </span>
-                </div>
-                <div className="text-2xl font-bold text-[#053845]">
-                  {demandData?.shortages?.filter((s: any) => s.riskLevel !== "ADEQUATE").length ?? 0}{" "}
-                  <span className="text-xs font-normal text-slate-500">group(s)</span>
-                </div>
-                <div className="text-[11px] text-slate-500 mt-2">
-                  Compared against 7d forecast
+                <div className="text-xs text-slate-500 mt-2">
+                  {regionalDemand?.mostRequestedGroup
+                    ? `${regionalDemand.mostRequestedGroup.totalUnits} units requested`
+                    : "No district requests"}
                 </div>
               </div>
             </div>
 
-            {/* Daily Projections Chart / Bar List */}
-            <div className="mt-8 bg-white rounded-xl border border-[#F3E9D1] p-6 shadow-sm">
-              <div className="flex items-center justify-between mb-4 pb-3 border-b border-[#F3E9D1]">
-                <div>
-                  <h3 className="text-base font-serif font-bold text-[#053845]">
-                    Prospective 7-Day Demand Schedule
-                  </h3>
-                  <p className="text-xs text-slate-500">
-                    Statistical requirement projection with upper/lower variance intervals
-                  </p>
-                </div>
-                <span className="text-xs text-slate-500 font-mono">
-                  Method: WMA + Linear Trend
-                </span>
-              </div>
-
-              {demandData?.predictedDemand?.daily7d?.length > 0 ? (
-                <div className="space-y-3">
-                  {demandData.predictedDemand.daily7d.map((dp: any, idx: number) => {
-                    const maxVal = Math.max(
-                      5,
-                      ...demandData.predictedDemand.daily7d.map((p: any) => p.upperBound || p.predictedUnits)
-                    );
-                    const pct = Math.min(100, Math.round((dp.predictedUnits / maxVal) * 100));
-
-                    return (
-                      <div key={idx} className="flex items-center gap-4 text-xs">
-                        <div className="w-24 text-slate-600 font-mono text-[11px]">
-                          {dp.date}
-                        </div>
-                        <div className="flex-1 bg-[#FAF6EE] h-6 rounded-md relative overflow-hidden flex items-center px-2">
-                          <div
-                            className="absolute bg-[#053845] h-3.5 rounded transition-all"
-                            style={{ width: `${Math.max(4, pct)}%` }}
-                          />
-                        </div>
-                        <div className="w-28 text-right font-medium text-[#053845]">
-                          {dp.predictedUnits} u{" "}
-                          <span className="text-[10px] text-slate-400 font-normal">
-                            ({dp.lowerBound}–{dp.upperBound})
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="py-8 text-center text-xs text-slate-500">
-                  No demand data available to project.
-                </div>
-              )}
-            </div>
-
-            {/* Shortage Analysis Table */}
-            <div className="mt-8 bg-white rounded-xl border border-[#F3E9D1] p-6 shadow-sm">
-              <div className="mb-4 pb-3 border-b border-[#F3E9D1]">
+            {/* Demand vs Supply Comparison Table */}
+            <div className="bg-white rounded-xl border border-[#F3E9D1] p-6 shadow-xs">
+              <div className="pb-3 border-b border-[#F3E9D1] mb-4">
                 <h3 className="text-base font-serif font-bold text-[#053845]">
-                  Vault Shortages vs Prospective 7-Day Demand
+                  Blood Group Balance: Hospital Demand vs. Available Stock
                 </h3>
                 <p className="text-xs text-slate-500">
-                  Evaluates available unquarantined stock against forecasted regional requests
+                  Evaluates 7-day projected hospital requirements against currently available blood bank supply.
                 </p>
               </div>
 
-              {demandData?.shortages && demandData.shortages.length > 0 ? (
+              {loading ? (
+                <div className="py-8 text-center text-xs text-slate-400">Loading...</div>
+              ) : (insights?.demandSupplyComparison?.length ?? 0) > 0 ? (
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
+                  <table className="w-full text-xs text-left">
                     <thead>
-                      <tr className="border-b border-[#F3E9D1] text-slate-500 bg-[#FAF6EE]/50">
+                      <tr className="border-b border-[#F3E9D1] text-slate-500">
                         <th className="py-2.5 px-3 font-semibold">Blood Group</th>
-                        <th className="py-2.5 px-3 font-semibold">Component</th>
-                        <th className="py-2.5 px-3 font-semibold">Available Stock</th>
-                        <th className="py-2.5 px-3 font-semibold">Projected 7d Demand</th>
-                        <th className="py-2.5 px-3 font-semibold">Deficit</th>
-                        <th className="py-2.5 px-3 font-semibold">Risk Level</th>
-                        <th className="py-2.5 px-3 font-semibold">Action Plan</th>
+                        <th className="py-2.5 px-3 font-semibold text-right">
+                          Estimated Demand (7d)
+                        </th>
+                        <th className="py-2.5 px-3 font-semibold text-right">
+                          Available Stock
+                        </th>
+                        <th className="py-2.5 px-3 font-semibold text-right">
+                          Net Balance
+                        </th>
+                        <th className="py-2.5 px-3 font-semibold text-center">
+                          Supply Status
+                        </th>
+                        <th className="py-2.5 px-3 font-semibold">
+                          Recommended Action
+                        </th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-[#F3E9D1]/60">
-                      {demandData.shortages.map((item: any, idx: number) => {
-                        const badgeStyles: Record<string, string> = {
-                          CRITICAL: "bg-red-50 text-red-700 border-red-200",
-                          HIGH: "bg-orange-50 text-orange-700 border-orange-200",
-                          MODERATE: "bg-amber-50 text-amber-700 border-amber-200",
-                          ADEQUATE: "bg-emerald-50 text-emerald-700 border-emerald-200",
-                        };
-
+                    <tbody className="divide-y divide-[#F3E9D1]">
+                      {insights.demandSupplyComparison.map((row: any, idx: number) => {
+                        const isShortage = row.status === "Shortage Risk";
                         return (
-                          <tr key={idx} className="hover:bg-[#FAF6EE]/40 transition-colors">
+                          <tr key={idx} className="hover:bg-[#FAF6EE]/50">
                             <td className="py-3 px-3 font-bold text-[#053845]">
-                              {item.bloodGroupDisplay}
-                            </td>
-                            <td className="py-3 px-3 text-slate-600">
-                              {item.componentDisplay}
-                            </td>
-                            <td className="py-3 px-3 font-medium text-slate-800">
-                              {item.availableUnits} unit(s)
-                            </td>
-                            <td className="py-3 px-3 font-medium text-slate-800">
-                              {item.forecastedDemand7d} unit(s)
-                            </td>
-                            <td className="py-3 px-3 font-semibold">
-                              {item.deficit > 0 ? (
-                                <span className="text-red-600">-{item.deficit} unit(s)</span>
-                              ) : (
-                                <span className="text-emerald-600">Sufficient</span>
-                              )}
-                            </td>
-                            <td className="py-3 px-3">
-                              <span
-                                className={`inline-block px-2.5 py-0.5 rounded text-[11px] font-semibold border ${
-                                  badgeStyles[item.riskLevel] || badgeStyles.ADEQUATE
-                                }`}
-                              >
-                                {item.riskLevel}
+                              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-red-50 text-red-700 font-mono border border-red-100">
+                                {row.displayName}
                               </span>
                             </td>
-                            <td className="py-3 px-3 text-slate-600 text-[11px] max-w-sm">
-                              {item.recommendation}
+                            <td className="py-3 px-3 text-right font-mono font-bold text-slate-700">
+                              {row.projectedDemand7d} u
+                            </td>
+                            <td className="py-3 px-3 text-right font-mono font-bold text-[#053845]">
+                              {row.availableSupplyUnits} u
+                            </td>
+                            <td
+                              className={`py-3 px-3 text-right font-mono font-bold ${
+                                row.balance < 0
+                                  ? "text-red-700"
+                                  : row.balance > 0
+                                  ? "text-emerald-700"
+                                  : "text-slate-600"
+                              }`}
+                            >
+                              {row.balance > 0 ? `+${row.balance}` : row.balance} u
+                            </td>
+                            <td className="py-3 px-3 text-center">
+                              <span
+                                className={`inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${
+                                  isShortage
+                                    ? "bg-red-50 text-red-700 border-red-200"
+                                    : row.status === "Adequate Stock"
+                                    ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                    : "bg-blue-50 text-blue-700 border-blue-200"
+                                }`}
+                              >
+                                {row.status}
+                              </span>
+                            </td>
+                            <td className="py-3 px-3 text-slate-600 text-[11px]">
+                              {row.statusMessage}
                             </td>
                           </tr>
                         );
@@ -871,24 +791,269 @@ export default function BloodBankInsightsPage() {
                   </table>
                 </div>
               ) : (
-                <div className="py-8 text-center text-xs text-slate-500">
-                  No shortages identified.
+                <div className="py-8 text-center text-xs text-slate-400">
+                  No district comparison data available.
                 </div>
               )}
             </div>
-          </>
+
+            {/* Shortage Alerts & Simple Coordination Recommendations */}
+            {insights?.recommendedActions && (
+              <div className="bg-[#FAF6EE] rounded-xl border border-[#E3D8BF] p-6 shadow-xs">
+                <div className="flex items-center gap-2 mb-3">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-700" />
+                  <h3 className="text-sm font-serif font-bold text-[#053845]">
+                    District Supply Coordination Actions
+                  </h3>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {insights.recommendedActions.map((action: string, idx: number) => (
+                    <div
+                      key={idx}
+                      className="bg-white p-3.5 rounded-lg border border-[#F3E9D1] text-xs text-slate-700 flex items-start gap-2.5 shadow-2xs"
+                    >
+                      <ArrowRight className="w-3.5 h-3.5 text-[#317786] shrink-0 mt-0.5" />
+                      <span>{action}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         )}
 
-        {/* Section: Methodological Disclaimer */}
-        <div className="mt-8 p-4 rounded-xl bg-slate-50 border border-slate-200 text-slate-600 text-xs">
-          <div className="font-semibold text-slate-800 mb-1 flex items-center gap-1.5">
-            <Info className="w-3.5 h-3.5 text-slate-500" />
-            Clinical Safety & Governance Policy
+        {/* ========================================================================= */}
+        {/* VIEW 3: MY STATE                                                         */}
+        {/* ========================================================================= */}
+        {activeScope === "STATE" && (
+          <div className="mt-6 space-y-6">
+            {/* State Header Banner */}
+            <div className="bg-white rounded-xl border border-[#F3E9D1] p-6 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-800 border border-indigo-200">
+                    <Globe className="w-3.5 h-3.5" />
+                    State-wide Scope
+                  </span>
+                  <span className="text-xs text-slate-500">
+                    {location?.displayState || "State"}
+                  </span>
+                </div>
+                <h2 className="text-xl sm:text-2xl font-serif font-bold text-[#053845]">
+                  State-wide Blood Supply vs. Hospital Demand
+                </h2>
+                <p className="text-xs text-slate-600 mt-1">
+                  Macro supply-demand balance and district-by-district breakdown across {location?.displayState || "the state"}.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-4 text-xs shrink-0">
+                <div className="text-right">
+                  <div className="text-lg font-bold text-[#053845]">
+                    {regionalContext?.districtBreakdown?.length ?? 1}
+                  </div>
+                  <div className="text-[11px] text-slate-500">Active Districts</div>
+                </div>
+              </div>
+            </div>
+
+            {/* State Overview Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {/* Card 1: State Hospital Demand */}
+              <div className="bg-white rounded-xl border border-[#F3E9D1] p-5 shadow-xs">
+                <div className="text-xs text-slate-500 mb-1">State Hospital Demand</div>
+                <div className="text-2xl font-bold text-[#053845]">
+                  {regionalDemand?.totalUnitsRequested ?? (loading ? "..." : 0)}{" "}
+                  <span className="text-sm font-normal text-slate-500">units</span>
+                </div>
+                <div className="text-xs text-slate-500 mt-2">
+                  Total requested in past {timeframeDays}d
+                </div>
+              </div>
+
+              {/* Card 2: State Available Supply */}
+              <div className="bg-white rounded-xl border border-[#F3E9D1] p-5 shadow-xs">
+                <div className="text-xs text-slate-500 mb-1">State Available Stock</div>
+                <div className="text-2xl font-bold text-emerald-700">
+                  {regionalSupply?.totalAvailableUnits ?? (loading ? "..." : 0)}{" "}
+                  <span className="text-sm font-normal text-slate-500">units</span>
+                </div>
+                <div className="text-xs text-slate-500 mt-2">
+                  Available in participating blood banks
+                </div>
+              </div>
+
+              {/* Card 3: 7-Day State Projected Demand */}
+              <div className="bg-white rounded-xl border border-[#F3E9D1] p-5 shadow-xs">
+                <div className="text-xs text-slate-500 mb-1">Next 7-Day State Need</div>
+                <div className="text-2xl font-bold text-indigo-700">
+                  {regionalDemand?.estimatedUpcoming7d ?? (loading ? "..." : 0)}{" "}
+                  <span className="text-sm font-normal text-slate-500">units</span>
+                </div>
+                <div className="text-xs text-slate-500 mt-2">
+                  Estimated 7-day state requirements
+                </div>
+              </div>
+
+              {/* Card 4: Net State Balance */}
+              <div className="bg-white rounded-xl border border-[#F3E9D1] p-5 shadow-xs">
+                <div className="text-xs text-slate-500 mb-1">State Supply Balance</div>
+                {(() => {
+                  const supply = regionalSupply?.totalAvailableUnits ?? 0;
+                  const dem7d = regionalDemand?.estimatedUpcoming7d ?? 0;
+                  const bal = supply - dem7d;
+                  return (
+                    <>
+                      <div
+                        className={`text-2xl font-bold ${
+                          bal < 0 ? "text-red-700" : "text-emerald-700"
+                        }`}
+                      >
+                        {bal > 0 ? `+${bal}` : bal}{" "}
+                        <span className="text-sm font-normal text-slate-500">units</span>
+                      </div>
+                      <div className="text-xs text-slate-500 mt-2">
+                        {bal < 0 ? "Deficit against 7-day projection" : "Adequate overall stock"}
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+            </div>
+
+            {/* District-by-District Breakdown Table */}
+            <div className="bg-white rounded-xl border border-[#F3E9D1] p-6 shadow-xs">
+              <div className="pb-3 border-b border-[#F3E9D1] mb-4">
+                <h3 className="text-base font-serif font-bold text-[#053845]">
+                  District-by-District Demand vs. Supply Breakdown
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Identify districts with critical supply deficits or stock surplus for inter-facility redistribution.
+                </p>
+              </div>
+
+              {loading ? (
+                <div className="py-8 text-center text-xs text-slate-400">Loading...</div>
+              ) : (regionalContext?.districtBreakdown?.length ?? 0) > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs text-left">
+                    <thead>
+                      <tr className="border-b border-[#F3E9D1] text-slate-500">
+                        <th className="py-2.5 px-3 font-semibold">District Name</th>
+                        <th className="py-2.5 px-3 font-semibold text-center">
+                          Hospitals
+                        </th>
+                        <th className="py-2.5 px-3 font-semibold text-center">
+                          Blood Banks
+                        </th>
+                        <th className="py-2.5 px-3 font-semibold text-right">
+                          Hospital Demand
+                        </th>
+                        <th className="py-2.5 px-3 font-semibold text-right">
+                          Available Stock
+                        </th>
+                        <th className="py-2.5 px-3 font-semibold text-right">
+                          Balance
+                        </th>
+                        <th className="py-2.5 px-3 font-semibold text-center">
+                          Status
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#F3E9D1]">
+                      {regionalContext!.districtBreakdown!.map((d: any, idx: number) => {
+                        const isCurrent =
+                          d.districtName.toLowerCase() ===
+                          (location?.district || "").toLowerCase();
+                        const isShortage = d.status === "Shortage Risk";
+                        return (
+                          <tr
+                            key={idx}
+                            className={`hover:bg-[#FAF6EE]/50 ${
+                              isCurrent ? "bg-amber-50/50 font-semibold" : ""
+                            }`}
+                          >
+                            <td className="py-3 px-3 text-[#053845] flex items-center gap-2">
+                              <span>{d.districtName}</span>
+                              {isCurrent && (
+                                <span className="text-[10px] bg-amber-100 text-amber-900 px-1.5 py-0.2 rounded font-normal">
+                                  Your District
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-3 px-3 text-center text-slate-700">
+                              {d.hospitalCount}
+                            </td>
+                            <td className="py-3 px-3 text-center text-slate-700">
+                              {d.bloodBankCount}
+                            </td>
+                            <td className="py-3 px-3 text-right font-mono font-bold text-slate-700">
+                              {d.requestedUnits} u
+                            </td>
+                            <td className="py-3 px-3 text-right font-mono font-bold text-[#053845]">
+                              {d.availableSupplyUnits} u
+                            </td>
+                            <td
+                              className={`py-3 px-3 text-right font-mono font-bold ${
+                                d.balance < 0
+                                  ? "text-red-700"
+                                  : d.balance > 0
+                                  ? "text-emerald-700"
+                                  : "text-slate-600"
+                              }`}
+                            >
+                              {d.balance > 0 ? `+${d.balance}` : d.balance} u
+                            </td>
+                            <td className="py-3 px-3 text-center">
+                              <span
+                                className={`inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${
+                                  isShortage
+                                    ? "bg-red-50 text-red-700 border-red-200"
+                                    : d.status === "Adequate Stock"
+                                    ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                    : "bg-blue-50 text-blue-700 border-blue-200"
+                                }`}
+                              >
+                                {d.status}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="py-8 text-center text-xs text-slate-400">
+                  No district breakdown records found.
+                </div>
+              )}
+            </div>
+
+            {/* State Coordination Recommendations */}
+            {insights?.recommendedActions && (
+              <div className="bg-[#FAF6EE] rounded-xl border border-[#E3D8BF] p-6 shadow-xs">
+                <div className="flex items-center gap-2 mb-3">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-700" />
+                  <h3 className="text-sm font-serif font-bold text-[#053845]">
+                    State-wide Supply Redistribution Actions
+                  </h3>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {insights.recommendedActions.map((action: string, idx: number) => (
+                    <div
+                      key={idx}
+                      className="bg-white p-3.5 rounded-lg border border-[#F3E9D1] text-xs text-slate-700 flex items-start gap-2.5 shadow-2xs"
+                    >
+                      <ArrowRight className="w-3.5 h-3.5 text-[#317786] shrink-0 mt-0.5" />
+                      <span>{action}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
-          <p className="leading-relaxed">
-            All expiry timelines strictly utilize verified laboratory collection dates. No automatic expiry extensions are permitted under Indian Drugs and Cosmetics Act regulations. FEFO prioritization enforces First-Expiring, First-Out sequence while enforcing strict TTI-negative screening clearance prior to any reservation or dispatch event.
-          </p>
-        </div>
+        )}
       </div>
     </div>
   );

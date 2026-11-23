@@ -9,6 +9,7 @@ import { getJwtSecret } from "../utils/jwt";
 import { approval_status, blood_group, blood_component, notification_type, verification_status } from "../generated/prisma/enums";
 import { DonorImportService, normalizeBloodGroup } from "../services/donorImport.service";
 import { BloodDemandForecastService } from "../services/bloodDemandForecast.service";
+import { RegionalAiInsightsService } from "../services/regionalAiInsights.service";
 import { validateCoordinates } from "../utils/distance";
 
 const router = Router();
@@ -400,6 +401,21 @@ router.get(
             const timeframeDays = req.query.timeframeDays ? parseInt(String(req.query.timeframeDays), 10) : 30;
             const bloodGroup = req.query.bloodGroup as blood_group | undefined;
             const bloodComponent = req.query.bloodComponent as blood_component | undefined;
+            const scopeQuery = String(req.query.scope || "").toUpperCase();
+
+            if (scopeQuery === "DISTRICT" || scopeQuery === "STATE") {
+                const regional = await RegionalAiInsightsService.getHospitalInsights({
+                    hospitalId: hospital.hospitalid,
+                    scope: scopeQuery as "DISTRICT" | "STATE",
+                    timeframeDays,
+                    bloodGroup,
+                    bloodComponent,
+                });
+                return res.status(200).json({
+                    success: true,
+                    data: regional,
+                });
+            }
 
             const forecast = await BloodDemandForecastService.calculateDemandForecast({
                 facilityType: "HOSPITAL",
@@ -439,6 +455,21 @@ router.get(
             const timeframeDays = req.query.timeframeDays ? parseInt(String(req.query.timeframeDays), 10) : 30;
             const bloodGroup = req.query.bloodGroup as blood_group | undefined;
             const bloodComponent = req.query.bloodComponent as blood_component | undefined;
+            const scopeQuery = String(req.query.scope || "").toUpperCase();
+
+            if (scopeQuery === "DISTRICT" || scopeQuery === "STATE") {
+                const regional = await RegionalAiInsightsService.getHospitalInsights({
+                    hospitalId,
+                    scope: scopeQuery as "DISTRICT" | "STATE",
+                    timeframeDays,
+                    bloodGroup,
+                    bloodComponent,
+                });
+                return res.status(200).json({
+                    success: true,
+                    data: regional,
+                });
+            }
 
             const forecast = await BloodDemandForecastService.calculateDemandForecast({
                 facilityType: "HOSPITAL",
@@ -457,6 +488,98 @@ router.get(
             return res.status(500).json({
                 success: false,
                 message: error.message || "Failed to generate blood demand forecast",
+            });
+        }
+    }
+);
+
+/*
+ * GET REGIONAL AI INSIGHTS FOR AUTHENTICATED HOSPITAL
+ * GET /hospitals/me/analytics/regional-insights
+ */
+router.get(
+    "/me/analytics/regional-insights",
+    authenticate,
+    authorize("HOSPITAL", "ADMIN"),
+    requireApprovedHospital,
+    async (req: Request, res: Response) => {
+        try {
+            const user = (req as any).user;
+            const hospital = await prisma.hospitals.findUnique({
+                where: { userid: user.userid },
+            });
+
+            if (!hospital) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Hospital facility profile not found",
+                });
+            }
+
+            const rawScope = String(req.query.scope || "HOSPITAL").toUpperCase();
+            const scope = (rawScope === "DISTRICT" || rawScope === "STATE") ? rawScope : "HOSPITAL";
+            const timeframeDays = req.query.timeframeDays ? parseInt(String(req.query.timeframeDays), 10) : 30;
+            const bloodGroup = req.query.bloodGroup as blood_group | undefined;
+            const bloodComponent = req.query.bloodComponent as blood_component | undefined;
+
+            const insights = await RegionalAiInsightsService.getHospitalInsights({
+                hospitalId: hospital.hospitalid,
+                scope,
+                timeframeDays,
+                bloodGroup,
+                bloodComponent,
+            });
+
+            return res.status(200).json({
+                success: true,
+                data: insights,
+            });
+        } catch (error: any) {
+            console.error("Error generating hospital regional AI insights:", error);
+            return res.status(500).json({
+                success: false,
+                message: error.message || "Failed to generate hospital regional AI insights",
+            });
+        }
+    }
+);
+
+/*
+ * GET REGIONAL AI INSIGHTS FOR SPECIFIC HOSPITAL (ADMIN OR OWNER)
+ * GET /hospitals/:hospitalId/analytics/regional-insights
+ */
+router.get(
+    "/:hospitalId/analytics/regional-insights",
+    authenticate,
+    authorize("HOSPITAL", "ADMIN"),
+    checkHospitalOwnership,
+    requireApprovedHospital,
+    async (req: Request, res: Response) => {
+        try {
+            const hospitalId = (Array.isArray(req.params.hospitalId) ? req.params.hospitalId[0] : req.params.hospitalId) as string;
+            const rawScope = String(req.query.scope || "HOSPITAL").toUpperCase();
+            const scope = (rawScope === "DISTRICT" || rawScope === "STATE") ? rawScope : "HOSPITAL";
+            const timeframeDays = req.query.timeframeDays ? parseInt(String(req.query.timeframeDays), 10) : 30;
+            const bloodGroup = req.query.bloodGroup as blood_group | undefined;
+            const bloodComponent = req.query.bloodComponent as blood_component | undefined;
+
+            const insights = await RegionalAiInsightsService.getHospitalInsights({
+                hospitalId,
+                scope,
+                timeframeDays,
+                bloodGroup,
+                bloodComponent,
+            });
+
+            return res.status(200).json({
+                success: true,
+                data: insights,
+            });
+        } catch (error: any) {
+            console.error("Error generating hospital regional AI insights by ID:", error);
+            return res.status(500).json({
+                success: false,
+                message: error.message || "Failed to generate hospital regional AI insights",
             });
         }
     }

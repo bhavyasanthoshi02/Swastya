@@ -17,6 +17,7 @@ import {
   CheckCircle2,
   AlertCircle,
   ExternalLink,
+  Tent,
 } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { api } from "@/lib/api";
@@ -64,8 +65,12 @@ export function DonorTopNav({
           title: n.title,
           desc: n.message,
           time: formatTimeAgo(n.createdat),
-          type: n.type?.toLowerCase().includes("urgent") || n.type?.toLowerCase().includes("emergency") ? "urgent" : "info",
-          href: "/donor/notifications",
+          type: n.type?.toLowerCase().includes("urgent") || n.type?.toLowerCase().includes("emergency")
+            ? "urgent"
+            : n.type === "CAMP" || n.campid
+            ? "camp"
+            : "info",
+          href: n.actionurl || (n.campid ? `/donor/camps/${n.campid}` : "/donor/notifications"),
         }));
         setNotifications(mapped);
       }
@@ -93,6 +98,9 @@ export function DonorTopNav({
 
   useEffect(() => {
     fetchNotifications();
+    const handleUpdate = () => fetchNotifications();
+    window.addEventListener("swastya-notifications-change", handleUpdate);
+    return () => window.removeEventListener("swastya-notifications-change", handleUpdate);
   }, [pathname]);
 
   // Close dropdowns on outside click
@@ -142,12 +150,19 @@ export function DonorTopNav({
       label: "Blood Requests",
       icon: Droplets,
     },
+    {
+      href: "/donor/camps",
+      label: "Blood Camps",
+      icon: Tent,
+    },
     { href: "/donor/history", label: "Donation History", icon: History },
   ];
 
   const profileLinks = [
     { href: "/donor/profile", label: "My Profile", icon: User },
+    { href: "/donor/my-camps", label: "My Camp Registrations", icon: Tent },
     { href: "/donor/settings", label: "Availability Settings", icon: SlidersHorizontal },
+    { href: "/donor/settings/notifications", label: "Notification Preferences", icon: Bell },
     { href: "/donor/notifications", label: "Notifications", icon: Bell },
   ];
 
@@ -290,6 +305,8 @@ export function DonorTopNav({
                         >
                           {notif.type === "urgent" ? (
                             <AlertCircle className="w-3.5 h-3.5" />
+                          ) : notif.type === "camp" ? (
+                            <Tent className="w-3.5 h-3.5 text-red-600" />
                           ) : (
                             <CheckCircle2 className="w-3.5 h-3.5" />
                           )}

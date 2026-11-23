@@ -98,6 +98,147 @@ export interface PrescriptionHistoryItem {
   } | null;
 }
 
+export interface ProcedureConfigItem {
+  configid: string;
+  hospitalid: string | null;
+  procedurename: string;
+  category: string;
+  defaultcomponent: string;
+  defaultunits: number;
+  secondarycomponent: string | null;
+  secondaryunits: number | null;
+  typicalbloodlossml: number | null;
+  transfusionprobability: number | null;
+  guidelinesource: string;
+  guidelineversion: string;
+  guidelinecitation?: string | null;
+  approvalauthority: string;
+  effectivedate: string;
+  clinicalrationale: string | null;
+  requireshospitalapproval?: boolean;
+  isHospitalOverride: boolean;
+}
+
+export interface SurgeryPlanItem {
+  surgeryid: string;
+  hospitalid: string;
+  createdbyuserid: string;
+  patientreference: string;
+  patientage: number;
+  patientgender: "MALE" | "FEMALE" | "OTHER" | string;
+  patientbloodgroup: string | null;
+  procedurename: string;
+  category: string | null;
+  scheduleddate: string;
+  expecteddurationminutes: number | null;
+  clinicianspecifiedcomponent: string | null;
+  clinicianspecifiedunits: number | null;
+  configid: string | null;
+  baselinecomponent: string | null;
+  baselineunits: number | null;
+  secondarybaselinecomponent: string | null;
+  secondarybaselineunits: number | null;
+  baselinerationale: string | null;
+  finalcomponent: string | null;
+  finalunits: number | null;
+  secondaryfinalcomponent: string | null;
+  secondaryfinalunits: number | null;
+  adjustmentreason: string | null;
+  reviewedbyuserid: string | null;
+  reviewedat: string | null;
+  status:
+    | "PLANNED"
+    | "REQUIREMENT_ESTIMATED"
+    | "AWAITING_CLINICAL_REVIEW"
+    | "BLOOD_AVAILABLE"
+    | "SHORTAGE_IDENTIFIED"
+    | "BLOOD_REQUESTED"
+    | "READY_FOR_SURGERY"
+    | "COMPLETED"
+    | "CANCELLED"
+    | string;
+  linkedrequestid: string | null;
+  clinicalnotes: string | null;
+  lastavailabilitycheckat: string | null;
+  createdat: string;
+  updatedat: string;
+  createdby?: { userid: string; name: string; email: string };
+  reviewedby?: { userid: string; name: string; email: string };
+  procedureconfig?: ProcedureConfigItem | null;
+  linkedrequest?: {
+    requestid: string;
+    status: string;
+    urgencylevel: string;
+    unitsrequired: number;
+    bloodcomponent?: string;
+    bloodgroup?: string;
+    requiredby?: string;
+  } | null;
+  statushistory?: Array<{
+    historyid: string;
+    oldstatus: string | null;
+    newstatus: string;
+    changedbyuserid: string | null;
+    reason: string | null;
+    createdat: string;
+    changedby?: { userid: string; name: string; role: string } | null;
+  }>;
+}
+
+export interface SurgeryPlanSummary {
+  upcomingTotal: number;
+  awaitingReview: number;
+  shortageIdentified: number;
+  bloodArranged: number;
+  next7Days: number;
+}
+
+export interface SurgeryAvailabilityResult {
+  surgeryid: string;
+  bloodGroupPending: boolean;
+  message?: string;
+  patientBloodGroup?: string;
+  targetComponent?: string | null;
+  unitsRequired: number;
+  totalAvailable: number;
+  isShortage: boolean;
+  shortageUnits?: number;
+  status: string;
+  bloodBankBreakdown: Array<{
+    bloodbankid: string;
+    bloodbankname: string;
+    address: string;
+    contactPhone: string;
+    city: string;
+    eligibleUnitsCount: number;
+    byBloodGroup: Record<string, number>;
+  }>;
+  checkTimestamp: string;
+  disclaimer: string;
+}
+
+export interface ProcedureEstimateResult {
+  estimateAvailable: boolean;
+  message?: string;
+  configId?: string;
+  procedureName?: string;
+  category?: string;
+  defaultComponent?: string;
+  defaultUnits?: number;
+  secondaryComponent?: string | null;
+  secondaryUnits?: number | null;
+  typicalBloodLossMl?: number | null;
+  transfusionProbability?: number | null;
+  guidelineSource?: string;
+  guidelineVersion?: string;
+  guidelineCitation?: string | null;
+  approvalAuthority?: string;
+  effectiveDate?: string;
+  clinicalRationale?: string | null;
+  requiresHospitalApproval?: boolean;
+  isHospitalOverride?: boolean;
+}
+
 export interface VolunteerDonorResponse {
   notificationid: string;
   donorId?: string;
@@ -269,6 +410,9 @@ export interface NotificationItem {
   notificationid: string;
   userid?: string;
   requestid?: string | null;
+  campid?: string | null;
+  registrationid?: string | null;
+  actionurl?: string | null;
   type: string;
   title: string;
   message: string;
@@ -283,6 +427,26 @@ export interface NotificationItem {
     urgencylevel: string;
     status: string;
   } | null;
+  camp?: {
+    campid: string;
+    campname: string;
+    campdate: string;
+    starttime: string;
+    endtime: string;
+    venuename: string;
+    city: string;
+    status: string;
+  } | null;
+}
+
+export interface DonorNotificationPreferences {
+  preferenceid?: string | null;
+  nearbycamps: boolean;
+  campreminders: boolean;
+  campupdates: boolean;
+  campcancellations: boolean;
+  preferredcity?: string | null;
+  preferredradiuskm?: number | null;
 }
 
 export interface CreateBloodRequestDto {
@@ -522,6 +686,108 @@ export interface ClinicalCrossmatchItem {
   technologistname: string;
   method?: string | null;
   notes?: string | null;
+}
+
+export interface DonationCampItem {
+  campid: string;
+  bloodbankid: string;
+  createdbyuserid: string;
+  campname: string;
+  description?: string | null;
+  organizername: string;
+  contactperson: string;
+  contactphone?: string | null;
+  campdate: string;
+  starttime: string;
+  endtime: string;
+  timezone: string;
+  registrationopeningdate: string;
+  registrationdeadline: string;
+  venuename: string;
+  address: string;
+  city: string;
+  district?: string | null;
+  state: string;
+  pincode: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  isregistrationrequired: boolean;
+  maxcapacity?: number | null;
+  registrationinstructions?: string | null;
+  donorinstructions?: string | null;
+  eligibilitynotes?: string | null;
+  status: "DRAFT" | "PUBLISHED" | "COMPLETED" | "CANCELLED";
+  registrationstatus: "OPEN" | "CLOSED";
+  cancellationreason?: string | null;
+  createdat?: string;
+  updatedat?: string;
+  registeredCount?: number;
+  remainingCapacity?: number | null;
+  bloodbanks?: {
+    bloodbankid: string;
+    bloodbankname: string;
+    licensenumber: string;
+    contactpersonphone?: string;
+    city: string;
+    state: string;
+  };
+  metrics?: {
+    totalCapacity: number | null;
+    registeredCount: number;
+    attendedCount: number;
+    cancelledCount: number;
+    remainingCapacity: number | null;
+    isCapacityReached: boolean;
+    isRegistrationOpen: boolean;
+  };
+  statushistory?: Array<{
+    historyid: string;
+    oldstatus?: string | null;
+    newstatus: string;
+    reason?: string | null;
+    createdat: string;
+    changedby?: { name: string; email: string };
+  }>;
+  audithistory?: Array<{
+    auditid: string;
+    action: string;
+    details?: string | null;
+    createdat: string;
+    changedby?: { name: string };
+  }>;
+}
+
+export interface CampSummary {
+  totalCamps: number;
+  upcomingCamps: number;
+  publishedCamps: number;
+  draftCamps: number;
+  registrationOpenCamps: number;
+  registrationClosedCamps: number;
+  completedCamps: number;
+  cancelledCamps: number;
+}
+
+export interface CampRegistrationItem {
+  registrationid: string;
+  registrationreference: string;
+  registrationdate: string;
+  registrationstatus: "REGISTERED" | "CANCELLED";
+  attendancestatus: "PENDING" | "ATTENDED" | "NOT_ATTENDED";
+  attendedat?: string | null;
+  unitsdonated?: number | null;
+  attendancenotes?: string | null;
+  cancellationreason?: string | null;
+  cancelledat?: string | null;
+  donor: {
+    donorid: string;
+    name: string;
+    bloodgroup: string;
+    gender: string;
+    city: string;
+    contactphone?: string;
+    email?: string;
+  };
 }
 
 async function request<T = any>(endpoint: string, options: RequestOptions = {}): Promise<T> {
@@ -791,11 +1057,13 @@ export const api = {
       }>("/hospitals/me/dashboard"),
 
     getDemandForecast: (params?: {
+      scope?: "hospital" | "district" | "state";
       timeframeDays?: number;
       bloodGroup?: string;
       bloodComponent?: string;
     }) => {
       const query = new URLSearchParams();
+      if (params?.scope) query.set("scope", params.scope);
       if (params?.timeframeDays) query.set("timeframeDays", String(params.timeframeDays));
       if (params?.bloodGroup) query.set("bloodGroup", params.bloodGroup);
       if (params?.bloodComponent) query.set("bloodComponent", params.bloodComponent);
@@ -804,6 +1072,24 @@ export const api = {
         success: boolean;
         data: any;
       }>(`/hospitals/me/analytics/demand-forecast${qs}`);
+    },
+
+    getRegionalInsights: (params?: {
+      scope?: "hospital" | "district" | "state";
+      timeframeDays?: number;
+      bloodGroup?: string;
+      bloodComponent?: string;
+    }) => {
+      const query = new URLSearchParams();
+      if (params?.scope) query.set("scope", params.scope);
+      if (params?.timeframeDays) query.set("timeframeDays", String(params.timeframeDays));
+      if (params?.bloodGroup) query.set("bloodGroup", params.bloodGroup);
+      if (params?.bloodComponent) query.set("bloodComponent", params.bloodComponent);
+      const qs = query.toString() ? `?${query.toString()}` : "";
+      return api.get<{
+        success: boolean;
+        data: any;
+      }>(`/hospitals/me/analytics/regional-insights${qs}`);
     },
 
     getBloodRequests: () =>
@@ -952,6 +1238,67 @@ export const api = {
         message: string;
         broadcast: any;
       }>(`/bloodrequests/${id}/broadcast`, data),
+
+    surgeries: {
+      getSummary: () =>
+        api.get<{ success: boolean; data: SurgeryPlanSummary }>("/hospitals/me/surgeries/summary"),
+
+      list: (params?: { status?: string; fromDate?: string; toDate?: string; search?: string }) =>
+        api.get<{ success: boolean; data: SurgeryPlanItem[] }>("/hospitals/me/surgeries", { params }),
+
+      getById: (id: string) =>
+        api.get<{ success: boolean; data: SurgeryPlanItem }>(`/hospitals/me/surgeries/${id}`),
+
+      create: (data: {
+        patientreference: string;
+        patientage: number;
+        patientgender: string;
+        patientbloodgroup?: string | null;
+        procedurename: string;
+        category?: string | null;
+        scheduleddate: string;
+        expecteddurationminutes?: number | null;
+        clinicianspecifiedcomponent?: string | null;
+        clinicianspecifiedunits?: number | null;
+        clinicalnotes?: string | null;
+      }) =>
+        api.post<{ success: boolean; data: SurgeryPlanItem; message: string }>("/hospitals/me/surgeries", data),
+
+      getConfigs: () =>
+        api.get<{ success: boolean; data: ProcedureConfigItem[] }>("/hospitals/me/surgeries/configs"),
+
+      saveConfig: (data: any) =>
+        api.post<{ success: boolean; data: ProcedureConfigItem; message: string }>("/hospitals/me/surgeries/configs", data),
+
+      getEstimate: (procedureName: string) =>
+        api.get<{ success: boolean; data: ProcedureEstimateResult }>("/hospitals/me/surgeries/estimate", {
+          params: { procedureName },
+        }),
+
+      review: (
+        id: string,
+        data: {
+          finalcomponent: string;
+          finalunits: number;
+          secondaryfinalcomponent?: string | null;
+          secondaryfinalunits?: number | null;
+          adjustmentreason: string;
+        }
+      ) =>
+        api.put<{ success: boolean; data: SurgeryPlanItem; message: string }>(`/hospitals/me/surgeries/${id}/review`, data),
+
+      checkAvailability: (id: string) =>
+        api.post<{ success: boolean; data: SurgeryAvailabilityResult }>(`/hospitals/me/surgeries/${id}/check-availability`),
+
+      createRequest: (id: string) =>
+        api.post<{ success: boolean; requestId: string; status: string; message: string }>(`/hospitals/me/surgeries/${id}/create-request`),
+
+      confirmReadiness: (id: string, notes?: string) =>
+        api.post<{ success: boolean; data: SurgeryPlanItem; message: string }>(`/hospitals/me/surgeries/${id}/confirm-readiness`, { notes }),
+
+      cancel: (id: string, reason: string) =>
+        api.post<{ success: boolean; data: SurgeryPlanItem; message: string }>(`/hospitals/me/surgeries/${id}/cancel`, { reason }),
+    },
   },
 
   bloodRequests: {
@@ -1438,6 +1785,15 @@ export const api = {
       const contentType = response.headers.get("content-type") || "application/octet-stream";
       return { blob, contentType };
     },
+
+    getNotificationPreferences: () =>
+      api.get<{ success: boolean; data: DonorNotificationPreferences }>("/donors/me/notification-preferences"),
+
+    updateNotificationPreferences: (data: Partial<DonorNotificationPreferences>) =>
+      api.put<{ success: boolean; data: DonorNotificationPreferences; message: string }>(
+        "/donors/me/notification-preferences",
+        data
+      ),
   },
 
   notifications: {
@@ -1794,11 +2150,13 @@ export const api = {
       }>(`/bloodbanks/${bloodBankId}/inventory/reconciliation`),
 
     getDemandForecast: (params?: {
+      scope?: "inventory" | "district" | "state";
       timeframeDays?: number;
       bloodGroup?: string;
       bloodComponent?: string;
     }) => {
       const query = new URLSearchParams();
+      if (params?.scope) query.set("scope", params.scope);
       if (params?.timeframeDays) query.set("timeframeDays", String(params.timeframeDays));
       if (params?.bloodGroup) query.set("bloodGroup", params.bloodGroup);
       if (params?.bloodComponent) query.set("bloodComponent", params.bloodComponent);
@@ -1807,6 +2165,24 @@ export const api = {
         success: boolean;
         data: any;
       }>(`/bloodbanks/me/analytics/demand-forecast${qs}`);
+    },
+
+    getRegionalInsights: (params?: {
+      scope?: "inventory" | "district" | "state";
+      timeframeDays?: number;
+      bloodGroup?: string;
+      bloodComponent?: string;
+    }) => {
+      const query = new URLSearchParams();
+      if (params?.scope) query.set("scope", params.scope);
+      if (params?.timeframeDays) query.set("timeframeDays", String(params.timeframeDays));
+      if (params?.bloodGroup) query.set("bloodGroup", params.bloodGroup);
+      if (params?.bloodComponent) query.set("bloodComponent", params.bloodComponent);
+      const qs = query.toString() ? `?${query.toString()}` : "";
+      return api.get<{
+        success: boolean;
+        data: any;
+      }>(`/bloodbanks/me/analytics/regional-insights${qs}`);
     },
 
     getExpiryPrediction: (params?: {
@@ -1830,11 +2206,125 @@ export const api = {
         message: string;
         unit?: any;
       }>(`/bloodbanks/${bloodBankId}/units/${unitId}/validate-safety`, {}),
+
+    camps: {
+      getSummary: () =>
+        api.get<{ success: boolean; data: CampSummary }>("/bloodbanks/me/camps/summary"),
+
+      list: (params?: {
+        status?: string;
+        registrationstatus?: string;
+        city?: string;
+        district?: string;
+        state?: string;
+        search?: string;
+        fromDate?: string;
+        toDate?: string;
+        page?: number;
+        limit?: number;
+      }) =>
+        api.get<{
+          success: boolean;
+          data: {
+            total: number;
+            page: number;
+            limit: number;
+            totalPages: number;
+            camps: DonationCampItem[];
+          };
+        }>("/bloodbanks/me/camps", { params }),
+
+      getById: (id: string) =>
+        api.get<{ success: boolean; data: DonationCampItem }>(`/bloodbanks/me/camps/${id}`),
+
+      create: (data: any) =>
+        api.post<{ success: boolean; data: DonationCampItem; message: string }>("/bloodbanks/me/camps", data),
+
+      update: (id: string, data: any) =>
+        api.put<{ success: boolean; data: DonationCampItem; message: string }>(`/bloodbanks/me/camps/${id}`, data),
+
+      publish: (id: string) =>
+        api.patch<{ success: boolean; data: DonationCampItem; message: string }>(`/bloodbanks/me/camps/${id}/publish`),
+
+      toggleRegistrationStatus: (id: string, data: { status: "OPEN" | "CLOSED"; reason?: string }) =>
+        api.patch<{ success: boolean; data: DonationCampItem; message: string }>(`/bloodbanks/me/camps/${id}/registration-status`, data),
+
+      complete: (id: string, notes?: string) =>
+        api.patch<{ success: boolean; data: DonationCampItem; message: string }>(`/bloodbanks/me/camps/${id}/complete`, { notes }),
+
+      cancel: (id: string, reason: string) =>
+        api.patch<{ success: boolean; data: DonationCampItem; message: string }>(`/bloodbanks/me/camps/${id}/cancel`, { reason }),
+
+      getRegistrations: (
+        id: string,
+        params?: { status?: string; attendance?: string; search?: string; page?: number; limit?: number }
+      ) =>
+        api.get<{
+          success: boolean;
+          data: {
+            total: number;
+            registeredCount: number;
+            attendedCount: number;
+            page: number;
+            limit: number;
+            totalPages: number;
+            registrations: CampRegistrationItem[];
+          };
+        }>(`/bloodbanks/me/camps/${id}/registrations`, { params }),
+
+      updateAttendance: (
+        campId: string,
+        regId: string,
+        data: { attendancestatus: "ATTENDED" | "NOT_ATTENDED"; unitsdonated?: number | null; attendancenotes?: string | null }
+      ) =>
+        api.patch<{ success: boolean; data: any; message: string }>(`/bloodbanks/me/camps/${campId}/registrations/${regId}/attendance`, data),
+
+      cancelRegistration: (campId: string, regId: string, reason: string) =>
+        api.patch<{ success: boolean; data: any; message: string }>(`/bloodbanks/me/camps/${campId}/registrations/${regId}/cancel`, { reason }),
+    },
   },
 
   bloodbanks: {
     getAll: () => api.get<AuthBloodBank[]>("/bloodbanks"),
     getById: (id: string) => api.get<AuthBloodBank>(`/bloodbanks/${id}`),
+  },
+
+  camps: {
+    discover: (params?: {
+      city?: string;
+      district?: string;
+      state?: string;
+      search?: string;
+      dateFrom?: string;
+      dateTo?: string;
+      latitude?: number;
+      longitude?: number;
+      radiusKm?: number;
+      page?: number;
+      limit?: number;
+    }) =>
+      api.get<{
+        success: boolean;
+        data: {
+          total: number;
+          page: number;
+          limit: number;
+          totalPages: number;
+          camps: any[];
+        };
+      }>("/camps/discover", { params }),
+
+    getPublicById: (id: string) =>
+      api.get<{ success: boolean; data: any }>(`/camps/${id}/public`),
+
+    register: (campId: string) =>
+      api.post<{ success: boolean; data: any; message: string }>(`/camps/${campId}/register`),
+
+    getMyRegistrations: () =>
+      api.get<{ success: boolean; data: any[] }>("/donors/me/camp-registrations"),
+
+    cancelMyRegistration: (registrationId: string, reason?: string) =>
+      api.post<{ success: boolean; data: any; message: string }>(`/donors/me/camp-registrations/${registrationId}/cancel`, { reason }),
   },
 };
 

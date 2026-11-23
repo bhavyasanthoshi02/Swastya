@@ -376,6 +376,30 @@ export default function DonorSettingsPage() {
                 )}
               </button>
             </div>
+
+            {/* Quick Link to Notification Preferences */}
+            <div className="mt-4 pt-3 border-t border-[#F3E9D1]/70">
+              <div className="flex items-center justify-between gap-3 p-3 rounded-xl bg-[#FAF6EE] border border-[#F3E9D1]">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-7 h-7 rounded-lg bg-red-100 text-red-700 flex items-center justify-center shrink-0">
+                    <Bell className="w-3.5 h-3.5" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-bold text-[#053845]">Blood Camp Notifications</p>
+                    <p className="text-[11px] text-slate-500 truncate">
+                      Manage alerts for nearby camps, reminders, and updates
+                    </p>
+                  </div>
+                </div>
+                <Link
+                  href="/donor/settings/notifications"
+                  className="px-2.5 py-1 rounded-lg text-xs font-semibold text-[#053845] bg-white border border-[#F3E9D1] hover:bg-[#FAF6EE] shrink-0 inline-flex items-center gap-1 shadow-2xs"
+                >
+                  <span>Configure</span>
+                  <ArrowRight className="w-3 h-3" />
+                </Link>
+              </div>
+            </div>
           </section>
 
           {/* Right Card: Matching Profile Overview */}
@@ -500,11 +524,11 @@ export default function DonorSettingsPage() {
                 <ArrowRight className="w-3.5 h-3.5" />
               </Link>
               <Link
-                href="/donor/notifications"
+                href="/donor/settings/notifications"
                 className="inline-flex items-center gap-1 font-semibold text-[#317786] hover:text-[#053845] transition-colors"
               >
                 <Bell className="w-3.5 h-3.5" />
-                <span>Notifications</span>
+                <span>Notification Preferences</span>
               </Link>
             </div>
           </section>
