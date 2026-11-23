@@ -34,7 +34,7 @@ interface SmsHistoryItem {
   recipientRole: string;
   maskedPhone: string;
   messageBody: string;
-  status: "PENDING" | "SENT" | "FAILED" | "DEAD_LETTER";
+  status: "PENDING" | "PROCESSING" | "SENT" | "ACCEPTED_BY_TWILIO" | "DELIVERED" | "FAILED" | "DEAD_LETTER" | string;
   createdAt: string;
   dispatchConfirmedAt?: string | null;
   errorCode?: string | null;
@@ -97,6 +97,28 @@ export function CustomSmsManager({ userRole, facilityName = "Healthcare Facility
     loadData();
   }, []);
 
+  // Auto-refresh when any message is in non-terminal state (PENDING or PROCESSING)
+  useEffect(() => {
+    const hasActiveMessages = history.some(
+      (item) => item.status === "PENDING" || item.status === "PROCESSING"
+    );
+
+    if (!hasActiveMessages) return;
+
+    const intervalId = setInterval(async () => {
+      try {
+        const histRes = await api.customSms.getHistory(50);
+        if (histRes.success && histRes.history) {
+          setHistory(histRes.history);
+        }
+      } catch {
+        // Ignore background polling errors
+      }
+    }, 2500);
+
+    return () => clearInterval(intervalId);
+  }, [history]);
+
   // Filtered Recipients
   const filteredRecipients = useMemo(() => {
     return recipients.filter((r) => {
@@ -146,11 +168,23 @@ export function CustomSmsManager({ userRole, facilityName = "Healthcare Facility
         setAttachActionLink(false);
         setActionPath("");
         setShowConfirmModal(false);
-        // Refresh history
+        // Immediate history refresh
         const histRes = await api.customSms.getHistory(50);
         if (histRes.success && histRes.history) {
           setHistory(histRes.history);
         }
+
+        // Follow-up auto-refresh after 1.5s to capture asynchronous outbox worker completion
+        setTimeout(async () => {
+          try {
+            const followUpRes = await api.customSms.getHistory(50);
+            if (followUpRes.success && followUpRes.history) {
+              setHistory(followUpRes.history);
+            }
+          } catch {
+            // Ignore error
+          }
+        }, 1500);
       }
     } catch (err: any) {
       setSendErrorMessage(err?.message || "Failed to dispatch custom SMS.");
@@ -446,14 +480,27 @@ export function CustomSmsManager({ userRole, facilityName = "Healthcare Facility
                       </div>
                       <span
                         className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                          item.status === "SENT"
+                          item.status === "SENT" || item.status === "DELIVERED"
                             ? "bg-emerald-100 text-emerald-800"
+                            : item.status === "ACCEPTED_BY_TWILIO"
+                            ? "bg-teal-100 text-teal-800"
+                            : item.status === "MOCK_SENT"
+                            ? "bg-purple-100 text-purple-800 border border-purple-200"
+                            : item.status === "PROCESSING"
+                            ? "bg-blue-100 text-blue-800 animate-pulse flex items-center gap-1"
                             : item.status === "PENDING"
                             ? "bg-amber-100 text-amber-800"
                             : "bg-rose-100 text-rose-800"
                         }`}
                       >
-                        {item.status}
+                        {item.status === "PROCESSING" && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-ping inline-block" />
+                        )}
+                        {item.status === "MOCK_SENT"
+                          ? "SIMULATED (MOCK)"
+                          : item.status === "ACCEPTED_BY_TWILIO"
+                          ? "ACCEPTED BY TWILIO"
+                          : item.status}
                       </span>
                     </div>
 

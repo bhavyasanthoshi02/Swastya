@@ -23,16 +23,21 @@ export class SmsService {
      * or when TWILIO_MOCK_MODE is unset.
      */
     public static getProvider(): SmsProviderInterface {
-        if (this.cachedProvider) {
-            return this.cachedProvider;
-        }
-
         const isMockMode = (process.env.TWILIO_MOCK_MODE || "true").toLowerCase() === "true";
+
+        if (this.cachedProvider) {
+            const isCurrentlyMock = this.cachedProvider.providerName === "MOCK";
+            if (isCurrentlyMock === isMockMode) {
+                return this.cachedProvider;
+            }
+        }
 
         if (isMockMode) {
             this.cachedProvider = new MockSmsProvider();
+            console.log(`[SmsService] Active provider: MOCK (TWILIO_MOCK_MODE=true). Network SMS disabled.`);
         } else {
             this.cachedProvider = new TwilioProvider();
+            console.log(`[SmsService] Active provider: TWILIO (TWILIO_MOCK_MODE=false). Real Twilio REST API active.`);
         }
 
         return this.cachedProvider;

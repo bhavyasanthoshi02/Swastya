@@ -88,10 +88,11 @@ export class OutboxWorkerService {
             for (const item of staleItems) {
                 // If it already has a messagesid, it was actually dispatched before crash!
                 if (item.messagesid) {
+                    const isMock = item.messagesid.startsWith("SMmock_");
                     await prisma.smsoutbox.update({
                         where: { outboxid: item.outboxid },
                         data: {
-                            status: "SENT",
+                            status: isMock ? "MOCK_SENT" : "ACCEPTED_BY_TWILIO",
                             lockeduntil: null,
                             lockedby: null,
                             dispatchconfirmedat: item.dispatchconfirmedat || now,
@@ -182,14 +183,17 @@ export class OutboxWorkerService {
 
                 try {
                     // Safe dispatch through provider
+                    console.log(`[OutboxWorker] Dispatching record ${candidate.outboxid}: provider=${provider.providerName}`);
                     const result = await provider.send(candidate.phonenumber, candidate.messagebody);
 
                     if (result.success) {
                         sent++;
+                        const resolvedStatus = result.mock ? "MOCK_SENT" : "ACCEPTED_BY_TWILIO";
+                        console.log(`[OutboxWorker] Record ${candidate.outboxid} marked as ${resolvedStatus} (SID: ${result.messageSid})`);
                         await prisma.smsoutbox.update({
                             where: { outboxid: candidate.outboxid },
                             data: {
-                                status: "SENT",
+                                status: resolvedStatus,
                                 messagesid: result.messageSid,
                                 dispatchconfirmedat: new Date(),
                                 lockeduntil: null,
