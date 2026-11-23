@@ -35,6 +35,13 @@ function SignInForm() {
     setAuthToken(res.token);
     setStoredUser(res.user, res.donor, res.requester, res.hospital, res.bloodbank);
 
+    // If redirected from an SMS action link or protected page, honor the intended destination
+    const redirectParam = searchParams.get("redirect");
+    if (redirectParam && redirectParam.startsWith("/")) {
+      router.push(redirectParam);
+      return;
+    }
+
     if (res.user.role === "DONOR") {
       router.push("/donor/dashboard");
     } else if (res.user.role === "REQUESTER" || (res.user.role as any) === "PATIENT") {

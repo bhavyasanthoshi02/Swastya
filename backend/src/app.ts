@@ -14,6 +14,8 @@ import surgeryPlannerRoutes from "./routes/surgeryPlanner.routes";
 import campRoutes from "./routes/camp.routes";
 import campPublicRoutes from "./routes/campPublic.routes";
 import equipmentRoutes from "./routes/equipment.routes";
+import actionRedirectRoutes from "./routes/actionRedirect.routes";
+import customSmsRoutes from "./routes/customSms.routes";
 
 const app = express();
 app.disable("x-powered-by");
@@ -212,6 +214,9 @@ app.use("/bloodrequests", (req: Request, res: Response, next: NextFunction) => {
 }, bloodrequestRoutes);
 app.use("/auth", authRateLimiter, authRoutes);
 app.use("/notifications", notificationRoutes);
+app.use("/action-redirect", actionRedirectRoutes);
+app.use("/r", actionRedirectRoutes);
+app.use("/custom-sms", customSmsRoutes);
 
 // Safe global error handler (prevents leaking stack traces or DB internals)
 app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {

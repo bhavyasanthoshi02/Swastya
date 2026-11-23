@@ -2,6 +2,7 @@ import { prisma } from "../config/prisma";
 import { blood_group, blood_component, notification_type } from "../generated/prisma/client";
 import { evaluateLocationDistance, calculateHaversineDistanceKm } from "../utils/distance";
 import { getCompatibleDonorBloodGroups as resolveCompatibleDonorGroups } from "../utils/bloodCompatibility";
+import { NotificationSmsDispatcher } from "./sms/notificationSmsDispatcher.service";
 
 // Re-export for backward-compatibility with existing callers
 export function getCompatibleDonorBloodGroups(
@@ -356,6 +357,16 @@ export async function triggerEmergencyBroadcast(options: TriggerBroadcastOptions
                         attemptcount: 1,
                     },
                 });
+
+                // Automated SMS dispatch to matching donor (Failure isolated)
+                await NotificationSmsDispatcher.dispatchEmergencyBroadcastToDonor({
+                    donorUserId: donor.userid,
+                    requestId,
+                    bloodGroup: request.bloodgroup,
+                    unitsRequired: request.unitsrequired,
+                    hospitalName,
+                    prismaTx: tx,
+                }).catch(() => {});
 
                 if (supportsSavepoints) {
                     await (tx as any).$executeRawUnsafe(`RELEASE SAVEPOINT ${savepointName}`);

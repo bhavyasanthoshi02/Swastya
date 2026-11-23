@@ -19,6 +19,7 @@ import {
   ExternalLink,
   Tent,
   Wrench,
+  MessageSquare,
 } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { api } from "@/lib/api";
@@ -205,6 +206,12 @@ export function BloodBankTopNav({
       label: "Equipment",
       icon: Wrench,
       active: pathname.startsWith("/bloodbank/equipment"),
+    },
+    {
+      href: "/bloodbank/sms",
+      label: "Custom SMS",
+      icon: MessageSquare,
+      active: pathname.startsWith("/bloodbank/sms"),
     },
   ];
 

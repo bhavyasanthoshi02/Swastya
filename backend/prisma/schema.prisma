@@ -81,6 +81,7 @@ model bloodrequests {
   surgeryplans         surgeryplans[]
   requestdocuments     requestdocuments[]
   documentverifications documentverifications[]
+  donoreligibilityresponses donoreligibilityresponses[]
 
   @@index([status], map: "idx_bloodrequests_status")
 }
@@ -128,6 +129,7 @@ model donors {
   broadcastdeliveries broadcastdeliveries[]
   campregistrations  campregistrations[]
   notificationpreferences donornotificationpreferences?
+  donoreligibilityresponses donoreligibilityresponses[]
   users              users                @relation(fields: [userid], references: [userid], onDelete: Cascade, onUpdate: NoAction, map: "fk_donor_user")
 
   @@index([bloodgroup], map: "idx_donors_bloodgroup")
@@ -429,6 +431,10 @@ model users {
   breakdowns_reported     equipmentbreakdowns[]     @relation("breakdown_reporter")
   breakdowns_resolved     equipmentbreakdowns[]     @relation("breakdown_resolver")
   equipmentstatushistory  equipmentstatushistory[]  @relation("status_changed_by")
+  smsoutbox               smsoutbox[]
+  actiontokens            actiontokens[]
+  donoreligibilityresponses donoreligibilityresponses[]
+  eligibilityresponses_reviewed donoreligibilityresponses[] @relation("EligibilityReviewer")
 
   @@index([email], map: "idx_users_email")
 }
@@ -1294,4 +1300,89 @@ enum breakdown_status {
   ASSIGNED
   IN_REPAIR
   RESOLVED
+}
+
+model smsoutbox {
+  outboxid            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userid              String?   @db.Uuid
+  phonenumber         String    @db.VarChar(20)
+  templatename        String    @db.VarChar(100)
+  messagebody         String    @db.Text
+  actionurl           String?   @db.VarChar(500)
+  payload             Json?     @db.JsonB
+  idempotencykey      String?   @unique(map: "uq_smsoutbox_idempotency") @db.VarChar(255)
+  status              String    @default("PENDING") @db.VarChar(50)
+  attempts            Int       @default(0)
+  maxattempts         Int       @default(3)
+  lastattemptat       DateTime? @db.Timestamp(6)
+  nextattemptat       DateTime? @default(now()) @db.Timestamp(6)
+  lockeduntil         DateTime? @db.Timestamp(6)
+  lockedby            String?   @db.VarChar(100)
+  lockversion         Int       @default(0)
+  messagesid          String?   @db.VarChar(100)
+  dispatchconfirmedat DateTime? @db.Timestamp(6)
+  errorcode           String?   @db.VarChar(50)
+  errormessage        String?   @db.Text
+  createdat           DateTime? @default(now()) @db.Timestamp(6)
+  updatedat           DateTime? @default(now()) @db.Timestamp(6)
+
+  users               users?    @relation(fields: [userid], references: [userid], onDelete: SetNull, onUpdate: NoAction, map: "fk_smsoutbox_user")
+
+  @@index([status, nextattemptat], map: "idx_smsoutbox_status_next")
+  @@index([userid], map: "idx_smsoutbox_user")
+  @@index([messagesid], map: "idx_smsoutbox_messagesid")
+  @@index([lockeduntil], map: "idx_smsoutbox_lockeduntil")
+}
+
+model actiontokens {
+  tokenid     String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tokenhash   String    @unique(map: "uq_actiontokens_hash") @db.VarChar(255)
+  userid      String    @db.Uuid
+  purpose     String    @db.VarChar(50)
+  targetid    String    @db.VarChar(255)
+  redirecturl String    @db.VarChar(500)
+  expiresat   DateTime  @db.Timestamp(6)
+  usedat      DateTime? @db.Timestamp(6)
+  createdat   DateTime? @default(now()) @db.Timestamp(6)
+
+  users       users     @relation(fields: [userid], references: [userid], onDelete: Cascade, onUpdate: NoAction, map: "fk_actiontokens_user")
+
+  @@index([tokenhash], map: "idx_actiontokens_hash")
+  @@index([userid], map: "idx_actiontokens_user")
+  @@index([expiresat], map: "idx_actiontokens_expires")
+}
+
+model donoreligibilityresponses {
+  responseid                     String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  requestid                      String        @db.Uuid
+  donorid                        String        @db.Uuid
+  donoruserid                    String        @db.Uuid
+  drinksalcohol                  Boolean?
+  alcoholin24h                   Boolean?
+  feelinghealthy                 Boolean?
+  medicationstatus               Boolean?
+  recenttattoosurgery            Boolean?
+  donatedinlast90days            Boolean?
+  chronicillness                 Boolean?
+  pregnantorbreastfeeding        Boolean?
+  additionalnotes                String?       @db.Text
+  screeningstatus                String        @default("INCOMPLETE") @db.VarChar(50)
+  unansweredcount                Int           @default(8)
+  completionpercent              Int           @default(0)
+  deferralreasons                Json?         @default("[]") @db.JsonB
+  clinicaldisclaimeracknowledged Boolean       @default(false)
+  submittedat                    DateTime?     @default(now()) @db.Timestamp(6)
+  reviewedbyhospitaluserid       String?       @db.Uuid
+  reviewedat                     DateTime?     @db.Timestamp(6)
+  reviewdecision                 String?       @db.VarChar(50)
+  reviewnotes                    String?       @db.Text
+
+  bloodrequests                  bloodrequests @relation(fields: [requestid], references: [requestid], onDelete: Cascade, onUpdate: NoAction, map: "fk_eligibility_request")
+  donors                         donors        @relation(fields: [donorid], references: [donorid], onDelete: Cascade, onUpdate: NoAction, map: "fk_eligibility_donor")
+  users                          users         @relation(fields: [donoruserid], references: [userid], onDelete: Cascade, onUpdate: NoAction, map: "fk_eligibility_user")
+  reviewedbyhospitaluser         users?        @relation("EligibilityReviewer", fields: [reviewedbyhospitaluserid], references: [userid], onDelete: SetNull, onUpdate: NoAction, map: "fk_eligibility_reviewer")
+
+  @@index([requestid], map: "idx_eligibility_request")
+  @@index([donorid], map: "idx_eligibility_donor")
+  @@index([donoruserid], map: "idx_eligibility_donoruser")
 }

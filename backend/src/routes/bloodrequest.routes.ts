@@ -17,6 +17,7 @@ import { UnitTraceabilityService } from "../services/unitTraceability.service";
 import { DonorMatchingService } from "../services/donorMatching.service";
 import { RequestDocumentService } from "../services/requestDocument.service";
 import { DocumentVerificationService } from "../services/documentVerification.service";
+import { NotificationSmsDispatcher } from "../services/sms/notificationSmsDispatcher.service";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -931,8 +932,24 @@ router.post("/", authenticate, authorize("REQUESTER", "PATIENT", "HOSPITAL", "AD
                             isread: false,
                         },
                     });
+
+                    // Automated Hospital SMS
+                    await NotificationSmsDispatcher.dispatchHospitalReqAssigned({
+                        hospitalUserId: assignedHosp.userid,
+                        requestId: created.requestid,
+                        bloodGroup: created.bloodgroup,
+                        prismaTx: tx,
+                    }).catch(() => {});
                 }
             }
+
+            // Automated Requester SMS Confirmation
+            await NotificationSmsDispatcher.dispatchRequesterConfirmation({
+                requesterUserId: user.userid,
+                requestId: created.requestid,
+                bloodGroup: created.bloodgroup,
+                prismaTx: tx,
+            }).catch(() => {});
 
             return created;
         });
@@ -1581,6 +1598,15 @@ router.put("/:id", authenticate, requireApprovedHospital, async (req: Request, r
                             isread: false,
                         },
                     });
+
+                    // Automated Requester SMS Status Update
+                    await NotificationSmsDispatcher.dispatchRequesterStatusUpdate({
+                        requesterUserId: lockedRequest.createdbyuserid,
+                        requestId: targetId,
+                        statusText: req.body.status,
+                        reason: remarks,
+                        prismaTx: tx,
+                    }).catch(() => {});
                 }
             }
 
@@ -3510,6 +3536,41 @@ router.post("/:id/respond", authenticate, async (req: Request, res: Response) =>
                 });
             }
 
+            // Save structured questionnaire response to donoreligibilityresponses table
+            const questions = [
+                drinksAlcohol,
+                alcoholInPast24Hours,
+                feelingHealthy,
+                recentAntibioticsOrMedication,
+                recentTattooOrSurgery,
+                donatedInLast90Days,
+                chronicIllness,
+                isPregnantOrBreastfeeding,
+            ];
+            const unanswered = questions.filter(q => q === null || q === undefined).length;
+            const completionPercent = Math.round(((8 - unanswered) / 8) * 100);
+
+            await tx.donoreligibilityresponses.create({
+                data: {
+                    requestid: request.requestid,
+                    donorid: donor.donorid,
+                    donoruserid: user.userid,
+                    drinksalcohol: drinksAlcohol ?? null,
+                    alcoholin24h: alcoholInPast24Hours ?? null,
+                    feelinghealthy: feelingHealthy ?? null,
+                    medicationstatus: recentAntibioticsOrMedication ?? null,
+                    recenttattoosurgery: recentTattooOrSurgery ?? null,
+                    donatedinlast90days: donatedInLast90Days ?? null,
+                    chronicillness: chronicIllness ?? null,
+                    pregnantorbreastfeeding: isPregnantOrBreastfeeding ?? null,
+                    additionalnotes: notes || null,
+                    screeningstatus: "PRELIMINARY_ELIGIBLE",
+                    unansweredcount: unanswered,
+                    completionpercent: completionPercent,
+                    clinicaldisclaimeracknowledged: true,
+                },
+            });
+
             await tx.emergencybroadcasts.update({
                 where: { broadcastid: deliveryRecord.broadcastid },
                 data: {
@@ -3547,6 +3608,13 @@ router.post("/:id/respond", authenticate, async (req: Request, res: Response) =>
                 },
             });
 
+            // Automated Requester SMS Alert
+            await NotificationSmsDispatcher.dispatchRequesterDonorVolunteered({
+                requesterUserId: lockedRequest.createdbyuserid || request.createdbyuserid,
+                requestId: request.requestid,
+                prismaTx: tx,
+            }).catch(() => {});
+
             // 8b. In-app notification for the assigned hospital if request is assigned to a hospital
             if (request.hospitals && request.hospitals.userid && request.hospitals.userid !== user.userid && request.hospitals.userid !== (lockedRequest.createdbyuserid || request.createdbyuserid)) {
                 await tx.notification.create({
@@ -3559,6 +3627,15 @@ router.post("/:id/respond", authenticate, async (req: Request, res: Response) =>
                         isread: false,
                     },
                 });
+
+                // Automated Hospital SMS Alert
+                await NotificationSmsDispatcher.dispatchHospitalDonorMatched({
+                    hospitalUserId: request.hospitals.userid,
+                    requestId: request.requestid,
+                    donorName,
+                    eta: estimatedArrival,
+                    prismaTx: tx,
+                }).catch(() => {});
             }
 
             // 9. Operational status advancement: Transition CREATED / VERIFIED requests to DONOR_MATCHING using locked status
@@ -4139,6 +4216,24 @@ router.post("/:id/volunteers/:deliveryId/decision", authenticate, requireApprove
                             isread: false,
                         },
                     });
+
+                    // Automated Donor SMS Selection Alert
+                    if (decision === "ACCEPTED") {
+                        await NotificationSmsDispatcher.dispatchDonorOfferAccepted({
+                            donorUserId: lockedDelivery.donoruserid,
+                            requestId: request.requestid,
+                            facilityName,
+                            prismaTx: tx,
+                        }).catch(() => {});
+                    } else if (decision === "REJECTED") {
+                        await NotificationSmsDispatcher.dispatchDonorOfferNotSelected({
+                            donorUserId: lockedDelivery.donoruserid,
+                            requestId: request.requestid,
+                            bloodGroup: lockedRequest.bloodgroup,
+                            facilityName,
+                            prismaTx: tx,
+                        }).catch(() => {});
+                    }
                 }
             }
 
@@ -4620,6 +4715,15 @@ router.patch("/:id/transit-status", authenticate, requireApprovedHospital, async
                                 isread: false,
                             },
                         });
+
+                        // Automated Donor SMS Receipt Alert
+                        await NotificationSmsDispatcher.dispatchDonorReceiptConfirmed({
+                            donorUserId: commitment.donoruserid,
+                            requestId: request.requestid,
+                            bloodGroup: request.bloodgroup,
+                            facilityName: request.hospitals?.hospitalname || "the care facility",
+                            prismaTx: tx,
+                        }).catch(() => {});
                     }
                 }
             }
@@ -5121,6 +5225,152 @@ router.post("/reservations/:reservationId/receipt", authenticate, authorize("HOS
             success: false,
             message: error.message || "Failed to confirm receipt",
         });
+    }
+});
+
+/*
+ * GET DONOR ELIGIBILITY QUESTIONNAIRE RESPONSES
+ * GET /bloodrequests/:id/eligibility-responses
+ * Strictly RBAC-protected: Donor themselves, Assigned Hospital staff, or Admin.
+ */
+router.get("/:id/eligibility-responses", authenticate, async (req: Request, res: Response) => {
+    try {
+        const user = (req as any).user;
+        const requestId = (Array.isArray(req.params.id) ? req.params.id[0] : req.params.id) as string;
+
+        const request = await prisma.bloodrequests.findUnique({
+            where: { requestid: requestId },
+            include: { hospitals: true },
+        });
+
+        if (!request) {
+            return res.status(404).json({ success: false, message: "Blood request not found" });
+        }
+
+        // If requester attempts to access donor medical data, deny explicitly
+        if (user.role === "REQUESTER" || (user.role as string) === "PATIENT") {
+            return res.status(403).json({
+                success: false,
+                message: "Access denied: Requesters are strictly prohibited from accessing confidential donor medical screening records.",
+            });
+        }
+
+        // Check authorized access
+        let isAuthorized = false;
+        if (user.role === "ADMIN") {
+            isAuthorized = true;
+        } else if (user.role === "HOSPITAL") {
+            const hosp = await prisma.hospitals.findUnique({ where: { userid: user.userid } });
+            if (hosp && request.hospitalid === hosp.hospitalid) {
+                isAuthorized = true;
+            }
+        }
+
+        // Fetch responses
+        const responses = await prisma.donoreligibilityresponses.findMany({
+            where: { requestid: requestId },
+            include: {
+                donors: {
+                    select: {
+                        donorid: true,
+                        bloodgroup: true,
+                        city: true,
+                        users: { select: { name: true, phonenumber: true } },
+                    },
+                },
+                reviewedbyhospitaluser: {
+                    select: { name: true, email: true },
+                },
+            },
+            orderBy: { submittedat: "desc" },
+        });
+
+        // If user is a donor, they can only view their own response
+        if (user.role === "DONOR") {
+            const donorOwnResponses = responses.filter(r => r.donoruserid === user.userid);
+            if (donorOwnResponses.length > 0) {
+                return res.status(200).json({ success: true, responses: donorOwnResponses });
+            }
+        }
+
+        if (!isAuthorized) {
+            return res.status(403).json({
+                success: false,
+                message: "Access to confidential donor medical screening responses is restricted to the volunteer donor and authorized clinical personnel.",
+            });
+        }
+
+        return res.status(200).json({ success: true, responses });
+    } catch (err: any) {
+        console.error("Error fetching eligibility responses:", err);
+        return res.status(500).json({ success: false, message: "Failed to retrieve questionnaire responses" });
+    }
+});
+
+/*
+ * CLINICALLY REVIEW DONOR ELIGIBILITY QUESTIONNAIRE
+ * POST /bloodrequests/:id/eligibility-review
+ * Authorized clinical review workflow for hospital personnel.
+ */
+router.post("/:id/eligibility-review", authenticate, async (req: Request, res: Response) => {
+    try {
+        const user = (req as any).user;
+        const requestId = (Array.isArray(req.params.id) ? req.params.id[0] : req.params.id) as string;
+
+        if (user.role !== "HOSPITAL" && user.role !== "ADMIN") {
+            return res.status(403).json({
+                success: false,
+                message: "Only authorized clinical personnel can review and verify medical questionnaire responses.",
+            });
+        }
+
+        // Verify hospital assignment
+        if (user.role === "HOSPITAL") {
+            const hosp = await prisma.hospitals.findUnique({ where: { userid: user.userid } });
+            const bloodReq = await prisma.bloodrequests.findUnique({ where: { requestid: requestId } });
+            if (!hosp || !bloodReq || bloodReq.hospitalid !== hosp.hospitalid) {
+                return res.status(403).json({
+                    success: false,
+                    message: "Access denied: your hospital facility is not assigned to review this requisition.",
+                });
+            }
+        }
+
+        const { responseId, decision, notes } = req.body;
+        if (!responseId || !decision || !["CLINICALLY_APPROVED", "CLINICALLY_DEFERRED"].includes(decision)) {
+            return res.status(400).json({
+                success: false,
+                message: "Valid responseId and decision ('CLINICALLY_APPROVED' or 'CLINICALLY_DEFERRED') are required.",
+            });
+        }
+
+        const responseRecord = await prisma.donoreligibilityresponses.findUnique({
+            where: { responseid: responseId },
+        });
+
+        if (!responseRecord || responseRecord.requestid !== requestId) {
+            return res.status(404).json({ success: false, message: "Questionnaire response not found for this requisition" });
+        }
+
+        const updated = await prisma.donoreligibilityresponses.update({
+            where: { responseid: responseId },
+            data: {
+                reviewedbyhospitaluserid: user.userid,
+                reviewedat: new Date(),
+                reviewdecision: decision,
+                reviewnotes: notes ? String(notes).trim() : null,
+                screeningstatus: decision,
+            },
+        });
+
+        return res.status(200).json({
+            success: true,
+            message: `Questionnaire response marked as ${decision}`,
+            response: updated,
+        });
+    } catch (err: any) {
+        console.error("Error submitting eligibility review:", err);
+        return res.status(500).json({ success: false, message: "Failed to record clinical review decision" });
     }
 });
 

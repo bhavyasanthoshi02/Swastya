@@ -2817,5 +2817,156 @@ export const api = {
       return response.blob();
     },
   },
+
+  actionRedirect: {
+    resolve: (token: string) =>
+      api.get<{
+        success: boolean;
+        valid?: boolean;
+        purpose?: string;
+        targetId?: string;
+        redirectUrl?: string;
+        intendedUserId?: string;
+        requiresAuth?: boolean;
+        code?: string;
+        message?: string;
+      }>(`/action-redirect/${token}`),
+
+    consume: (token: string) =>
+      api.post<{
+        success: boolean;
+        redirectUrl?: string;
+        purpose?: string;
+        code?: string;
+        message?: string;
+      }>(`/action-redirect/${token}/consume`),
+  },
+
+  eligibility: {
+    getResponses: (requestId: string) =>
+      api.get<{
+        success: boolean;
+        responses: Array<{
+          responseid: string;
+          requestid: string;
+          donorid: string;
+          donoruserid: string;
+          drinksalcohol: boolean | null;
+          alcoholin24h: boolean | null;
+          feelinghealthy: boolean | null;
+          medicationstatus: boolean | null;
+          recenttattoosurgery: boolean | null;
+          donatedinlast90days: boolean | null;
+          chronicillness: boolean | null;
+          pregnantorbreastfeeding: boolean | null;
+          additionalnotes: string | null;
+          screeningstatus: string;
+          unansweredcount: number;
+          completionpercent: number;
+          clinicaldisclaimeracknowledged: boolean;
+          submittedat: string;
+          reviewedbyhospitaluserid: string | null;
+          reviewedat: string | null;
+          reviewdecision: string | null;
+          reviewnotes: string | null;
+          donors?: {
+            donorid: string;
+            bloodgroup: string;
+            city: string;
+            users?: { name: string; phonenumber?: string };
+          };
+          reviewedbyhospitaluser?: { name: string; email: string };
+        }>;
+      }>(`/bloodrequests/${requestId}/eligibility-responses`),
+
+    review: (
+      requestId: string,
+      payload: {
+        responseId: string;
+        decision: "CLINICALLY_APPROVED" | "CLINICALLY_DEFERRED";
+        notes?: string;
+      }
+    ) =>
+      api.post<{
+        success: boolean;
+        message: string;
+        response?: any;
+      }>(`/bloodrequests/${requestId}/eligibility-review`, payload),
+  },
+
+  customSms: {
+    getRecipients: () =>
+      api.get<{
+        success: boolean;
+        count: number;
+        recipients: Array<{
+          userId: string;
+          displayName: string;
+          role: "DONOR" | "REQUESTER" | "HOSPITAL" | "BLOOD_BANK";
+          maskedPhone: string;
+          relationshipContext: string;
+          targetRequestId?: string;
+          bloodGroup?: string;
+        }>;
+      }>("/custom-sms/recipients"),
+
+    send: (payload: {
+      recipientUserId: string;
+      message: string;
+      contextRequestId?: string;
+      actionUrl?: string;
+      idempotencyKey?: string;
+    }) =>
+      api.post<{
+        success: boolean;
+        message: string;
+        data: {
+          outboxId: string;
+          status: string;
+          recipientName: string;
+          characterCount: number;
+          segmentEstimate: number;
+          createdAt: string;
+        };
+      }>("/custom-sms/send", payload),
+
+    getHistory: (limit = 50) =>
+      api.get<{
+        success: boolean;
+        count: number;
+        history: Array<{
+          outboxId: string;
+          recipientName: string;
+          recipientRole: string;
+          maskedPhone: string;
+          messageBody: string;
+          status: "PENDING" | "SENT" | "FAILED" | "DEAD_LETTER";
+          createdAt: string;
+          dispatchConfirmedAt?: string | null;
+          errorCode?: string | null;
+          attempts: number;
+        }>;
+      }>(`/custom-sms/history?limit=${limit}`),
+
+    getStatus: (outboxId: string) =>
+      api.get<{
+        success: boolean;
+        outboxId: string;
+        status: string;
+        attempts: number;
+        messageSid?: string | null;
+        dispatchedAt?: string | null;
+        createdAt: string;
+        errorCode?: string | null;
+        errorMessage?: string | null;
+      }>(`/custom-sms/status/${outboxId}`),
+
+    retry: (outboxId: string) =>
+      api.post<{
+        success: boolean;
+        message: string;
+        data: { success: boolean; status: string };
+      }>(`/custom-sms/retry/${outboxId}`),
+  },
 };
 

@@ -18,6 +18,7 @@ import {
   Truck,
   TrendingUp,
   Stethoscope,
+  MessageSquare,
 } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { api } from "@/lib/api";
@@ -192,6 +193,12 @@ export function HospitalTopNav({
       label: "AI Insights",
       icon: TrendingUp,
       active: pathname.startsWith("/hospital/insights"),
+    },
+    {
+      href: "/hospital/sms",
+      label: "Custom SMS",
+      icon: MessageSquare,
+      active: pathname.startsWith("/hospital/sms"),
     },
   ];
 

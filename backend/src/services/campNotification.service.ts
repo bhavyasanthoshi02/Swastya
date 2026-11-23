@@ -602,7 +602,9 @@ export class CampNotificationService {
             summary.remindersSent = summary.sent24h + summary.sent2h;
             return summary;
         } catch (err: any) {
-            console.error("[CampNotification] processUpcomingCampReminders error:", err?.message);
+            if (err?.code !== "P2021" && !err?.message?.includes("donationcamps")) {
+                console.error("[CampNotification] processUpcomingCampReminders error:", err?.message);
+            }
             summary.remindersSent = summary.sent24h + summary.sent2h;
             return summary;
         }

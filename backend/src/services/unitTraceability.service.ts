@@ -7,6 +7,7 @@ import {
     PLASMA_RECIPIENT_TO_DONOR_MAP,
     PLATELET_RECIPIENT_TO_DONOR_MAP,
 } from "../utils/bloodCompatibility";
+import { NotificationSmsDispatcher } from "./sms/notificationSmsDispatcher.service";
 
 export function computeRequestHash(payload: any): string {
     return crypto.createHash("sha256").update(JSON.stringify(payload)).digest("hex");
@@ -1355,6 +1356,17 @@ export class UnitTraceabilityService {
                     respondedat: shouldAutoDecline ? new Date() : null,
                 },
             });
+
+            if (!shouldAutoDecline && targetBloodBank.userid) {
+                // Automated Blood Bank SMS Alert
+                await NotificationSmsDispatcher.dispatchBloodBankReqAssigned({
+                    bloodBankUserId: targetBloodBank.userid,
+                    requestId,
+                    bloodGroup: request.bloodgroup,
+                    units: requestedUnits,
+                    prismaTx: tx,
+                }).catch(() => {});
+            }
 
             if (shouldAutoDecline) {
                 // Send in-app notification to requesting hospital immediately
