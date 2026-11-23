@@ -358,7 +358,7 @@ export function BloodBankTopNav({
               )}
             </div>
 
-            {/* 3. Outreach & Assets Dropdown (Camps + Equipment + AI Insights) */}
+            {/* 3. Outreach & Assets Dropdown (Camps + Equipment + Custom SMS) */}
             <div className="relative" ref={assetsRef}>
               <button
                 type="button"

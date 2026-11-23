@@ -188,13 +188,6 @@ export function HospitalTopNav({
       icon: Stethoscope,
       active: pathname.startsWith("/hospital/surgeries"),
     },
-    {
-      href: "/hospital/receipt",
-      label: "Delivery Receipt",
-      icon: Truck,
-      hideBelowXl: true,
-      active: pathname.startsWith("/hospital/receipt"),
-    },
   ];
 
   // Secondary navigation links organized in "More" dropdown
@@ -205,7 +198,6 @@ export function HospitalTopNav({
       icon: Truck,
       desc: "Log blood unit delivery receipts and physical chain-of-custody",
       active: pathname.startsWith("/hospital/receipt"),
-      hideOnXl: true,
     },
     {
       href: "/hospital/donors",
@@ -272,7 +264,7 @@ export function HospitalTopNav({
                 <Link
                   key={link.href}
                   href={link.href}
-                  className={`${link.hideBelowXl ? "hidden xl:inline-flex" : "inline-flex"} items-center gap-1.5 px-2.5 lg:px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
+                  className={`inline-flex items-center gap-1.5 px-2.5 lg:px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
                     link.active
                       ? "text-[#053845] bg-[#FAF6EE] border border-[#F3E9D1] shadow-2xs font-bold"
                       : "text-slate-600 hover:text-[#053845] hover:bg-[#FAF6EE]/70"
@@ -314,7 +306,7 @@ export function HospitalTopNav({
                         key={sec.href}
                         href={sec.href}
                         onClick={() => setIsMoreOpen(false)}
-                        className={`${sec.hideOnXl ? "xl:hidden " : ""}flex items-start gap-2.5 p-2.5 rounded-xl transition-all ${
+                        className={`flex items-start gap-2.5 p-2.5 rounded-xl transition-all ${
                           sec.active
                             ? "bg-[#FAF6EE] text-[#053845] border border-[#F3E9D1]/80 font-bold"
                             : "hover:bg-[#FAF6EE]/60 text-slate-700"
