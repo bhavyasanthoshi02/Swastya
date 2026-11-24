@@ -91,6 +91,153 @@ export class NotificationSmsDispatcher {
     }
 
     /**
+     * 1b. DONOR: Automated Match Alert for Standard Requisitions
+     * Triggered when a new blood request is created and matches donor criteria.
+     * Distinct from emergency broadcasts; adheres strictly to clinical matching gates.
+     * Target: /donor/requests/:requestId/donate
+     */
+    public static async dispatchMatchedDonorAlert({
+        donorUserId,
+        requestId,
+        bloodGroup,
+        prismaTx,
+    }: {
+        donorUserId: string;
+        requestId: string;
+        bloodGroup?: string;
+        prismaTx?: any;
+    }): Promise<{ queued: boolean; outboxId?: string; isDuplicate?: boolean }> {
+        try {
+            const user = await this.getUserPhone(donorUserId, prismaTx);
+            if (!user) return { queued: false };
+
+            const tokenRes = await ActionTokenService.createActionToken({
+                userId: donorUserId,
+                purpose: "DONOR_MATCH",
+                targetId: requestId,
+                redirectUrl: `/donor/requests/${requestId}/donate`,
+                expiresInHours: 24,
+                prismaTx,
+            });
+
+            const idempotencyKey = `SMS:MATCHED_DONOR:${requestId}:${donorUserId}`;
+
+            return await SmsService.queueSms(
+                {
+                    to: user.phone,
+                    template: "DONOR_REQUEST_MATCH",
+                    variables: {
+                        actionUrl: tokenRes.actionUrl,
+                    },
+                    userId: donorUserId,
+                    actionUrl: tokenRes.actionUrl,
+                    idempotencyKey,
+                },
+                prismaTx
+            );
+        } catch (err) {
+            console.error("[NotificationSmsDispatcher] Error dispatching matched donor alert SMS:", err);
+            return { queued: false };
+        }
+    }
+
+    /**
+     * 1c. HOSPITAL: Automated Alert to Relevant Facilities
+     * Triggered when a new blood requisition matching geographic/clinical conditions is initiated.
+     * Target: /hospital/requests/:requestId
+     */
+    public static async dispatchRelevantHospitalAlert({
+        hospitalUserId,
+        requestId,
+        prismaTx,
+    }: {
+        hospitalUserId: string;
+        requestId: string;
+        prismaTx?: any;
+    }): Promise<{ queued: boolean; outboxId?: string; isDuplicate?: boolean }> {
+        try {
+            const user = await this.getUserPhone(hospitalUserId, prismaTx);
+            if (!user) return { queued: false };
+
+            const tokenRes = await ActionTokenService.createActionToken({
+                userId: hospitalUserId,
+                purpose: "HOSPITAL_REVIEW",
+                targetId: requestId,
+                redirectUrl: `/hospital/requests/${requestId}`,
+                expiresInHours: 24,
+                prismaTx,
+            });
+
+            const idempotencyKey = `SMS:MATCHED_HOSPITAL:${requestId}:${hospitalUserId}`;
+
+            return await SmsService.queueSms(
+                {
+                    to: user.phone,
+                    template: "HOSPITAL_MATCH_ALERT",
+                    variables: {
+                        actionUrl: tokenRes.actionUrl,
+                    },
+                    userId: hospitalUserId,
+                    actionUrl: tokenRes.actionUrl,
+                    idempotencyKey,
+                },
+                prismaTx
+            );
+        } catch (err) {
+            console.error("[NotificationSmsDispatcher] Error dispatching relevant hospital alert SMS:", err);
+            return { queued: false };
+        }
+    }
+
+    /**
+     * 1d. BLOOD_BANK: Automated Alert to Relevant Blood Banks
+     * Triggered when a blood request is created and blood bank holds matching compatible stock.
+     * Target: /bloodbank/requisitions
+     */
+    public static async dispatchRelevantBloodBankAlert({
+        bloodBankUserId,
+        requestId,
+        prismaTx,
+    }: {
+        bloodBankUserId: string;
+        requestId: string;
+        prismaTx?: any;
+    }): Promise<{ queued: boolean; outboxId?: string; isDuplicate?: boolean }> {
+        try {
+            const user = await this.getUserPhone(bloodBankUserId, prismaTx);
+            if (!user) return { queued: false };
+
+            const tokenRes = await ActionTokenService.createActionToken({
+                userId: bloodBankUserId,
+                purpose: "BLOOD_BANK_CHECK",
+                targetId: requestId,
+                redirectUrl: `/bloodbank/requisitions`,
+                expiresInHours: 24,
+                prismaTx,
+            });
+
+            const idempotencyKey = `SMS:MATCHED_BLOOD_BANK:${requestId}:${bloodBankUserId}`;
+
+            return await SmsService.queueSms(
+                {
+                    to: user.phone,
+                    template: "BLOOD_BANK_MATCH_ALERT",
+                    variables: {
+                        actionUrl: tokenRes.actionUrl,
+                    },
+                    userId: bloodBankUserId,
+                    actionUrl: tokenRes.actionUrl,
+                    idempotencyKey,
+                },
+                prismaTx
+            );
+        } catch (err) {
+            console.error("[NotificationSmsDispatcher] Error dispatching relevant blood bank alert SMS:", err);
+            return { queued: false };
+        }
+    }
+
+    /**
      * 2. DONOR: Volunteer Offer Accepted / Selected
      * Triggered when hospital or requester selects the donor volunteer.
      * Target: /donor/requests/:requestId/donate (Transit instructions & next steps)

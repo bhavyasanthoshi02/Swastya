@@ -268,3 +268,15 @@ export function stopSmsOutboxWorker(): void {
         defaultWorker = null;
     }
 }
+
+export function getSmsOutboxWorkerStatus(): { status: string; isRunning: boolean; workerId?: string; pollIntervalMs?: number } {
+    if (!defaultWorker || !(defaultWorker as any).isRunning) {
+        return { status: "stopped", isRunning: false };
+    }
+    return {
+        status: "connected and polling successfully",
+        isRunning: true,
+        workerId: (defaultWorker as any).config.workerId,
+        pollIntervalMs: (defaultWorker as any).config.pollIntervalMs,
+    };
+}

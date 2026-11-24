@@ -37,6 +37,8 @@ model bloodbanks {
   equipmentmaintenance equipmentmaintenance[]
   equipmentbreakdowns equipmentbreakdowns[]
   equipmentstatushistory equipmentstatushistory[]
+  sent_bloodbankmessages     bloodbankmessages[]    @relation("bloodbankmessages_sender")
+  received_bloodbankmessages bloodbankmessages[]    @relation("bloodbankmessages_recipient")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -175,6 +177,8 @@ model hospitals {
   prescriptionhistory                                                 prescriptionhistory[]
   procedurebloodconfigs                                               procedurebloodconfigs[]
   surgeryplans                                                        surgeryplans[]
+  sent_hospitalmessages                                               hospitalmessages[]     @relation("hospitalmessages_sender")
+  received_hospitalmessages                                           hospitalmessages[]     @relation("hospitalmessages_recipient")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -1385,4 +1389,38 @@ model donoreligibilityresponses {
   @@index([requestid], map: "idx_eligibility_request")
   @@index([donorid], map: "idx_eligibility_donor")
   @@index([donoruserid], map: "idx_eligibility_donoruser")
+}
+
+model hospitalmessages {
+  messageid           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  senderhospitalid    String    @db.Uuid
+  recipienthospitalid String    @db.Uuid
+  content             String    @db.Text
+  isread              Boolean   @default(false)
+  readat              DateTime? @db.Timestamp(6)
+  createdat           DateTime? @default(now()) @db.Timestamp(6)
+
+  senderhospital      hospitals @relation("hospitalmessages_sender", fields: [senderhospitalid], references: [hospitalid], onDelete: Cascade, onUpdate: NoAction)
+  recipienthospital   hospitals @relation("hospitalmessages_recipient", fields: [recipienthospitalid], references: [hospitalid], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([senderhospitalid], map: "idx_hospitalmessages_sender")
+  @@index([recipienthospitalid], map: "idx_hospitalmessages_recipient")
+  @@index([createdat], map: "idx_hospitalmessages_createdat")
+}
+
+model bloodbankmessages {
+  messageid            String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  senderbloodbankid    String     @db.Uuid
+  recipientbloodbankid String     @db.Uuid
+  content              String     @db.Text
+  isread               Boolean    @default(false)
+  readat               DateTime?  @db.Timestamp(6)
+  createdat            DateTime?  @default(now()) @db.Timestamp(6)
+
+  senderbloodbank      bloodbanks @relation("bloodbankmessages_sender", fields: [senderbloodbankid], references: [bloodbankid], onDelete: Cascade, onUpdate: NoAction)
+  recipientbloodbank   bloodbanks @relation("bloodbankmessages_recipient", fields: [recipientbloodbankid], references: [bloodbankid], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([senderbloodbankid], map: "idx_bloodbankmessages_sender")
+  @@index([recipientbloodbankid], map: "idx_bloodbankmessages_recipient")
+  @@index([createdat], map: "idx_bloodbankmessages_createdat")
 }

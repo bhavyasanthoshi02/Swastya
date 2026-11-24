@@ -3456,5 +3456,155 @@ export const api = {
         data: { success: boolean; status: string };
       }>(`/custom-sms/retry/${outboxId}`),
   },
+
+  hospitalMessages: {
+    getPeers: () =>
+      api.get<{
+        success: boolean;
+        data: Array<{
+          hospitalid: string;
+          hospitalname: string;
+          contactpersonname: string;
+          contactpersonphone: string;
+          address: string;
+          city: string;
+          state: string;
+          pincode: string;
+          unreadCount: number;
+          lastMessage: {
+            messageid: string;
+            content: string;
+            createdat: string;
+            senderhospitalid: string;
+            isread: boolean;
+            isOutgoing: boolean;
+          } | null;
+        }>;
+      }>("/hospitals/me/messages/peers"),
+
+    getConversation: (hospitalId: string) =>
+      api.get<{
+        success: boolean;
+        data: {
+          currentHospitalId: string;
+          peerHospital: {
+            hospitalid: string;
+            hospitalname: string;
+            city: string;
+            state: string;
+          };
+          messages: Array<{
+            messageId: string;
+            senderHospitalId: string;
+            senderHospitalName: string;
+            recipientHospitalId: string;
+            recipientHospitalName: string;
+            content: string;
+            isRead: boolean;
+            readAt: string | null;
+            createdAt: string;
+            isOutgoing: boolean;
+          }>;
+        };
+      }>(`/hospitals/me/messages/${hospitalId}`),
+
+    sendMessage: (hospitalId: string, content: string) =>
+      api.post<{
+        success: boolean;
+        data: {
+          messageId: string;
+          senderHospitalId: string;
+          senderHospitalName: string;
+          recipientHospitalId: string;
+          recipientHospitalName: string;
+          content: string;
+          isRead: boolean;
+          createdAt: string;
+          isOutgoing: boolean;
+        };
+        message: string;
+      }>(`/hospitals/me/messages/${hospitalId}`, { content }),
+
+    markAsRead: (hospitalId: string) =>
+      api.patch<{
+        success: boolean;
+        data: { markedReadCount: number };
+      }>(`/hospitals/me/messages/${hospitalId}/read`),
+  },
+
+  bloodbankMessages: {
+    getPeers: () =>
+      api.get<{
+        success: boolean;
+        data: Array<{
+          bloodbankid: string;
+          bloodbankname: string;
+          contactpersonname: string;
+          contactpersonphone: string;
+          address: string;
+          city: string;
+          state: string;
+          pincode: string;
+          unreadCount: number;
+          lastMessage: {
+            messageid: string;
+            content: string;
+            createdat: string;
+            senderbloodbankid: string;
+            isread: boolean;
+            isOutgoing: boolean;
+          } | null;
+        }>;
+      }>("/bloodbanks/me/messages/peers"),
+
+    getConversation: (bloodBankId: string) =>
+      api.get<{
+        success: boolean;
+        data: {
+          currentBloodBankId: string;
+          peerBloodBank: {
+            bloodbankid: string;
+            bloodbankname: string;
+            city: string;
+            state: string;
+          };
+          messages: Array<{
+            messageId: string;
+            senderBloodBankId: string;
+            senderBloodBankName: string;
+            recipientBloodBankId: string;
+            recipientBloodBankName: string;
+            content: string;
+            isRead: boolean;
+            readAt: string | null;
+            createdAt: string;
+            isOutgoing: boolean;
+          }>;
+        };
+      }>(`/bloodbanks/me/messages/${bloodBankId}`),
+
+    sendMessage: (bloodBankId: string, content: string) =>
+      api.post<{
+        success: boolean;
+        data: {
+          messageId: string;
+          senderBloodBankId: string;
+          senderBloodBankName: string;
+          recipientBloodBankId: string;
+          recipientBloodBankName: string;
+          content: string;
+          isRead: boolean;
+          createdAt: string;
+          isOutgoing: boolean;
+        };
+        message: string;
+      }>(`/bloodbanks/me/messages/${bloodBankId}`, { content }),
+
+    markAsRead: (bloodBankId: string) =>
+      api.patch<{
+        success: boolean;
+        data: { markedReadCount: number };
+      }>(`/bloodbanks/me/messages/${bloodBankId}/read`),
+  },
 };
 

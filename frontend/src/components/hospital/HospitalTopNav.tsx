@@ -215,6 +215,13 @@ export function HospitalTopNav({
       active: pathname.startsWith("/hospital/emergency-matching"),
     },
     {
+      href: "/hospital/messages",
+      label: "Hospital Chat",
+      icon: MessageSquare,
+      desc: "Direct in-app messaging with other registered hospitals",
+      active: pathname.startsWith("/hospital/messages"),
+    },
+    {
       href: "/hospital/sms",
       label: "Custom SMS",
       icon: MessageSquare,
@@ -284,7 +291,7 @@ export function HospitalTopNav({
               );
             })}
 
-            {/* "More" Dropdown Menu (Prevents congestion and button collisions) */}
+            {/* Clinical Operations Dropdown Menu */}
             <div className="relative" ref={moreRef}>
               <button
                 type="button"
@@ -301,7 +308,7 @@ export function HospitalTopNav({
                 aria-expanded={isMoreOpen}
                 aria-haspopup="true"
               >
-                <span>More</span>
+                <span>Operations</span>
                 <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${isMoreOpen ? "rotate-180" : ""}`} />
               </button>
 

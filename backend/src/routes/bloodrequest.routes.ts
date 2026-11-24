@@ -18,6 +18,7 @@ import { DonorMatchingService } from "../services/donorMatching.service";
 import { RequestDocumentService } from "../services/requestDocument.service";
 import { DocumentVerificationService } from "../services/documentVerification.service";
 import { NotificationSmsDispatcher } from "../services/sms/notificationSmsDispatcher.service";
+import { bloodRequestEventEmitter, EVENTS } from "../services/sms/bloodRequestEvents";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -985,6 +986,15 @@ router.post("/", authenticate, authorize("REQUESTER", "PATIENT", "HOSPITAL", "AD
             });
         }
 
+        // Event-driven dispatch: Automated notifications to matched donors, relevant hospitals, and blood banks
+        bloodRequestEventEmitter.emit(EVENTS.REQUEST_CREATED, {
+            requestId: bloodRequest.requestid,
+            createdByUserId: user.userid,
+            hospitalId: bloodRequest.hospitalid,
+            isEmergency: Boolean(bloodRequest.isemergency),
+            urgencyLevel: bloodRequest.urgencylevel,
+        });
+
         res.status(201).json(fullRequest || bloodRequest);
     } catch (error) {
         console.error("Error creating blood request:", error);
@@ -1655,6 +1665,17 @@ router.put("/:id", authenticate, requireApprovedHospital, async (req: Request, r
                 requestId: targetId,
             }).catch((err) => {
                 console.error("Emergency scheduler follow-up on escalation error:", err);
+            });
+        }
+
+        // Event-driven dispatch: Request status progression notification
+        if (req.body.status && req.body.status !== existing.status) {
+            bloodRequestEventEmitter.emit(EVENTS.STATUS_CHANGED, {
+                requestId: targetId,
+                oldStatus: existing.status,
+                newStatus: req.body.status,
+                changedByUserId: user.userid,
+                remarks: req.body.remarks,
             });
         }
 
@@ -3201,6 +3222,15 @@ router.post("/:id/respond", authenticate, async (req: Request, res: Response) =>
                 });
             }
 
+            // Event-driven dispatch: Donor declined notification
+            bloodRequestEventEmitter.emit(EVENTS.DONOR_RESPONDED, {
+                requestId: request.requestid,
+                donorUserId: user.userid,
+                donorId: donor.donorid,
+                response: "DECLINED",
+                declineReason,
+            });
+
             return res.status(200).json({
                 success: true,
                 message: "Blood requisition declined.",
@@ -3658,6 +3688,15 @@ router.post("/:id/respond", authenticate, async (req: Request, res: Response) =>
             } else {
                 finalStatus = currentStatus;
             }
+        });
+
+        // Event-driven dispatch: Donor accepted notification
+        bloodRequestEventEmitter.emit(EVENTS.DONOR_RESPONDED, {
+            requestId: request.requestid,
+            donorUserId: user.userid,
+            donorId: donor.donorid,
+            response: "ACCEPTED",
+            eta: estimatedArrival,
         });
 
         return res.status(200).json({

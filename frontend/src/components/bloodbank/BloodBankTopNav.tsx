@@ -241,6 +241,13 @@ export function BloodBankTopNav({
       active: pathname.startsWith("/bloodbank/equipment"),
     },
     {
+      href: "/bloodbank/messages",
+      label: "Blood Bank Chat",
+      desc: "Direct in-app messaging with other registered blood banks",
+      icon: MessageSquare,
+      active: pathname.startsWith("/bloodbank/messages"),
+    },
+    {
       href: "/bloodbank/sms",
       label: "Custom SMS",
       desc: "Send personalized broadcast & emergency donor SMS alerts",

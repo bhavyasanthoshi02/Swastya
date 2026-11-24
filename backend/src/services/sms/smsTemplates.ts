@@ -25,6 +25,13 @@ export const SMS_TEMPLATES: Record<SmsTemplateType, TemplateDefinition> = {
         requiredVariables: ["bloodGroup", "units", "facilityName", "actionUrl"],
         rawTemplate: "Swastya Emergency: Urgent need for {bloodGroup} blood ({units} units) at {facilityName}. Tap to respond: {actionUrl}",
     },
+    DONOR_REQUEST_MATCH: {
+        templateType: "DONOR_REQUEST_MATCH",
+        targetRole: "DONOR",
+        description: "Automatic notification sent to eligible matched donors for a newly created blood requisition",
+        requiredVariables: ["actionUrl"],
+        rawTemplate: "URGENT: Swastya – A blood request matching your donor profile requires your attention. Please review the request and respond: {actionUrl}",
+    },
     DONOR_OFFER_ACCEPTED: {
         templateType: "DONOR_OFFER_ACCEPTED",
         targetRole: "DONOR",
@@ -71,6 +78,13 @@ export const SMS_TEMPLATES: Record<SmsTemplateType, TemplateDefinition> = {
         requiredVariables: ["requestId", "bloodGroup", "actionUrl"],
         rawTemplate: "Swastya Hospital Alert: Blood requisition #{requestId} ({bloodGroup}) is awaiting review. Tap to process: {actionUrl}",
     },
+    HOSPITAL_MATCH_ALERT: {
+        templateType: "HOSPITAL_MATCH_ALERT",
+        targetRole: "HOSPITAL",
+        description: "Automatic alert to relevant hospitals matching requisition location and clinical requirements",
+        requiredVariables: ["actionUrl"],
+        rawTemplate: "Swastya Alert: A new blood request matching your organization's availability and requirements needs attention. View details: {actionUrl}",
+    },
     HOSPITAL_DONOR_MATCHED: {
         templateType: "HOSPITAL_DONOR_MATCHED",
         targetRole: "HOSPITAL",
@@ -102,6 +116,13 @@ export const SMS_TEMPLATES: Record<SmsTemplateType, TemplateDefinition> = {
         description: "Notification to blood bank when blood inventory check is assigned",
         requiredVariables: ["requestId", "units", "bloodGroup", "actionUrl"],
         rawTemplate: "Swastya Blood Bank Alert: Requirement for {units} unit(s) of {bloodGroup} (Req #{requestId}) assigned to your facility. Check availability: {actionUrl}",
+    },
+    BLOOD_BANK_MATCH_ALERT: {
+        templateType: "BLOOD_BANK_MATCH_ALERT",
+        targetRole: "BLOOD_BANK",
+        description: "Automatic alert to relevant blood banks with compatible available inventory and location",
+        requiredVariables: ["actionUrl"],
+        rawTemplate: "Swastya Alert: A new blood request matching your organization's availability and requirements needs attention. View details: {actionUrl}",
     },
     BLOOD_BANK_RESERVATION: {
         templateType: "BLOOD_BANK_RESERVATION",

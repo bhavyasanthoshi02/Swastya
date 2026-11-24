@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+:root {
+  --font-inter: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-playfair: 'Playfair Display', Georgia, serif;
+}
+
 @theme {
   --font-serif: var(--font-playfair), "Playfair Display", Georgia, serif;
   --font-sans: var(--font-inter), "Inter", system-ui, -apple-system, sans-serif;

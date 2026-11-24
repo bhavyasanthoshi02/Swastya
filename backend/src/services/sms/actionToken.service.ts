@@ -10,7 +10,7 @@ import { ActionTokenPayload } from "./sms.types";
 
 export interface CreateActionTokenOptions {
     userId: string;
-    purpose: "DONOR_PLEDGE" | "DONOR_QUESTIONNAIRE" | "NEXT_STEPS" | "VIEW_REQUEST" | "HOSPITAL_REVIEW" | "BLOOD_BANK_CHECK" | "REQUEST_TRACKING";
+    purpose: "DONOR_PLEDGE" | "DONOR_QUESTIONNAIRE" | "NEXT_STEPS" | "VIEW_REQUEST" | "HOSPITAL_REVIEW" | "BLOOD_BANK_CHECK" | "REQUEST_TRACKING" | "DONOR_MATCH" | string;
     targetId: string;
     redirectUrl: string;
     expiresInHours?: number;

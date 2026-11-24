@@ -297,7 +297,7 @@ export function CustomSmsManager({ userRole, facilityName = "Healthcare Facility
                   <option value="DONOR">Donors</option>
                   <option value="REQUESTER">Requesters</option>
                   {(userRole === "BLOOD_BANK" || userRole === "ADMIN") && <option value="HOSPITAL">Hospitals</option>}
-                  {userRole === "ADMIN" && <option value="BLOOD_BANK">Blood Banks</option>}
+                  {(userRole === "HOSPITAL" || userRole === "ADMIN") && <option value="BLOOD_BANK">Blood Banks</option>}
                 </select>
               </div>
 

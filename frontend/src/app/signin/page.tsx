@@ -142,7 +142,7 @@ function SignInForm() {
   };
 
   return (
-    <div className="h-screen max-h-screen w-full flex flex-col justify-between bg-[#FAF6EE] text-slate-800 antialiased selection:bg-[#EFA27E]/30 selection:text-[#053845] overflow-y-auto md:overflow-hidden">
+    <div className="min-h-screen min-h-[100dvh] w-full flex flex-col justify-between bg-[#FAF6EE] text-slate-800 antialiased selection:bg-[#EFA27E]/30 selection:text-[#053845]">
       {/* Top Navigation Bar */}
       <header className="border-b border-[#F3E9D1] bg-white/80 backdrop-blur-sm sticky top-0 z-30 flex-shrink-0">
         <div className="w-full px-4 sm:px-6 lg:px-8 h-12 sm:h-13 flex items-center">
@@ -156,10 +156,10 @@ function SignInForm() {
         </div>
       </header>
 
-      {/* Main Content Area - Centered Card, Perfectly Fit to Screen */}
-      <main className="flex-1 flex items-center justify-center p-3 sm:p-4 md:p-6 my-auto overflow-y-auto md:overflow-visible">
-        <div className="w-full max-w-[420px]">
-          <div className="bg-white rounded-2xl border border-[#F3E9D1] shadow-sm p-5 sm:p-6 sm:py-6">
+      {/* Main Content Area - Responsive Centered Card */}
+      <main className="flex-1 flex items-center justify-center px-4 py-6 sm:px-6 sm:py-8 w-full my-auto">
+        <div className="w-full max-w-[420px] mx-auto">
+          <div className="bg-white rounded-2xl border border-[#F3E9D1] shadow-sm p-5 sm:p-7">
             {/* Header / Brand */}
             <div className="flex flex-col items-center text-center mb-4 sm:mb-4.5">
               <Link href="/" className="mb-2 sm:mb-2.5 transition-opacity hover:opacity-90 inline-block">

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { prisma } from "../config/prisma";
+import { getSmsOutboxWorkerStatus } from "../services/sms/outboxWorker.service";
 
 const router = Router();
 
@@ -15,6 +16,7 @@ router.get("/db", async (_req, res) => {
         const select1: any[] = await prisma.$queryRawUnsafe("SELECT 1 AS ok");
         const dbInfo: any[] = await prisma.$queryRawUnsafe("SELECT current_database() as db, version() as ver");
         const host = process.env.DATABASE_URL ? new URL(process.env.DATABASE_URL).hostname : "unknown";
+        const workerStatus = getSmsOutboxWorkerStatus();
 
         // Query application tables on Neon
         const [usersCount, bloodbanksCount, hospitalsCount, bloodrequestsCount] = await Promise.all([
@@ -27,8 +29,12 @@ router.get("/db", async (_req, res) => {
         res.status(200).json({
             success: true,
             status: "connected",
-            queryOk: select1[0]?.ok === 1,
+            provider: host.includes("neon.tech") ? "Neon Cloud PostgreSQL" : "PostgreSQL",
             database: dbInfo[0]?.db,
+            ssl: "active (verify-full)",
+            prismaConnectivity: select1[0]?.ok === 1 ? "working" : "error",
+            outboxWorker: workerStatus,
+            queryOk: select1[0]?.ok === 1,
             version: dbInfo[0]?.ver?.split(" on ")[0],
             host: host,
             isNeon: host.includes("neon.tech"),

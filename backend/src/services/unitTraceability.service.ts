@@ -8,6 +8,7 @@ import {
     PLATELET_RECIPIENT_TO_DONOR_MAP,
 } from "../utils/bloodCompatibility";
 import { NotificationSmsDispatcher } from "./sms/notificationSmsDispatcher.service";
+import { bloodRequestEventEmitter, EVENTS } from "./sms/bloodRequestEvents";
 
 export function computeRequestHash(payload: any): string {
     return crypto.createHash("sha256").update(JSON.stringify(payload)).digest("hex");
@@ -1411,7 +1412,7 @@ export class UnitTraceabilityService {
         action: "ACCEPT" | "DECLINE",
         declineReason?: string
     ) {
-        return await prisma.$transaction(async (tx) => {
+        const result = await prisma.$transaction(async (tx) => {
             const lockedRows: any[] = await tx.$queryRawUnsafe(
                 `SELECT assignmentid, requestid, bloodbankid, assignmentstatus
                  FROM requisitionassignments
@@ -1450,6 +1451,18 @@ export class UnitTraceabilityService {
                 assignment: updated,
             };
         });
+
+        // Event-driven dispatch: Blood bank availability confirmation / response
+        bloodRequestEventEmitter.emit(EVENTS.BLOOD_BANK_RESPONDED, {
+            assignmentId,
+            requestId: result.assignment.requestid,
+            bloodBankId,
+            action,
+            declineReason,
+            actorUserId,
+        });
+
+        return result;
     }
 
     /**

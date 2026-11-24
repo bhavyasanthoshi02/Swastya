@@ -14,6 +14,7 @@ import app from "./app";
 import { startEmergencySchedulerWorker, stopEmergencySchedulerWorker } from "./services/scheduler.service";
 import { startCampReminderWorker, stopCampReminderWorker } from "./services/campNotification.service";
 import { startSmsOutboxWorker, stopSmsOutboxWorker } from "./services/sms/outboxWorker.service";
+import "./services/sms/bloodRequestEvents";
 
 const PORT = 5000;
 

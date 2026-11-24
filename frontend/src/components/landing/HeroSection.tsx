@@ -63,8 +63,8 @@ export function HeroSection() {
             </div>
           </div>
 
-          {/* Hero UI Mockup Column */}
-          <div className="lg:col-span-5 flex items-center justify-center">
+          {/* Hero UI Mockup Column - Swastya Flow Diagram (Hidden on Mobile) */}
+          <div className="hidden lg:flex lg:col-span-5 items-center justify-center">
             <div className="relative w-full max-w-[500px] aspect-square flex items-center justify-center">
               {/* Outer circle */}
               <div className="absolute inset-4 rounded-full bg-[#FAF6EE] border border-[#F3E9D1]" />

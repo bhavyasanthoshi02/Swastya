@@ -295,7 +295,77 @@ export class CustomSmsService {
                 }
             }
 
-            return recipients;
+            // 4. Authorized Blood Banks (requisition assignments, reservations, or local operational coordination)
+            const assignedBBs = await prisma.requisitionassignments.findMany({
+                where: {
+                    bloodrequests: { hospitalid: hospital.hospitalid },
+                },
+                include: {
+                    bloodbanks: {
+                        select: {
+                            bloodbankid: true,
+                            bloodbankname: true,
+                            city: true,
+                            users: { select: { userid: true, name: true, phonenumber: true, isactive: true } },
+                        },
+                    },
+                    bloodrequests: { select: { requestid: true, bloodgroup: true } },
+                },
+                take: 50,
+            });
+
+            for (const a of assignedBBs) {
+                const bbUser = a.bloodbanks?.users;
+                if (bbUser && bbUser.isactive && bbUser.phonenumber) {
+                    recipients.push({
+                        userId: bbUser.userid,
+                        displayName: `${a.bloodbanks.bloodbankname || "Blood Bank"} (Blood Bank)`,
+                        role: "BLOOD_BANK",
+                        maskedPhone: this.maskPhoneNumber(bbUser.phonenumber),
+                        relationshipContext: `Requisition assignment #${a.bloodrequests?.requestid.slice(0, 8) || "Active"}`,
+                        targetRequestId: a.bloodrequests?.requestid,
+                        bloodGroup: a.bloodrequests?.bloodgroup,
+                    });
+                }
+            }
+
+            // Also include local approved blood banks in same city for supply coordination
+            if (hospital.city) {
+                const localBBs = await prisma.bloodbanks.findMany({
+                    where: {
+                        city: { equals: hospital.city, mode: "insensitive" },
+                        approvalstatus: "APPROVED",
+                        users: { isactive: true },
+                    },
+                    select: {
+                        bloodbankid: true,
+                        bloodbankname: true,
+                        city: true,
+                        users: { select: { userid: true, name: true, phonenumber: true, isactive: true } },
+                    },
+                    take: 20,
+                });
+
+                for (const bb of localBBs) {
+                    if (bb.users && bb.users.isactive && bb.users.phonenumber) {
+                        recipients.push({
+                            userId: bb.users.userid,
+                            displayName: `${bb.bloodbankname || "Blood Bank"} (Blood Bank)`,
+                            role: "BLOOD_BANK",
+                            maskedPhone: this.maskPhoneNumber(bb.users.phonenumber),
+                            relationshipContext: `Regional blood center (${bb.city || hospital.city})`,
+                        });
+                    }
+                }
+            }
+
+            // Deduplicate by userId
+            const seenHospitalRecipients = new Set<string>();
+            return recipients.filter(r => {
+                if (seenHospitalRecipients.has(r.userId)) return false;
+                seenHospitalRecipients.add(r.userId);
+                return true;
+            });
         }
 
         if (senderRole === "BLOOD_BANK") {
@@ -369,7 +439,78 @@ export class CustomSmsService {
                 }
             }
 
-            return recipients;
+            // 3. Authorized Hospitals with blood unit reservations or local city coordination
+            const reservations = await prisma.bloodreservations.findMany({
+                where: { bloodbankid: bloodBank.bloodbankid },
+                include: {
+                    bloodrequests: {
+                        include: {
+                            hospitals: {
+                                select: {
+                                    hospitalid: true,
+                                    hospitalname: true,
+                                    city: true,
+                                    users: { select: { userid: true, name: true, phonenumber: true, isactive: true } },
+                                },
+                            },
+                        },
+                    },
+                },
+                take: 50,
+            });
+
+            for (const r of reservations) {
+                const hospUser = r.bloodrequests?.hospitals?.users;
+                if (hospUser && hospUser.isactive && hospUser.phonenumber) {
+                    recipients.push({
+                        userId: hospUser.userid,
+                        displayName: `${r.bloodrequests?.hospitals?.hospitalname || "Hospital Facility"} (Hospital Staff)`,
+                        role: "HOSPITAL",
+                        maskedPhone: this.maskPhoneNumber(hospUser.phonenumber),
+                        relationshipContext: `Blood unit reservation for Req #${r.requestid.slice(0, 8)}`,
+                        targetRequestId: r.requestid,
+                        bloodGroup: r.bloodrequests?.bloodgroup,
+                    });
+                }
+            }
+
+            // Also include local approved hospitals in same city for inventory coordination
+            if (bloodBank.city) {
+                const localHosps = await prisma.hospitals.findMany({
+                    where: {
+                        city: { equals: bloodBank.city, mode: "insensitive" },
+                        approvalstatus: "APPROVED",
+                        users: { isactive: true },
+                    },
+                    select: {
+                        hospitalid: true,
+                        hospitalname: true,
+                        city: true,
+                        users: { select: { userid: true, name: true, phonenumber: true, isactive: true } },
+                    },
+                    take: 20,
+                });
+
+                for (const h of localHosps) {
+                    if (h.users && h.users.isactive && h.users.phonenumber) {
+                        recipients.push({
+                            userId: h.users.userid,
+                            displayName: `${h.hospitalname || "Hospital Facility"} (Hospital Staff)`,
+                            role: "HOSPITAL",
+                            maskedPhone: this.maskPhoneNumber(h.users.phonenumber),
+                            relationshipContext: `Regional care facility (${h.city || bloodBank.city})`,
+                        });
+                    }
+                }
+            }
+
+            // Deduplicate by userId
+            const seenBloodBankRecipients = new Set<string>();
+            return recipients.filter(r => {
+                if (seenBloodBankRecipients.has(r.userId)) return false;
+                seenBloodBankRecipients.add(r.userId);
+                return true;
+            });
         }
 
         if (senderRole === "ADMIN") {

@@ -226,26 +226,8 @@ export function DonorTopNav({
           </nav>
         </div>
 
-        {/* Right: Live Status Pill, Notifications, Profile, Mobile Menu */}
+        {/* Right: Notifications, Profile, Mobile Menu */}
         <div className="flex items-center gap-2 sm:gap-3">
-          {/* Live Availability Status Chip */}
-          <Link
-            href="/donor/settings"
-            className={`hidden lg:inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border transition-all ${
-              availability === "Available"
-                ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100/70"
-                : "bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200/70"
-            }`}
-            title="Click to manage coverage and availability"
-          >
-            <span
-              className={`w-2 h-2 rounded-full ${
-                availability === "Available" ? "bg-emerald-500 animate-pulse" : "bg-slate-400"
-              }`}
-            />
-            <span>{availability} ({bloodGroup})</span>
-          </Link>
-
           {/* Notifications Dropdown */}
           <div className="relative" ref={notificationsRef}>
             <button
