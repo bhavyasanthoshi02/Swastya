@@ -1,19 +1,10 @@
-# 🩸 Swastya — Smart Clinical Blood Coordination Network
-
-[![Next.js](https://img.shields.io/badge/Next.js-15.2.0-black?style=for-the-badge&logo=next.js&logoColor=white)](https://nextjs.org/)
-[![React](https://img.shields.io/badge/React-19.0.0-blue?style=for-the-badge&logo=react&logoColor=white)](https://react.dev/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.0-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![Express](https://img.shields.io/badge/Express-4.21-lightgrey?style=for-the-badge&logo=express&logoColor=black)](https://expressjs.com/)
-[![Prisma](https://img.shields.io/badge/Prisma-7.10-2D3748?style=for-the-badge&logo=prisma&logoColor=white)](https://www.prisma.io/)
-[![PostgreSQL](https://img.shields.io/badge/Neon_PostgreSQL-Serverless-00E599?style=for-the-badge&logo=postgresql&logoColor=white)](https://neon.tech/)
-[![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-v4-38B2AC?style=for-the-badge&logo=tailwind-css&logoColor=white)](https://tailwindcss.com/)
-[![Twilio](https://img.shields.io/badge/Twilio-Programmable_SMS-F22F46?style=for-the-badge&logo=twilio&logoColor=white)](https://www.twilio.com/)
+#  Swastya — Smart Clinical Blood Coordination Network
 
 > **Swastya** is a next-generation clinical blood logistics and emergency donor coordination platform. Built to bridge the critical gap between patients, voluntary donors, hospitals, and blood banks, Swastya eliminates emergency delays through intelligent multi-criteria matching, real-time in-app cross-organization communication, AI-driven shortage forecasting, and complete blood unit cold-chain traceability.
 
 ---
 
-## 📑 Table of Contents
+##  Table of Contents
 - [Project Overview](#-project-overview)
 - [Key Features](#-key-features)
 - [The Four Dedicated Portals](#-the-four-dedicated-portals)
@@ -31,7 +22,7 @@
 
 ---
 
-## 🌟 Project Overview
+##  Project Overview
 
 Emergency blood requisition in healthcare systems frequently suffers from fragmented communication, opaque inventory levels, and manual phone coordination. **Swastya** modernizes this entire pipeline into a coordinated clinical network:
 
@@ -42,7 +33,7 @@ Emergency blood requisition in healthcare systems frequently suffers from fragme
 
 ---
 
-## ⚡ Key Features
+##  Key Features
 
 ### 1. Automated Multi-Criteria Donor Matching
 - Evaluates blood group compatibility matrices (ABO & Rh factor), geographical proximity, donor eligibility cooldowns (90 days for whole blood), and active requisition status.
@@ -76,7 +67,7 @@ Emergency blood requisition in healthcare systems frequently suffers from fragme
 
 ---
 
-## 🏛️ The Four Dedicated Portals
+##  The Four Dedicated Portals
 
 ```
                          Swastya Clinical Ecosystem
@@ -116,7 +107,7 @@ Emergency blood requisition in healthcare systems frequently suffers from fragme
 
 ---
 
-## 📐 System Architecture
+##  System Architecture
 
 ```mermaid
 flowchart TD
@@ -161,7 +152,7 @@ flowchart TD
 
 ---
 
-## 🛠️ Technology Stack
+##  Technology Stack
 
 | Category | Technology | Purpose |
 | :--- | :--- | :--- |
@@ -178,7 +169,7 @@ flowchart TD
 
 ---
 
-## 🗄️ Database Architecture (Neon & Prisma)
+##  Database Architecture (Neon & Prisma)
 
 The database schema is defined in [backend/prisma/schema.prisma](file:///c:/Users/BHAVYA/OneDrive/Desktop/Swastya/backend/prisma/schema.prisma) and deployed to **Neon Cloud PostgreSQL**. It encompasses **49 normalized models** organized across operational boundaries:
 
@@ -208,7 +199,7 @@ The database schema is defined in [backend/prisma/schema.prisma](file:///c:/User
 
 ---
 
-## 📂 Project Structure
+##  Project Structure
 
 ```
 Swastya/
@@ -283,7 +274,7 @@ Swastya/
 
 ---
 
-## 🔐 Environment Variables
+##  Environment Variables
 
 ### Backend (`backend/.env`)
 Create `backend/.env` using the template below:
@@ -328,7 +319,7 @@ NEXT_TELEMETRY_DISABLED=1
 
 ---
 
-## 🚀 Getting Started & Local Setup
+##  Getting Started & Local Setup
 
 ### Prerequisites
 - **Node.js**: `v20.x` or higher installed
@@ -380,7 +371,7 @@ Open your browser and navigate to `http://localhost:3000`.
 
 ---
 
-## 🧪 Automated Testing & Quality Assurance
+##  Automated Testing & Quality Assurance
 
 The codebase includes comprehensive integration and type checks for clinical safety:
 
@@ -402,57 +393,13 @@ npx tsc --noEmit
 
 ---
 
-## 🌐 Deployment Overview
-
-### Frontend (Vercel)
-1. Link your repository to **Vercel**.
-2. Set Framework Preset to **Next.js**.
-3. Set the Root Directory to `frontend`.
-4. Configure the environment variables (`NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_MSG91_WIDGET_ID`, `NEXT_PUBLIC_MSG91_TOKEN_AUTH`).
-5. Deploy.
-
-### Backend (Render / Railway / AWS / Docker)
-1. Deploy the `backend` folder as a Node.js web service.
-2. Build command: `npm install && npm run build`.
-3. Start command: `node dist/server.js` or `npx tsx src/server.ts`.
-4. Add all environment variables specified in `backend/.env`.
-5. Ensure your host supports long-running process background timers for `outboxWorker`.
-
----
-
-## 🛡️ Security & Compliance
+##  Security & Compliance
 
 - **Role-Based Authorization (RBAC)**: All sensitive routes are guarded by strict role middleware (`DONOR`, `REQUESTER`, `HOSPITAL`, `BLOOD_BANK`, `ADMIN`).
 - **Encrypted Clinical Passwords**: Stored using industry-standard `bcryptjs` salts.
 - **HMAC Action Link Tamper-Resistance**: Action tokens sent in donor SMS alerts are signed with cryptographic HMAC-SHA256, strictly bound to a single action (`ACCEPT`/`DECLINE`), and expire automatically.
 - **Traceability Ledger Immutability**: All unit adjustments, screenings, and custody transfers are recorded in `inventoryledger` and `unitdispositionhistory` for full clinical traceability.
 - **Zero Credentials in Version Control**: Sensitive secrets, connection strings, and API keys are strictly excluded via root and nested `.gitignore` policies.
-
----
-
-## 📸 Screenshots & UI Showcase
-
-| Hospital Blood Requisitions | Cross-Organization In-App Chat |
-| :---: | :---: |
-| *(Portal Dashboard with Live Emergency Tracking)* | *(Real-time Hospital $\leftrightarrow$ Blood Bank Chat)* |
-
-| AI Blood Shortage Predictor | Surgery Blood Planner |
-| :---: | :---: |
-| *(7/14/30-Day Component Burn-Rate Forecasts)* | *(Pre-operative Crossmatch & Unit Allocation)* |
-
----
-
-## 🤝 Contributing & License
-
-Contributions, feature suggestions, and clinical workflow improvements are warmly welcomed!
-
-1. Fork the Project (`https://github.com/bhavyasanthoshi02/Swastya/fork`)
-2. Create your Feature Branch (`git checkout -b feature/clinical-enhancement`)
-3. Commit your Changes (`git commit -m 'feat: add component crossmatch support'`)
-4. Push to the Branch (`git push origin feature/clinical-enhancement`)
-5. Open a Pull Request
-
-Distributed under the **ISC License**. See `LICENSE` for more information.
 
 ---
 
