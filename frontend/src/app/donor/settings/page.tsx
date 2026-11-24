@@ -179,7 +179,7 @@ export default function DonorSettingsPage() {
         <h1 className="font-serif text-2xl sm:text-3xl font-bold text-[#053845] tracking-tight">
           Availability &amp; Match Settings
         </h1>
-        <p className="text-xs sm:text-sm text-slate-600">
+        <p className="hidden sm:block text-xs sm:text-sm text-slate-600">
           Control your emergency donation availability and review the location details used to match nearby blood requests.
         </p>
       </header>

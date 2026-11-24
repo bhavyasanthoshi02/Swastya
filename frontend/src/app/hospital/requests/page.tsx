@@ -182,7 +182,7 @@ export default function HospitalBloodRequestsPage() {
                 </span>
               )}
             </div>
-            <p className="text-sm text-slate-600">
+            <p className="hidden sm:block text-sm text-slate-600">
               Review, verify, and coordinate blood units assigned to your medical facility for urgent or scheduled transfusions.
             </p>
           </div>

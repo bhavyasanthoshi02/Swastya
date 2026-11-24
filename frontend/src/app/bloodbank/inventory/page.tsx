@@ -289,7 +289,7 @@ export default function BloodBankInventoryPage() {
                 </span>
               )}
             </div>
-            <p className="text-xs sm:text-sm text-slate-500">
+            <p className="hidden sm:block text-xs sm:text-sm text-slate-500">
               Manage available blood units and registered stock batches.
             </p>
           </div>

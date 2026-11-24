@@ -317,7 +317,7 @@ export default function HospitalDonorsPage() {
             <h1 className="font-serif text-2xl sm:text-3xl font-bold text-[#053845] tracking-tight">
               Donor Registry &amp; Historical Records
             </h1>
-            <p className="text-xs sm:text-sm text-slate-600">
+            <p className="hidden sm:block text-xs sm:text-sm text-slate-600">
               Manage hospital-registered donors, import legacy records, and verify historical donations.
             </p>
           </div>

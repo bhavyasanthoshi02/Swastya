@@ -235,7 +235,7 @@ export default function HospitalDashboardPage() {
           <h1 className="font-serif text-2xl sm:text-3xl font-bold text-[#053845] tracking-tight truncate">
             Welcome back{hospital?.hospitalname ? `, ${hospital.hospitalname}` : ""}
           </h1>
-          <p className="text-sm text-slate-600">
+          <p className="hidden sm:block text-sm text-slate-600">
             Here&apos;s an overview of your hospital&apos;s blood coordination activities.
           </p>
         </div>

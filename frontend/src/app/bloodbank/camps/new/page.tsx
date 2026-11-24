@@ -213,7 +213,7 @@ function NewCampFormContent() {
                 </span>
               )}
             </div>
-            <p className="text-xs sm:text-sm text-slate-500">
+            <p className="hidden sm:block text-xs sm:text-sm text-slate-500">
               {isFromPlanner
                 ? "Pre-populated with optimal location and date recommendations. Review or adjust any details before scheduling."
                 : "Schedule, configure and publish an upcoming voluntary blood donation drive."}

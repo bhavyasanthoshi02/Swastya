@@ -156,7 +156,7 @@ export default function RegisterEquipmentPage() {
           <ArrowLeft className="w-4 h-4" /> Back to Equipment Registry
         </Link>
         <h1 className="text-2xl sm:text-3xl font-bold text-[#053845] mt-2">Register New Equipment</h1>
-        <p className="text-sm text-gray-600 mt-1">
+        <p className="hidden sm:block text-sm text-gray-600 mt-1">
           Add an equipment asset to the facility registry with calibration and preventive maintenance intervals.
         </p>
       </div>

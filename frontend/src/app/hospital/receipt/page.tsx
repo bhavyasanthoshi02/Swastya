@@ -241,7 +241,7 @@ export default function HospitalDeliveryReceiptPage() {
             <h1 className="font-serif text-2xl sm:text-3xl font-bold text-[#053845] tracking-tight">
               Blood Delivery Receipt &amp; Temperature Inspection
             </h1>
-            <p className="text-xs sm:text-sm text-slate-600">
+            <p className="hidden sm:block text-xs sm:text-sm text-slate-600">
               Inspect courier cold-box temperatures, verify blood bag integrity, and confirm incoming shipments.
             </p>
           </div>

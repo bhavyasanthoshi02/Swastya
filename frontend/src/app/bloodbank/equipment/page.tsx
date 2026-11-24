@@ -194,7 +194,7 @@ export default function BloodBankEquipmentPage() {
             </span>
             <h1 className="text-2xl sm:text-3xl font-bold text-[#053845]">Equipment & Calibration Tracker</h1>
           </div>
-          <p className="text-sm text-gray-600 mt-1">
+          <p className="hidden sm:block text-sm text-gray-600 mt-1">
             Centralized registry, calibration scheduling, preventive maintenance & breakdown tracking for blood banking assets.
           </p>
         </div>

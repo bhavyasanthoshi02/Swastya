@@ -233,7 +233,7 @@ export default function SmartCampPlannerPage() {
                 AI Recommended Drives
               </span>
             </div>
-            <p className="text-xs sm:text-sm text-slate-500">
+            <p className="hidden sm:block text-xs sm:text-sm text-slate-500">
               Data-driven camp location and date recommendations coupled with live inventory and shortage forecasts. Zero synthetic data.
             </p>
           </div>

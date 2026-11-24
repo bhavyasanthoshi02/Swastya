@@ -171,7 +171,7 @@ export default function HospitalNotificationsPage() {
           <h1 className="font-serif text-2xl sm:text-3xl font-bold text-[#053845] tracking-tight">
             Notifications
           </h1>
-          <p className="text-xs sm:text-sm text-slate-500">
+          <p className="hidden sm:block text-xs sm:text-sm text-slate-500">
             Stay updated on blood requests, donor responses and important activities.
           </p>
         </div>

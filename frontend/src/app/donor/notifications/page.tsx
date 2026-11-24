@@ -285,7 +285,7 @@ export default function DonorNotificationsPage() {
                 </span>
               ))}
           </div>
-          <p className="text-xs sm:text-sm text-slate-600">
+          <p className="hidden sm:block text-xs sm:text-sm text-slate-600">
             Stay updated on blood requests, donor responses and journey updates.
           </p>
         </div>
@@ -332,18 +332,16 @@ export default function DonorNotificationsPage() {
           <button
             type="button"
             onClick={() => setFilter("all")}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer inline-flex items-center gap-1.5 ${
-              filter === "all"
-                ? "bg-[#053845] text-white shadow-2xs"
-                : "text-slate-600 hover:text-[#053845] hover:bg-[#FAF6EE]"
-            }`}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer inline-flex items-center gap-1.5 ${filter === "all"
+              ? "bg-[#053845] text-white shadow-2xs"
+              : "text-slate-600 hover:text-[#053845] hover:bg-[#FAF6EE]"
+              }`}
           >
             <span>All</span>
             {hasLoadedSuccessfully && totalCount > 0 && (
               <span
-                className={`px-1.5 py-0.2 rounded-full text-[10px] ${
-                  filter === "all" ? "bg-white/20 text-white" : "bg-[#FAF6EE] text-slate-600"
-                }`}
+                className={`px-1.5 py-0.2 rounded-full text-[10px] ${filter === "all" ? "bg-white/20 text-white" : "bg-[#FAF6EE] text-slate-600"
+                  }`}
               >
                 {totalCount}
               </span>
@@ -353,20 +351,18 @@ export default function DonorNotificationsPage() {
           <button
             type="button"
             onClick={() => setFilter("unread")}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer inline-flex items-center gap-1.5 ${
-              filter === "unread"
-                ? "bg-[#053845] text-white shadow-2xs"
-                : "text-slate-600 hover:text-[#053845] hover:bg-[#FAF6EE]"
-            }`}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer inline-flex items-center gap-1.5 ${filter === "unread"
+              ? "bg-[#053845] text-white shadow-2xs"
+              : "text-slate-600 hover:text-[#053845] hover:bg-[#FAF6EE]"
+              }`}
           >
             <span>Unread</span>
             {hasLoadedSuccessfully && unreadCount > 0 && (
               <span
-                className={`px-1.5 py-0.2 rounded-full text-[10px] ${
-                  filter === "unread"
-                    ? "bg-[#B94F30] text-white"
-                    : "bg-[#B94F30]/10 text-[#B94F30]"
-                }`}
+                className={`px-1.5 py-0.2 rounded-full text-[10px] ${filter === "unread"
+                  ? "bg-[#B94F30] text-white"
+                  : "bg-[#B94F30]/10 text-[#B94F30]"
+                  }`}
               >
                 {unreadCount}
               </span>
@@ -376,20 +372,18 @@ export default function DonorNotificationsPage() {
           <button
             type="button"
             onClick={() => setFilter("emergency")}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer inline-flex items-center gap-1.5 ${
-              filter === "emergency"
-                ? "bg-[#A2363A] text-white shadow-2xs"
-                : "text-slate-600 hover:text-[#A2363A] hover:bg-rose-50/70"
-            }`}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer inline-flex items-center gap-1.5 ${filter === "emergency"
+              ? "bg-[#A2363A] text-white shadow-2xs"
+              : "text-slate-600 hover:text-[#A2363A] hover:bg-rose-50/70"
+              }`}
           >
             <span>Emergencies</span>
             {hasLoadedSuccessfully && emergencyCount > 0 && (
               <span
-                className={`px-1.5 py-0.2 rounded-full text-[10px] ${
-                  filter === "emergency"
-                    ? "bg-white/20 text-white"
-                    : "bg-rose-50 text-[#A2363A]"
-                }`}
+                className={`px-1.5 py-0.2 rounded-full text-[10px] ${filter === "emergency"
+                  ? "bg-white/20 text-white"
+                  : "bg-rose-50 text-[#A2363A]"
+                  }`}
               >
                 {emergencyCount}
               </span>
@@ -399,21 +393,19 @@ export default function DonorNotificationsPage() {
           <button
             type="button"
             onClick={() => setFilter("camps")}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer inline-flex items-center gap-1.5 ${
-              filter === "camps"
-                ? "bg-red-600 text-white shadow-2xs"
-                : "text-slate-600 hover:text-red-600 hover:bg-red-50/70"
-            }`}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer inline-flex items-center gap-1.5 ${filter === "camps"
+              ? "bg-red-600 text-white shadow-2xs"
+              : "text-slate-600 hover:text-red-600 hover:bg-red-50/70"
+              }`}
           >
             <Tent className="w-3.5 h-3.5" />
             <span>Blood Camps</span>
             {hasLoadedSuccessfully && campCount > 0 && (
               <span
-                className={`px-1.5 py-0.2 rounded-full text-[10px] ${
-                  filter === "camps"
-                    ? "bg-white/20 text-white"
-                    : "bg-red-50 text-red-600"
-                }`}
+                className={`px-1.5 py-0.2 rounded-full text-[10px] ${filter === "camps"
+                  ? "bg-white/20 text-white"
+                  : "bg-red-50 text-red-600"
+                  }`}
               >
                 {campCount}
               </span>
@@ -427,10 +419,10 @@ export default function DonorNotificationsPage() {
             {filter === "unread"
               ? "unread"
               : filter === "emergency"
-              ? "emergency"
-              : filter === "camps"
-              ? "blood camp"
-              : "total"}{" "}
+                ? "emergency"
+                : filter === "camps"
+                  ? "blood camp"
+                  : "total"}{" "}
             {filteredNotifications.length === 1 ? "notification" : "notifications"}
           </div>
         )}
@@ -493,20 +485,20 @@ export default function DonorNotificationsPage() {
             {filter === "unread"
               ? "No unread notifications"
               : filter === "emergency"
-              ? "No emergency alerts"
-              : filter === "camps"
-              ? "No blood camp notifications"
-              : "You're all caught up"}
+                ? "No emergency alerts"
+                : filter === "camps"
+                  ? "No blood camp notifications"
+                  : "You're all caught up"}
           </h2>
 
           <p className="text-xs sm:text-sm text-slate-500 max-w-md mx-auto mt-1">
             {filter === "unread"
               ? "You've read all recent alerts. Switch to All to view earlier notifications."
               : filter === "emergency"
-              ? "Urgent matching blood requests in your area will appear here."
-              : filter === "camps"
-              ? "Nearby blood camps, registration confirmations and schedule reminders will appear here."
-              : "New blood requests, donor responses and important updates will appear here."}
+                ? "Urgent matching blood requests in your area will appear here."
+                : filter === "camps"
+                  ? "Nearby blood camps, registration confirmations and schedule reminders will appear here."
+                  : "New blood requests, donor responses and important updates will appear here."}
           </p>
 
           {filter !== "all" && (
@@ -533,7 +525,7 @@ export default function DonorNotificationsPage() {
             const isEmergency = isEmergencyNotification(item);
             const isCamp = isCampNotification(item);
             const relatedRequestId = item.requestid || item.bloodrequests?.requestid;
-            
+
             // Resolve action target
             let actionHref = "/donor/dashboard";
             let actionLabel = "Open Dashboard";
@@ -562,13 +554,12 @@ export default function DonorNotificationsPage() {
             return (
               <article
                 key={item.notificationid}
-                className={`rounded-2xl border transition-colors p-3.5 sm:p-4 shadow-2xs bg-white ${
-                  isUnread
-                    ? isEmergency
-                      ? "border-[#A2363A]/35 border-l-4 border-l-[#A2363A]"
-                      : "border-[#317786]/40 border-l-4 border-l-[#317786]"
-                    : "border-[#F3E9D1] hover:border-[#317786]/35"
-                }`}
+                className={`rounded-2xl border transition-colors p-3.5 sm:p-4 shadow-2xs bg-white ${isUnread
+                  ? isEmergency
+                    ? "border-[#A2363A]/35 border-l-4 border-l-[#A2363A]"
+                    : "border-[#317786]/40 border-l-4 border-l-[#317786]"
+                  : "border-[#F3E9D1] hover:border-[#317786]/35"
+                  }`}
               >
                 <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
                   <div className="flex items-start gap-3 min-w-0 flex-1">
@@ -582,16 +573,14 @@ export default function DonorNotificationsPage() {
                       <div className="flex flex-wrap items-center gap-2 text-[11px]">
                         {isUnread && (
                           <span
-                            className={`w-2 h-2 rounded-full shrink-0 ${
-                              isEmergency ? "bg-[#A2363A]" : "bg-[#B94F30]"
-                            }`}
+                            className={`w-2 h-2 rounded-full shrink-0 ${isEmergency ? "bg-[#A2363A]" : "bg-[#B94F30]"
+                              }`}
                             aria-label="Unread"
                           />
                         )}
                         <span
-                          className={`font-semibold ${
-                            isEmergency ? "text-[#A2363A]" : "text-[#317786]"
-                          }`}
+                          className={`font-semibold ${isEmergency ? "text-[#A2363A]" : "text-[#317786]"
+                            }`}
                         >
                           {typeConfig.label}
                         </span>
@@ -602,9 +591,8 @@ export default function DonorNotificationsPage() {
                       </div>
 
                       <h2
-                        className={`text-sm leading-snug ${
-                          isUnread ? "font-bold text-[#053845]" : "font-semibold text-slate-800"
-                        }`}
+                        className={`text-sm leading-snug ${isUnread ? "font-bold text-[#053845]" : "font-semibold text-slate-800"
+                          }`}
                       >
                         {item.title}
                       </h2>
@@ -621,11 +609,10 @@ export default function DonorNotificationsPage() {
                               handleMarkAsRead(item.notificationid);
                             }
                           }}
-                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors ${
-                            isCamp
-                              ? "bg-red-50 border border-red-200 text-red-700 hover:bg-red-100"
-                              : "bg-[#FAF6EE] border border-[#F3E9D1] text-[#317786] hover:text-[#053845] hover:border-[#317786]/40"
-                          }`}
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors ${isCamp
+                            ? "bg-red-50 border border-red-200 text-red-700 hover:bg-red-100"
+                            : "bg-[#FAF6EE] border border-[#F3E9D1] text-[#317786] hover:text-[#053845] hover:border-[#317786]/40"
+                            }`}
                         >
                           {isCamp ? (
                             <Tent className="w-3 h-3 text-red-600" />

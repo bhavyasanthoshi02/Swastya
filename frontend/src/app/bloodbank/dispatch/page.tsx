@@ -401,7 +401,7 @@ export default function BloodBankDispatchPage() {
                 </span>
               )}
             </div>
-            <p className="text-xs sm:text-sm text-slate-500">
+            <p className="hidden sm:block text-xs sm:text-sm text-slate-500">
               Manage blood compatibility checks and hospital deliveries.
             </p>
           </div>

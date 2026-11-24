@@ -220,7 +220,7 @@ export function CustomSmsManager({ userRole, facilityName = "Healthcare Facility
             </div>
             <div>
               <h1 className="text-xl font-bold text-slate-900">Custom SMS Communication Center</h1>
-              <p className="text-sm text-slate-500">
+              <p className="hidden sm:block text-sm text-slate-500">
                 Compose and send authorized operational messages to permitted donors and requesters.
               </p>
             </div>

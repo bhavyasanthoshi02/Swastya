@@ -392,7 +392,7 @@ export default function BloodBankScreeningPage() {
                 </span>
               )}
             </div>
-            <p className="text-xs sm:text-sm text-slate-500">
+            <p className="hidden sm:block text-xs sm:text-sm text-slate-500">
               Manage blood unit screening results and laboratory clearance.
             </p>
           </div>

@@ -216,7 +216,7 @@ export default function BloodBankProfilePage() {
           <h1 className="font-serif text-2xl sm:text-3xl font-bold text-[#053845] tracking-tight">
             Blood Bank Profile
           </h1>
-          <p className="text-xs sm:text-sm text-slate-500">
+          <p className="hidden sm:block text-xs sm:text-sm text-slate-500">
             Manage your facility information and contact details.
           </p>
         </div>

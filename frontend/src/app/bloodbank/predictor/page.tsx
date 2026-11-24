@@ -221,7 +221,7 @@ export default function BloodShortagePredictorPage() {
                 </span>
               )}
             </div>
-            <p className="text-xs sm:text-sm text-slate-500">
+            <p className="hidden sm:block text-xs sm:text-sm text-slate-500">
               Anticipate potential blood deficits {period} days ahead using live stock and recorded hospital requisitions. Zero synthetic data.
             </p>
           </div>
