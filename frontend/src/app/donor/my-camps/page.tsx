@@ -228,7 +228,7 @@ export default function DonorMyCampsPage() {
                 {counts.all} Total
               </span>
             </div>
-            <p className="text-sm text-slate-600">
+            <p className="hidden sm:block text-sm text-slate-600">
               View your upcoming schedule, present your registration ticket, or manage voluntary commitments.
             </p>
           </div>

@@ -71,10 +71,10 @@ export default function DonorHistoryPage() {
   const isCooldownActive = stats.cooldownStatus !== "Eligible";
   const formattedNextEligible = stats.nextEligibleDate
     ? new Date(stats.nextEligibleDate).toLocaleDateString("en-IN", {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-      })
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    })
     : null;
 
   return (
@@ -93,7 +93,7 @@ export default function DonorHistoryPage() {
           <h1 className="font-serif text-2xl sm:text-3xl font-bold text-[#053845] tracking-tight">
             Donation History
           </h1>
-          <p className="text-xs sm:text-sm text-slate-600 mt-1">
+          <p className="hidden sm:block text-xs sm:text-sm text-slate-600 mt-1">
             Verified donation records confirmed by authorized hospitals and blood banks.
           </p>
         </div>
@@ -114,9 +114,8 @@ export default function DonorHistoryPage() {
             </p>
             <p className="text-[11px] text-slate-500 mt-0.5 truncate">
               {stats.totalMl > 0
-                ? `${stats.totalMl.toLocaleString()} ml (${stats.totalUnits} ${
-                    stats.totalUnits === 1 ? "unit" : "units"
-                  })`
+                ? `${stats.totalMl.toLocaleString()} ml (${stats.totalUnits} ${stats.totalUnits === 1 ? "unit" : "units"
+                })`
                 : "No verified units recorded"}
             </p>
           </div>
@@ -143,11 +142,10 @@ export default function DonorHistoryPage() {
 
         <div className="bg-white rounded-2xl border border-[#F3E9D1] p-4 shadow-2xs flex items-center gap-3.5">
           <div
-            className={`w-10 h-10 rounded-xl border flex items-center justify-center shrink-0 ${
-              isCooldownActive
-                ? "bg-amber-50 border-amber-200 text-amber-700"
-                : "bg-emerald-50 border-emerald-200 text-emerald-700"
-            }`}
+            className={`w-10 h-10 rounded-xl border flex items-center justify-center shrink-0 ${isCooldownActive
+              ? "bg-amber-50 border-amber-200 text-amber-700"
+              : "bg-emerald-50 border-emerald-200 text-emerald-700"
+              }`}
           >
             <ShieldCheck className="w-5 h-5" />
           </div>
@@ -156,9 +154,8 @@ export default function DonorHistoryPage() {
               Clinical Cooldown Status
             </span>
             <p
-              className={`font-serif text-xl font-bold leading-tight mt-0.5 ${
-                isCooldownActive ? "text-amber-800" : "text-emerald-700"
-              }`}
+              className={`font-serif text-xl font-bold leading-tight mt-0.5 ${isCooldownActive ? "text-amber-800" : "text-emerald-700"
+                }`}
             >
               {stats.cooldownStatus}
             </p>
@@ -166,8 +163,8 @@ export default function DonorHistoryPage() {
               {!isCooldownActive
                 ? "Eligible to donate · No active interval"
                 : formattedNextEligible
-                ? `In recovery interval · Eligible ${formattedNextEligible}`
-                : "Currently within 90-day recovery interval"}
+                  ? `In recovery interval · Eligible ${formattedNextEligible}`
+                  : "Currently within 90-day recovery interval"}
             </p>
           </div>
         </div>

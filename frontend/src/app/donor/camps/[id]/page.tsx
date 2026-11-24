@@ -251,7 +251,7 @@ export default function DonorCampDetailPage() {
           <h1 className="font-serif text-2xl sm:text-3xl font-bold tracking-tight mb-2">
             {camp.campname}
           </h1>
-          <p className="text-teal-50/90 text-sm max-w-3xl leading-relaxed">
+          <p className="hidden sm:block text-teal-50/90 text-sm max-w-3xl leading-relaxed">
             {camp.description || "Join fellow voluntary donors to donate blood and help save precious lives in our community."}
           </p>
         </div>

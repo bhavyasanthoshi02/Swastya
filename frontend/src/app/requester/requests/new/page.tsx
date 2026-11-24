@@ -475,7 +475,7 @@ export default function NewBloodRequestPage() {
         <h1 className="font-serif text-2xl sm:text-3xl font-bold text-[#053845] tracking-tight">
           Raise a Blood Request
         </h1>
-        <p className="text-xs sm:text-sm text-slate-600 max-w-2xl">
+        <p className="hidden sm:block text-xs sm:text-sm text-slate-600 max-w-2xl">
           Submit blood component requirements to cross-match with certified blood banks and notify nearby eligible donors.
         </p>
       </header>

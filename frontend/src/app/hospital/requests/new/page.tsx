@@ -550,7 +550,7 @@ export default function HospitalNewBloodRequestPage() {
           <h1 className="font-serif text-2xl sm:text-3xl font-bold text-[#053845] tracking-tight">
             Create Blood Request
           </h1>
-          <p className="text-xs sm:text-sm text-slate-600">
+          <p className="hidden sm:block text-xs sm:text-sm text-slate-600">
             Enter patient and blood requirement details.
           </p>
         </div>

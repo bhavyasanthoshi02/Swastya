@@ -223,7 +223,7 @@ function RequesterAvailableDonorsContent() {
           <h1 className="font-serif text-2xl sm:text-3xl font-bold text-[#053845] tracking-tight">
             Available Donors
           </h1>
-          <p className="text-sm text-slate-600">
+          <p className="hidden sm:block text-sm text-slate-600">
             Track volunteers who have responded to your blood requests.
           </p>
         </div>

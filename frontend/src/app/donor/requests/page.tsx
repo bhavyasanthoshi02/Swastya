@@ -209,7 +209,7 @@ export default function DonorBloodRequestsPage() {
               </span>
             )}
           </div>
-          <p className="text-sm text-slate-600">
+          <p className="hidden sm:block text-sm text-slate-600">
             Verified requisitions matching your{" "}
             <strong className="text-[#053845]">{donorBloodGroup}</strong> blood group compatibility.
           </p>

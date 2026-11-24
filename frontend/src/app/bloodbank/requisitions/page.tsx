@@ -509,7 +509,7 @@ export default function BloodBankRequisitionsPage() {
                 </span>
               )}
             </div>
-            <p className="text-xs sm:text-sm text-slate-500">
+            <p className="hidden sm:block text-xs sm:text-sm text-slate-500">
               Review and manage incoming blood requests from hospitals.
             </p>
           </div>

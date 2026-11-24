@@ -211,7 +211,7 @@ export default function DonorCampDiscoveryPage() {
                 </span>
               )}
             </div>
-            <p className="text-sm text-slate-600">
+            <p className="hidden sm:block text-sm text-slate-600">
               Discover verified mobile camps organized by certified blood banks. Participate as a walk-in donor or reserve your preferred time slot in advance.
             </p>
           </div>
@@ -283,11 +283,10 @@ export default function DonorCampDiscoveryPage() {
               onClick={requestGeolocation}
               disabled={isLocating}
               title="Detect Nearby Camps via Geolocation"
-              className={`p-2 rounded-xl border text-xs font-medium transition-all cursor-pointer ${
-                userCoords
-                  ? "bg-[#317786] text-white border-[#317786]"
-                  : "bg-white text-[#053845] border-[#F3E9D1] hover:bg-[#FAF6EE]"
-              }`}
+              className={`p-2 rounded-xl border text-xs font-medium transition-all cursor-pointer ${userCoords
+                ? "bg-[#317786] text-white border-[#317786]"
+                : "bg-white text-[#053845] border-[#F3E9D1] hover:bg-[#FAF6EE]"
+                }`}
             >
               {isLocating ? (
                 <Loader2 className="w-4 h-4 animate-spin text-[#317786]" />
@@ -474,9 +473,8 @@ export default function DonorCampDiscoveryPage() {
                             </div>
                             <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
                               <div
-                                className={`h-full rounded-full transition-all ${
-                                  isCapacityFull ? "bg-amber-500" : "bg-[#317786]"
-                                }`}
+                                className={`h-full rounded-full transition-all ${isCapacityFull ? "bg-amber-500" : "bg-[#317786]"
+                                  }`}
                                 style={{
                                   width: `${Math.min(
                                     100,
@@ -494,11 +492,10 @@ export default function DonorCampDiscoveryPage() {
                     <div className="pt-3 border-t border-[#F3E9D1]/60">
                       <Link
                         href={`/donor/camps/${camp.campid}`}
-                        className={`w-full py-2.5 px-4 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all shadow-2xs ${
-                          isRegistered
-                            ? "bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200"
-                            : "bg-[#317786] hover:bg-[#245964] text-white"
-                        }`}
+                        className={`w-full py-2.5 px-4 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all shadow-2xs ${isRegistered
+                          ? "bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200"
+                          : "bg-[#317786] hover:bg-[#245964] text-white"
+                          }`}
                       >
                         {isRegistered ? (
                           <>

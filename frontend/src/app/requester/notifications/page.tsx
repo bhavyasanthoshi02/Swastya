@@ -235,7 +235,7 @@ export default function RequesterNotificationsPage() {
               </span>
             )}
           </div>
-          <p className="text-xs sm:text-sm text-slate-600">
+          <p className="hidden sm:block text-xs sm:text-sm text-slate-600">
             Updates on donor responses, hospital reviews and requisition activity.
           </p>
         </div>

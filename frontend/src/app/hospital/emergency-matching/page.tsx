@@ -253,7 +253,7 @@ export default function EmergencyDonorMatchingPage() {
                 {requisitions.length} Requisitions Available
               </span>
             </div>
-            <p className="text-sm text-slate-600">
+            <p className="hidden sm:block text-sm text-slate-600">
               Identify compatible registered blood donors nearby, send urgent requests, and coordinate volunteer responses.
             </p>
           </div>

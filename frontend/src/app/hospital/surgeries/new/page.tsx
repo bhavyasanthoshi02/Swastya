@@ -202,7 +202,7 @@ export default function NewSurgeryPlanPage() {
             <h1 className="text-2xl font-serif font-bold text-[#053845]">
               Plan New Surgical Procedure
             </h1>
-            <p className="text-xs text-slate-500">
+            <p className="hidden sm:block text-xs text-slate-500">
               Pre-operative blood requirement planning and hospital MSBOS guideline crossmatch.
             </p>
           </div>

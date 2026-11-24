@@ -137,7 +137,7 @@ export default function DonorEmergencyRequestsPage() {
                 </span>
               )}
             </div>
-            <p className="text-sm text-slate-600">
+            <p className="hidden sm:block text-sm text-slate-600">
               Urgent hospital alerts in your area matching your blood group. Volunteering helps save lives in critical situations.
             </p>
           </div>

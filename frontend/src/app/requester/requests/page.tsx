@@ -179,7 +179,7 @@ export default function RequesterRequestsPage() {
           <h1 className="font-serif text-2xl sm:text-3xl font-bold text-[#053845] tracking-tight">
             My Blood Requests
           </h1>
-          <p className="text-sm text-slate-600">
+          <p className="hidden sm:block text-sm text-slate-600">
             View and manage all your submitted blood requests.
           </p>
         </div>

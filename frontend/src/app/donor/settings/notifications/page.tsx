@@ -117,7 +117,7 @@ export default function DonorNotificationPreferencesPage() {
             <h1 className="font-serif text-2xl sm:text-3xl font-bold text-[#053845] tracking-tight">
               Notification Preferences
             </h1>
-            <p className="text-xs sm:text-sm text-slate-600 mt-0.5">
+            <p className="hidden sm:block text-xs sm:text-sm text-slate-600 mt-0.5">
               Customize which in-app updates, reminders, and blood camp alerts you receive.
             </p>
           </div>

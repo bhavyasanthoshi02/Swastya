@@ -264,7 +264,7 @@ export default function RequesterDashboardOverviewPage() {
           <h1 className="font-serif text-2xl sm:text-3xl font-bold text-[#053845] tracking-tight">
             Welcome back{user?.name ? `, ${user.name}` : ""}
           </h1>
-          <p className="text-sm text-slate-600">
+          <p className="hidden sm:block text-sm text-slate-600">
             Manage your blood requests and track their progress.
           </p>
         </div>

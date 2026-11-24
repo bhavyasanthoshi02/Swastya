@@ -113,7 +113,7 @@ export default function BloodBankCampsDashboardPage() {
                 </span>
               )}
             </div>
-            <p className="text-xs sm:text-sm text-slate-500">
+            <p className="hidden sm:block text-xs sm:text-sm text-slate-500">
               Create, schedule, publish, and monitor voluntary community donation drives.
             </p>
           </div>

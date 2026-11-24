@@ -184,7 +184,7 @@ export default function DonorDashboardOverviewPage() {
                 <span>{profile.availability}</span>
               </span>
             </div>
-            <p className="text-sm text-slate-600">
+            <p className="hidden sm:block text-sm text-slate-600">
               {matchingRequests.length === 0
                 ? "No active blood requests currently match your group and area."
                 : `${matchingRequests.length} ${

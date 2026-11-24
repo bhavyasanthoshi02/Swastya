@@ -167,7 +167,7 @@ export default function SurgeryPlannerPage() {
                 </span>
               )}
             </div>
-            <p className="text-sm text-slate-600">
+            <p className="hidden sm:block text-sm text-slate-600">
               Plan blood component needs for upcoming surgeries, verify against hospital-approved clinical guidelines, and eliminate day-of-surgery shortages.
             </p>
           </div>
