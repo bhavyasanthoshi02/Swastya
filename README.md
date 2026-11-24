@@ -103,8 +103,6 @@ Emergency blood requisition in healthcare systems frequently suffers from fragme
 - **Predictive Analytics**: Review shortage forecasts and launch targeted blood donation drives using AI recommendations.
 - **Equipment Compliance**: Log maintenance and calibration records for centrifuges, agitators, and ultra-low freezers.
 
-*(Note: Swastya also includes a secure **Admin Portal** at `/admin/*` for facility verification, licensing audit, and platform metrics.)*
-
 ---
 
 ##  System Architecture
@@ -116,7 +114,6 @@ flowchart TD
         RP["Requester Portal (/requester)"]
         HP["Hospital Portal (/hospital)"]
         BP["Blood Bank Portal (/bloodbank)"]
-        AP["Admin Portal (/admin)"]
         ChatUI["PeerChatManager (In-App Messaging)"]
     end
 
@@ -251,7 +248,6 @@ Swastya/
 │   │   │   │   ├── predictor/         # AI shortage forecasting
 │   │   │   │   ├── camp-planner/      # Smart blood drive planner
 │   │   │   │   └── messages/          # Blood Bank-to-Blood Bank & Hospital Chat
-│   │   │   ├── admin/                 # Platform administration & audits
 │   │   │   ├── r/action/[token]/      # 1-click SMS action landing handler
 │   │   │   ├── signin/                # Universal authenticated login (Email & OTP)
 │   │   │   └── signup/                # Multi-role account onboarding
@@ -395,7 +391,7 @@ npx tsc --noEmit
 
 ##  Security & Compliance
 
-- **Role-Based Authorization (RBAC)**: All sensitive routes are guarded by strict role middleware (`DONOR`, `REQUESTER`, `HOSPITAL`, `BLOOD_BANK`, `ADMIN`).
+- **Role-Based Authorization (RBAC)**: All sensitive routes are guarded by strict role middleware (`DONOR`, `REQUESTER`, `HOSPITAL`, `BLOOD_BANK`).
 - **Encrypted Clinical Passwords**: Stored using industry-standard `bcryptjs` salts.
 - **HMAC Action Link Tamper-Resistance**: Action tokens sent in donor SMS alerts are signed with cryptographic HMAC-SHA256, strictly bound to a single action (`ACCEPT`/`DECLINE`), and expire automatically.
 - **Traceability Ledger Immutability**: All unit adjustments, screenings, and custody transfers are recorded in `inventoryledger` and `unitdispositionhistory` for full clinical traceability.
