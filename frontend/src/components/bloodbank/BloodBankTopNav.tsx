@@ -11,6 +11,7 @@ import {
   Truck,
   TrendingUp,
   Building,
+  Building2,
   Bell,
   LogOut,
   ChevronDown,
@@ -50,6 +51,7 @@ export function BloodBankTopNav({
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [isOperationsOpen, setIsOperationsOpen] = useState(false);
   const [isAssetsOpen, setIsAssetsOpen] = useState(false);
+  const [isChatOpen, setIsChatOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [notifications, setNotifications] = useState<
@@ -67,6 +69,7 @@ export function BloodBankTopNav({
   const notificationsRef = useRef<HTMLDivElement>(null);
   const operationsRef = useRef<HTMLDivElement>(null);
   const assetsRef = useRef<HTMLDivElement>(null);
+  const chatRef = useRef<HTMLDivElement>(null);
 
   const fetchNotifications = async () => {
     try {
@@ -80,7 +83,7 @@ export function BloodBankTopNav({
           time: formatTimeAgo(n.sentat || n.createdat),
           type:
             n.type?.toLowerCase().includes("urgent") ||
-            n.type?.toLowerCase().includes("emergency")
+              n.type?.toLowerCase().includes("emergency")
               ? "urgent"
               : "info",
           href: n.requestid ? `/bloodbank/requisitions` : "/bloodbank/dashboard",
@@ -140,6 +143,9 @@ export function BloodBankTopNav({
       if (assetsRef.current && !assetsRef.current.contains(event.target as Node)) {
         setIsAssetsOpen(false);
       }
+      if (chatRef.current && !chatRef.current.contains(event.target as Node)) {
+        setIsChatOpen(false);
+      }
     };
 
     document.addEventListener("mousedown", handleClickOutside);
@@ -154,6 +160,7 @@ export function BloodBankTopNav({
         setIsNotificationsOpen(false);
         setIsOperationsOpen(false);
         setIsAssetsOpen(false);
+        setIsChatOpen(false);
         setIsMobileMenuOpen(false);
       }
     }
@@ -168,6 +175,7 @@ export function BloodBankTopNav({
     setIsNotificationsOpen(false);
     setIsOperationsOpen(false);
     setIsAssetsOpen(false);
+    setIsChatOpen(false);
   }, [pathname]);
 
   // Primary 3 core navigation links
@@ -240,12 +248,23 @@ export function BloodBankTopNav({
       icon: Wrench,
       active: pathname.startsWith("/bloodbank/equipment"),
     },
+  ];
+
+  // Group 3: Dedicated Real-time Chat Navigation
+  const chatLinks = [
     {
       href: "/bloodbank/messages",
       label: "Blood Bank Chat",
-      desc: "Direct in-app messaging with other registered blood banks",
-      icon: MessageSquare,
-      active: pathname.startsWith("/bloodbank/messages"),
+      desc: "Direct in-app messaging with registered peer blood banks",
+      icon: Droplets,
+      active: pathname === "/bloodbank/messages",
+    },
+    {
+      href: "/bloodbank/messages/hospitals",
+      label: "Hospital Chat",
+      desc: "Cross-organization communication with partner hospitals",
+      icon: Building2,
+      active: pathname.startsWith("/bloodbank/messages/hospitals"),
     },
     {
       href: "/bloodbank/sms",
@@ -258,6 +277,7 @@ export function BloodBankTopNav({
 
   const isOperationsActive = operationLinks.some((l) => l.active);
   const isAssetsActive = assetLinks.some((l) => l.active);
+  const isChatActive = chatLinks.some((l) => l.active);
 
   const getInitials = (name: string) => {
     return name
@@ -301,11 +321,10 @@ export function BloodBankTopNav({
                 <Link
                   key={link.href}
                   href={link.href}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
-                    link.active
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${link.active
                       ? "text-[#053845] bg-[#FAF6EE] border border-[#F3E9D1] shadow-2xs font-bold"
                       : "text-slate-600 hover:text-[#053845] hover:bg-[#FAF6EE]/70"
-                  }`}
+                    }`}
                 >
                   <Icon className="w-3.5 h-3.5 shrink-0" />
                   <span>{link.label}</span>
@@ -323,20 +342,18 @@ export function BloodBankTopNav({
                   setIsProfileOpen(false);
                   setIsNotificationsOpen(false);
                 }}
-                className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
-                  isOperationsActive || isOperationsOpen
+                className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${isOperationsActive || isOperationsOpen
                     ? "text-[#053845] bg-[#FAF6EE] border border-[#F3E9D1] shadow-2xs font-bold"
                     : "text-slate-600 hover:text-[#053845] hover:bg-[#FAF6EE]/70"
-                }`}
+                  }`}
                 aria-expanded={isOperationsOpen}
                 aria-label="Operations Menu"
               >
                 <SlidersHorizontal className="w-3.5 h-3.5 shrink-0" />
                 <span>Operations</span>
                 <ChevronDown
-                  className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-150 ${
-                    isOperationsOpen ? "rotate-180" : ""
-                  }`}
+                  className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-150 ${isOperationsOpen ? "rotate-180" : ""
+                    }`}
                 />
               </button>
 
@@ -355,11 +372,10 @@ export function BloodBankTopNav({
                           key={item.href}
                           href={item.href}
                           onClick={() => setIsOperationsOpen(false)}
-                          className={`flex items-start gap-3 p-2.5 rounded-xl transition-all ${
-                            item.active
+                          className={`flex items-start gap-3 p-2.5 rounded-xl transition-all ${item.active
                               ? "bg-[#FAF6EE] border border-[#F3E9D1] text-[#053845]"
                               : "hover:bg-[#FAF6EE]/60 text-slate-700"
-                          }`}
+                            }`}
                         >
                           <div className="w-7 h-7 rounded-lg bg-[#317786]/10 text-[#317786] flex items-center justify-center shrink-0 mt-0.5">
                             <ItemIcon className="w-3.5 h-3.5" />
@@ -390,20 +406,18 @@ export function BloodBankTopNav({
                   setIsProfileOpen(false);
                   setIsNotificationsOpen(false);
                 }}
-                className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
-                  isAssetsActive || isAssetsOpen
+                className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${isAssetsActive || isAssetsOpen
                     ? "text-[#053845] bg-[#FAF6EE] border border-[#F3E9D1] shadow-2xs font-bold"
                     : "text-slate-600 hover:text-[#053845] hover:bg-[#FAF6EE]/70"
-                }`}
+                  }`}
                 aria-expanded={isAssetsOpen}
                 aria-label="Outreach and Facility Assets Menu"
               >
                 <Layers className="w-3.5 h-3.5 shrink-0" />
                 <span>Outreach & Assets</span>
                 <ChevronDown
-                  className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-150 ${
-                    isAssetsOpen ? "rotate-180" : ""
-                  }`}
+                  className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-150 ${isAssetsOpen ? "rotate-180" : ""
+                    }`}
                 />
               </button>
 
@@ -422,11 +436,75 @@ export function BloodBankTopNav({
                           key={item.href}
                           href={item.href}
                           onClick={() => setIsAssetsOpen(false)}
-                          className={`flex items-start gap-3 p-2.5 rounded-xl transition-all ${
-                            item.active
+                          className={`flex items-start gap-3 p-2.5 rounded-xl transition-all ${item.active
                               ? "bg-[#FAF6EE] border border-[#F3E9D1] text-[#053845]"
                               : "hover:bg-[#FAF6EE]/60 text-slate-700"
-                          }`}
+                            }`}
+                        >
+                          <div className="w-7 h-7 rounded-lg bg-[#317786]/10 text-[#317786] flex items-center justify-center shrink-0 mt-0.5">
+                            <ItemIcon className="w-3.5 h-3.5" />
+                          </div>
+                          <div className="space-y-0.5 min-w-0">
+                            <span className="block text-xs font-bold text-[#053845]">
+                              {item.label}
+                            </span>
+                            <span className="block text-[11px] text-slate-500 leading-tight">
+                              {item.desc}
+                            </span>
+                          </div>
+                        </Link>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 4. Chat Dropdown Menu (Blood Bank & Hospital Direct Messaging) */}
+            <div className="relative" ref={chatRef}>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsChatOpen(!isChatOpen);
+                  setIsAssetsOpen(false);
+                  setIsOperationsOpen(false);
+                  setIsProfileOpen(false);
+                  setIsNotificationsOpen(false);
+                }}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${isChatActive || isChatOpen
+                    ? "text-[#053845] bg-[#FAF6EE] border border-[#F3E9D1] shadow-2xs font-bold"
+                    : "text-slate-600 hover:text-[#053845] hover:bg-[#FAF6EE]/70"
+                  }`}
+                aria-expanded={isChatOpen}
+                aria-label="Chat and Direct Messaging Menu"
+              >
+                <MessageSquare className="w-3.5 h-3.5 shrink-0" />
+                <span>Chat</span>
+                <ChevronDown
+                  className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-150 ${isChatOpen ? "rotate-180" : ""
+                    }`}
+                />
+              </button>
+
+              {isChatOpen && (
+                <div className="absolute left-0 mt-2 w-80 rounded-2xl bg-white border border-[#F3E9D1] shadow-2xl p-2 z-50 animate-in fade-in zoom-in-95 duration-150">
+                  <div className="px-3 py-2 border-b border-[#F3E9D1]/50 mb-1">
+                    <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400">
+                      In-App Peer & Hospital Messaging
+                    </span>
+                  </div>
+                  <div className="space-y-1">
+                    {chatLinks.map((item) => {
+                      const ItemIcon = item.icon;
+                      return (
+                        <Link
+                          key={item.href}
+                          href={item.href}
+                          onClick={() => setIsChatOpen(false)}
+                          className={`flex items-start gap-3 p-2.5 rounded-xl transition-all ${item.active
+                              ? "bg-[#FAF6EE] border border-[#F3E9D1] text-[#053845]"
+                              : "hover:bg-[#FAF6EE]/60 text-slate-700"
+                            }`}
                         >
                           <div className="w-7 h-7 rounded-lg bg-[#317786]/10 text-[#317786] flex items-center justify-center shrink-0 mt-0.5">
                             <ItemIcon className="w-3.5 h-3.5" />
@@ -655,11 +733,10 @@ export function BloodBankTopNav({
                   key={link.href}
                   href={link.href}
                   onClick={() => setIsMobileMenuOpen(false)}
-                  className={`flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-semibold ${
-                    link.active
+                  className={`flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-semibold ${link.active
                       ? "text-[#053845] bg-[#FAF6EE] border border-[#F3E9D1] font-bold"
                       : "text-slate-600 hover:bg-[#FAF6EE]/70"
-                  }`}
+                    }`}
                 >
                   <Icon className="w-4 h-4 shrink-0 text-[#317786]" />
                   <span>{link.label}</span>
@@ -680,11 +757,10 @@ export function BloodBankTopNav({
                   key={link.href}
                   href={link.href}
                   onClick={() => setIsMobileMenuOpen(false)}
-                  className={`flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-semibold ${
-                    link.active
+                  className={`flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-semibold ${link.active
                       ? "text-[#053845] bg-[#FAF6EE] border border-[#F3E9D1] font-bold"
                       : "text-slate-600 hover:bg-[#FAF6EE]/70"
-                  }`}
+                    }`}
                 >
                   <Icon className="w-4 h-4 shrink-0 text-[#317786]" />
                   <span>{link.label}</span>
@@ -705,11 +781,34 @@ export function BloodBankTopNav({
                   key={link.href}
                   href={link.href}
                   onClick={() => setIsMobileMenuOpen(false)}
-                  className={`flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-semibold ${
-                    link.active
+                  className={`flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-semibold ${link.active
                       ? "text-[#053845] bg-[#FAF6EE] border border-[#F3E9D1] font-bold"
                       : "text-slate-600 hover:bg-[#FAF6EE]/70"
-                  }`}
+                    }`}
+                >
+                  <Icon className="w-4 h-4 shrink-0 text-[#317786]" />
+                  <span>{link.label}</span>
+                </Link>
+              );
+            })}
+          </div>
+
+          {/* 4. Chat Section */}
+          <div className="space-y-1 pt-1 border-t border-[#F3E9D1]/50">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider px-2">
+              In-App Chat
+            </span>
+            {chatLinks.map((link) => {
+              const Icon = link.icon;
+              return (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  onClick={() => setIsMobileMenuOpen(false)}
+                  className={`flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-semibold ${link.active
+                      ? "text-[#053845] bg-[#FAF6EE] border border-[#F3E9D1] font-bold"
+                      : "text-slate-600 hover:bg-[#FAF6EE]/70"
+                    }`}
                 >
                   <Icon className="w-4 h-4 shrink-0 text-[#317786]" />
                   <span>{link.label}</span>

@@ -4,6 +4,7 @@ import crypto from "crypto";
 import bcrypt from "bcrypt";
 import { prisma } from "../config/prisma";
 import { blood_group, blood_component, gender_type, verification_status } from "../generated/prisma/enums";
+import { getPhoneVariants } from "./msg91.service";
 
 function extractCellValue(val: any): any {
     if (val === null || val === undefined) return "";
@@ -361,11 +362,17 @@ export class DonorImportService {
                 .map((hd: any) => hd.donors.users.email?.toLowerCase().trim())
                 .filter(Boolean)
         );
-        const hospitalDonorPhones = new Set(
-            existingHospitalDonors
-                .map((hd: any) => hd.donors.users.phonenumber?.trim())
-                .filter(Boolean)
-        );
+        const hospitalDonorPhones = new Set<string>();
+        for (const hd of existingHospitalDonors) {
+            const raw = hd.donors.users.phonenumber?.trim();
+            if (raw) {
+                getPhoneVariants(raw).forEach((v) => hospitalDonorPhones.add(v));
+            }
+        }
+
+        const seenPhonesInBatch = new Set<string>();
+        const seenEmailsInBatch = new Set<string>();
+        let duplicateInBatchCount = 0;
 
         // Process each donor row
         for (let idx = 0; idx < donors.length; idx++) {
@@ -379,25 +386,76 @@ export class DonorImportService {
                 errors.push("Full Name is required and must be at least 2 characters.");
             }
 
-            // 2. Email / Phone validation (safe against Excel numeric cells)
+            // 2. Email / Phone validation & normalization
             const email = String(row.email || "").trim().toLowerCase();
-            const phone = String(row.phoneNumber || row.phone || "").trim();
+            const rawPhone = String(row.phoneNumber || row.phone || "").trim();
+            const digits = rawPhone.replace(/\D/g, "");
 
-            if (!email && !phone) {
+            if (!email && !rawPhone) {
                 errors.push("At least one contact identifier (Email or Phone Number) is required.");
+            }
+
+            if (rawPhone && digits.length < 10) {
+                errors.push(`Invalid phone number '${rawPhone}': minimum 10 digits required.`);
+            }
+
+            // Normalize mobile number to standard E.164
+            let normalizedPhone = "";
+            if (digits.length === 10) {
+                normalizedPhone = `+91${digits}`;
+            } else if (digits.length === 12 && digits.startsWith("91")) {
+                normalizedPhone = `+${digits}`;
+            } else if (rawPhone.startsWith("+")) {
+                normalizedPhone = rawPhone.replace(/[^\d+]/g, "");
+            } else if (digits) {
+                normalizedPhone = `+${digits}`;
             }
 
             if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
                 errors.push(`Invalid email address format: '${email}'.`);
             }
 
-            // 3. Blood Group validation
+            // 3. In-batch duplicate detection within uploaded spreadsheet
+            let isDuplicateInBatch = false;
+            if (normalizedPhone) {
+                const variants = getPhoneVariants(normalizedPhone);
+                if (variants.some((v) => seenPhonesInBatch.has(v))) {
+                    isDuplicateInBatch = true;
+                }
+            }
+            if (email && seenEmailsInBatch.has(email)) {
+                isDuplicateInBatch = true;
+            }
+
+            if (isDuplicateInBatch) {
+                duplicateInBatchCount++;
+                alreadyLinked.push({
+                    rowNumber,
+                    name: name || "Unknown",
+                    email,
+                    phone: normalizedPhone || rawPhone,
+                    bloodGroup: normalizeBloodGroup(row.bloodGroup) || "O+",
+                    status: "DUPLICATE_IN_FILE",
+                    message: `Duplicate record in uploaded file. Only the first entry will be processed.`,
+                });
+                continue;
+            }
+
+            // Register in batch seen sets
+            if (normalizedPhone) {
+                getPhoneVariants(normalizedPhone).forEach((v) => seenPhonesInBatch.add(v));
+            }
+            if (email) {
+                seenEmailsInBatch.add(email);
+            }
+
+            // 4. Blood Group validation
             const bloodGroup = normalizeBloodGroup(row.bloodGroup);
             if (!bloodGroup) {
                 errors.push(`Invalid or missing Blood Group: '${row.bloodGroup || ""}'. Must be one of A+, A-, B+, B-, AB+, AB-, O+, O-.`);
             }
 
-            // 4. DOB / Age validation
+            // 5. DOB / Age validation
             let resolvedDob: Date | null = null;
             if (row.dob || row.dateOfBirth) {
                 const parsed = parseFlexibleDate(row.dob || row.dateOfBirth);
@@ -425,19 +483,23 @@ export class DonorImportService {
                     rowNumber,
                     name: name || "Unknown",
                     email: email || "",
-                    phone: phone || "",
+                    phone: normalizedPhone || rawPhone || "",
                     errors,
                 });
                 continue;
             }
 
             // Check if already in this hospital's registry
-            if ((email && hospitalDonorEmails.has(email)) || (phone && hospitalDonorPhones.has(phone))) {
+            const isAlreadyInHospital =
+                (email && hospitalDonorEmails.has(email)) ||
+                (normalizedPhone && getPhoneVariants(normalizedPhone).some((v) => hospitalDonorPhones.has(v)));
+
+            if (isAlreadyInHospital) {
                 alreadyLinked.push({
                     rowNumber,
                     name,
                     email,
-                    phone,
+                    phone: normalizedPhone,
                     bloodGroup,
                     status: "ALREADY_REGISTERED",
                     message: "Donor is already in your hospital registry.",
@@ -447,7 +509,7 @@ export class DonorImportService {
                     action: "SKIP_ALREADY_LINKED",
                     name,
                     email,
-                    phone,
+                    phone: normalizedPhone,
                     bloodGroup,
                 });
                 continue;
@@ -455,87 +517,65 @@ export class DonorImportService {
 
             // Check if user already exists in Swastya global user base
             let existingUser: any = null;
-            if (email) {
+            if (normalizedPhone) {
+                existingUser = await db.users.findFirst({
+                    where: { phonenumber: { in: getPhoneVariants(normalizedPhone) } },
+                    include: { donors: true },
+                });
+            }
+            if (!existingUser && email) {
                 existingUser = await db.users.findUnique({
                     where: { email },
                     include: { donors: true },
                 });
-            } else if (phone) {
-                existingUser = await db.users.findFirst({
-                    where: { phonenumber: phone },
-                    include: { donors: true },
-                });
             }
 
-            if (existingUser && !existingUser.donors) {
-                // Email/phone belongs to an existing non-donor user: flag conflict without leaking role or PII
+            if (existingUser && existingUser.role !== "DONOR" && !existingUser.donors) {
+                // Mobile or email belongs to an existing organizational account (Hospital/BloodBank)
                 conflicts.push({
                     rowNumber,
                     name,
                     email,
-                    phone,
-                    reason: "This email or phone is already associated with an existing account and cannot be imported as a donor.",
+                    phone: normalizedPhone,
+                    reason: `Mobile number is already registered under an existing non-donor account (${existingUser.role}).`,
                 });
                 invalidRows.push({
                     rowNumber,
                     name,
                     email,
-                    phone,
-                    errors: ["Identity conflict: identifier is already registered on Swastya."],
+                    phone: normalizedPhone,
+                    errors: [`Identity conflict: Mobile number belongs to an existing ${existingUser.role} account.`],
                 });
             } else if (existingUser && existingUser.donors) {
-                // Existing donor account found: require BOTH non-empty email AND non-empty phone to match strictly
-                const existingPhone = existingUser.phonenumber?.trim() || "";
-                const existingEmail = existingUser.email?.trim().toLowerCase() || "";
-                const bothMatch =
-                    Boolean(email) &&
-                    Boolean(phone) &&
-                    email === existingEmail &&
-                    phone === existingPhone;
-
-                if (bothMatch) {
-                    // Safe linking without leaking any global donor fields not already provided by the hospital
-                    toLink.push({
-                        rowNumber,
-                        name,
-                        email,
-                        phone,
-                        bloodGroup,
-                        action: "LINK_EXISTING_ACCOUNT",
-                        message: "Existing Swastya donor verified via matching email and phone. Will be linked to your registry.",
-                    });
-                    validRows.push({
-                        rowNumber,
-                        action: "LINK_EXISTING",
-                        name,
-                        email,
-                        phone,
-                        bloodGroup,
-                    });
-                } else {
-                    // Ambiguous / conflict: do NOT expose existingPhone or other global PII
-                    conflicts.push({
-                        rowNumber,
-                        name,
-                        email,
-                        phone,
-                        reason: "An existing account matches partially; both exact email and phone number are required to link.",
-                    });
-                    invalidRows.push({
-                        rowNumber,
-                        name,
-                        email,
-                        phone,
-                        errors: ["Identity conflict: both exact email and phone number are required to link an existing account."],
-                    });
-                }
+                // Existing donor account found: reuse account and link to this hospital registry
+                toLink.push({
+                    rowNumber,
+                    donorId: existingUser.donors.donorid,
+                    userId: existingUser.userid,
+                    name: existingUser.name || name,
+                    email: existingUser.email || email,
+                    phone: existingUser.phonenumber || normalizedPhone,
+                    bloodGroup: existingUser.donors.bloodgroup || bloodGroup,
+                    action: "LINK_EXISTING_ACCOUNT",
+                    message: "Existing Swastya donor identified by mobile number. Linked to your hospital registry.",
+                });
+                validRows.push({
+                    rowNumber,
+                    action: "LINK_EXISTING",
+                    donorId: existingUser.donors.donorid,
+                    name,
+                    email,
+                    phone: normalizedPhone,
+                    bloodGroup,
+                });
             } else {
-                // New donor to create
+                // New donor to create and link to hospital
+                const generatedEmail = email || `${digits || crypto.randomBytes(4).toString("hex")}@donor.swastya.org`;
                 toCreate.push({
                     rowNumber,
                     name,
-                    email: email || `${phone.replace(/\D/g, "")}@phone.swastya.org`,
-                    phone,
+                    email: generatedEmail,
+                    phone: normalizedPhone,
                     bloodGroup,
                     dob: resolvedDob,
                     gender: normalizeGender(row.gender),
@@ -550,8 +590,8 @@ export class DonorImportService {
                     rowNumber,
                     action: "CREATE_NEW",
                     name,
-                    email,
-                    phone,
+                    email: generatedEmail,
+                    phone: normalizedPhone,
                     bloodGroup,
                 });
             }
@@ -888,10 +928,26 @@ export class DonorImportService {
                         },
                     });
 
+                    // Synchronize donor's last donation date if this historical date is more recent
+                    const currentDonor = await tx.donors.findUnique({
+                        where: { donorid: targetDonorId },
+                        select: { lastdonationdate: true },
+                    });
+                    const dDate = new Date(donation.donationDate);
+                    if (!currentDonor?.lastdonationdate || dDate > new Date(currentDonor.lastdonationdate)) {
+                        await tx.donors.update({
+                            where: { donorid: targetDonorId },
+                            data: { lastdonationdate: dDate },
+                        });
+                    }
+
                     historicalDonationsImported++;
                 }
 
                 return {
+                    successfulCount: importedCount + linkedCount,
+                    duplicateCount: revalidated.alreadyLinked.length,
+                    failedCount: errors.length,
                     importedCount,
                     linkedCount,
                     historicalDonationsImported,

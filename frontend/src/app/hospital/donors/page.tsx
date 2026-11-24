@@ -1150,7 +1150,7 @@ export default function HospitalDonorsPage() {
                       Import Successfully Completed!
                     </h4>
                     <p className="text-xs text-emerald-700">
-                      {commitResult.importedCount} new donor(s) created, {commitResult.linkedCount} linked, and {commitResult.historicalDonationsImported} donations saved.
+                      {(commitResult as any).successfulCount ?? (commitResult.importedCount + commitResult.linkedCount)} donor(s) successfully processed ({commitResult.importedCount} new, {commitResult.linkedCount} linked), {(commitResult as any).duplicateCount ?? commitResult.skippedDuplicatesCount} duplicate(s) prevented, and {commitResult.historicalDonationsImported} donation(s) saved.
                     </p>
                   </div>
 

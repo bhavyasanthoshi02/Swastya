@@ -667,7 +667,7 @@ const executeOtpLogin = async (accessToken: string, res: Response) => {
     }
 
     const phoneVariants = getPhoneVariants(verification.identifier);
-    const user = await prisma.users.findFirst({
+    let user = await prisma.users.findFirst({
         where: {
             phonenumber: { in: phoneVariants },
         },
@@ -685,16 +685,49 @@ const executeOtpLogin = async (accessToken: string, res: Response) => {
             code: "USER_NOT_FOUND",
             verifiedPhone: verification.identifier,
             normalizedPhone: verification.normalizedPhone,
-            message: "No account found matching this verified phone number. Please register an account.",
+            message: "No account found matching this verified phone number. Please contact your hospital or complete the registration process.",
         });
     }
 
+    // Automatically activate imported donor accounts upon successful MSG91 OTP verification
     if (!user.isactive) {
-        return res.status(403).json({
-            success: false,
-            message: "Account is inactive or pending activation.",
-            pendingActivation: user.emailverified === false,
+        user = await prisma.users.update({
+            where: { userid: user.userid },
+            data: {
+                isactive: true,
+                emailverified: true,
+            },
+            include: {
+                donors: true,
+                requesters: true,
+                hospitals: true,
+                bloodbanks: true,
+            },
         });
+
+        // Mark pending single-use activation tokens as consumed
+        await prisma.donoractivationtokens.updateMany({
+            where: { userid: user.userid, usedat: null },
+            data: { usedat: new Date() },
+        });
+    }
+
+    // Ensure donor profile exists if user role is DONOR
+    if (user.role === "DONOR" && !user.donors) {
+        const donor = await prisma.donors.create({
+            data: {
+                userid: user.userid,
+                bloodgroup: "O_POSITIVE",
+                dateofbirth: new Date("1995-01-01"),
+                gender: "OTHER",
+                city: "Not Provided",
+                state: "Not Provided",
+                pincode: "000000",
+                iseligible: true,
+                availabilitystatus: "AVAILABLE",
+            },
+        });
+        user.donors = donor as any;
     }
 
     const token = generateToken(user.userid, user.role);
@@ -710,6 +743,67 @@ const executeOtpLogin = async (accessToken: string, res: Response) => {
         bloodbank: user.bloodbanks || null,
     });
 };
+
+/*
+ * CHECK DONOR PHONE ELIGIBILITY BEFORE SENDING OTP
+ * POST /auth/otp/check-phone
+ */
+router.post("/otp/check-phone", async (req: Request, res: Response) => {
+    try {
+        const rawPhone = req.body?.phone;
+        if (!rawPhone || typeof rawPhone !== "string" || !rawPhone.trim()) {
+            return res.status(400).json({
+                success: false,
+                message: "Mobile number is required.",
+            });
+        }
+
+        const phone = rawPhone.trim();
+        const digits = phone.replace(/\D/g, "");
+        if (digits.length < 10) {
+            return res.status(400).json({
+                success: false,
+                message: "Please enter a valid 10-digit mobile number.",
+            });
+        }
+
+        const phoneVariants = getPhoneVariants(phone);
+        const user = await prisma.users.findFirst({
+            where: {
+                phonenumber: { in: phoneVariants },
+            },
+            include: {
+                donors: true,
+            },
+        });
+
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                code: "NOT_REGISTERED",
+                message: "This mobile number is not registered in Swastya or any Hospital Donor Registry. Please contact your hospital or complete the registration process.",
+            });
+        }
+
+        const isDonor = user.role === "DONOR" || Boolean(user.donors);
+        const isImported = !user.isactive || !user.emailverified;
+
+        return res.status(200).json({
+            success: true,
+            registered: true,
+            isDonor,
+            isImported,
+            name: user.name,
+            maskedPhone: digits.slice(-4),
+        });
+    } catch (error: any) {
+        console.error("Check donor phone error:", error);
+        return res.status(500).json({
+            success: false,
+            message: "Failed to verify registration status. Please try again.",
+        });
+    }
+});
 
 /*
  * VERIFY OTP ACCESS TOKEN

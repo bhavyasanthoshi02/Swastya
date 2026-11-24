@@ -559,3 +559,442 @@ export class BloodBankCommunicationService {
         return { markedReadCount: updateRes.count };
     }
 }
+
+export class HospitalBloodBankCommunicationService {
+    /**
+     * Resolve hospital profile for authenticated user
+     */
+    public static async getHospitalByUserId(userId: string) {
+        return await prisma.hospitals.findUnique({
+            where: { userid: userId },
+            select: {
+                hospitalid: true,
+                hospitalname: true,
+                approvalstatus: true,
+                city: true,
+                state: true,
+            },
+        });
+    }
+
+    /**
+     * Resolve blood bank profile for authenticated user
+     */
+    public static async getBloodBankByUserId(userId: string) {
+        return await prisma.bloodbanks.findUnique({
+            where: { userid: userId },
+            select: {
+                bloodbankid: true,
+                bloodbankname: true,
+                approvalstatus: true,
+                city: true,
+                state: true,
+            },
+        });
+    }
+
+    /**
+     * List all approved blood banks for hospital cross-communication
+     */
+    public static async listBloodBanksForHospital(hospitalUserId: string) {
+        const hospital = await this.getHospitalByUserId(hospitalUserId);
+        if (!hospital) {
+            throw new Error("Hospital profile not found for authenticated user.");
+        }
+
+        const bloodBanks = await prisma.bloodbanks.findMany({
+            where: {
+                approvalstatus: "APPROVED",
+                users: { isactive: true },
+            },
+            select: {
+                bloodbankid: true,
+                bloodbankname: true,
+                contactpersonname: true,
+                contactpersonphone: true,
+                address: true,
+                city: true,
+                state: true,
+                pincode: true,
+            },
+            orderBy: { bloodbankname: "asc" },
+        });
+
+        if (bloodBanks.length === 0) {
+            return [];
+        }
+
+        const results = await Promise.all(
+            bloodBanks.map(async (bb) => {
+                const unreadCount = await prisma.hospitalbloodbankmessages.count({
+                    where: {
+                        hospitalid: hospital.hospitalid,
+                        bloodbankid: bb.bloodbankid,
+                        senderrole: "BLOOD_BANK",
+                        isread: false,
+                    },
+                });
+
+                const lastMessage = await prisma.hospitalbloodbankmessages.findFirst({
+                    where: {
+                        hospitalid: hospital.hospitalid,
+                        bloodbankid: bb.bloodbankid,
+                    },
+                    orderBy: { createdat: "desc" },
+                    select: {
+                        messageid: true,
+                        content: true,
+                        createdat: true,
+                        senderrole: true,
+                        isread: true,
+                    },
+                });
+
+                return {
+                    ...bb,
+                    unreadCount,
+                    lastMessage: lastMessage
+                        ? {
+                              ...lastMessage,
+                              isOutgoing: lastMessage.senderrole === "HOSPITAL",
+                          }
+                        : null,
+                };
+            })
+        );
+
+        return results.sort((a, b) => {
+            const timeA = a.lastMessage?.createdat ? new Date(a.lastMessage.createdat).getTime() : 0;
+            const timeB = b.lastMessage?.createdat ? new Date(b.lastMessage.createdat).getTime() : 0;
+            if (timeA !== timeB) return timeB - timeA;
+            return a.bloodbankname.localeCompare(b.bloodbankname);
+        });
+    }
+
+    /**
+     * Get conversation between hospital and blood bank
+     */
+    public static async getHospitalConversation(hospitalUserId: string, bloodbankId: string) {
+        const hospital = await this.getHospitalByUserId(hospitalUserId);
+        if (!hospital) {
+            throw new Error("Hospital profile not found for authenticated user.");
+        }
+
+        const bloodbank = await prisma.bloodbanks.findUnique({
+            where: { bloodbankid: bloodbankId },
+            select: {
+                bloodbankid: true,
+                bloodbankname: true,
+                city: true,
+                state: true,
+            },
+        });
+
+        if (!bloodbank) {
+            throw new Error("Target blood bank not found.");
+        }
+
+        const rawMessages = await prisma.hospitalbloodbankmessages.findMany({
+            where: {
+                hospitalid: hospital.hospitalid,
+                bloodbankid: bloodbankId,
+            },
+            orderBy: { createdat: "asc" },
+            include: {
+                hospitals: { select: { hospitalid: true, hospitalname: true } },
+                bloodbanks: { select: { bloodbankid: true, bloodbankname: true } },
+            },
+        });
+
+        // Mark incoming messages as read
+        await prisma.hospitalbloodbankmessages.updateMany({
+            where: {
+                hospitalid: hospital.hospitalid,
+                bloodbankid: bloodbankId,
+                senderrole: "BLOOD_BANK",
+                isread: false,
+            },
+            data: {
+                isread: true,
+                readat: new Date(),
+            },
+        });
+
+        return {
+            peerBloodBank: bloodbank,
+            currentHospital: hospital,
+            messages: rawMessages.map((m) => {
+                const isOut = m.senderrole === "HOSPITAL";
+                return {
+                    messageId: m.messageid,
+                    senderId: isOut ? m.hospitalid : m.bloodbankid,
+                    senderName: isOut ? m.hospitals.hospitalname : m.bloodbanks.bloodbankname,
+                    recipientId: isOut ? m.bloodbankid : m.hospitalid,
+                    recipientName: isOut ? m.bloodbanks.bloodbankname : m.hospitals.hospitalname,
+                    content: m.content,
+                    isRead: m.isread,
+                    readAt: m.readat,
+                    createdAt: m.createdat,
+                    isOutgoing: isOut,
+                };
+            }),
+        };
+    }
+
+    /**
+     * Send message from hospital to blood bank
+     */
+    public static async sendHospitalMessage(hospitalUserId: string, bloodbankId: string, content: string) {
+        const hospital = await this.getHospitalByUserId(hospitalUserId);
+        if (!hospital) {
+            throw new Error("Hospital profile not found for authenticated user.");
+        }
+
+        if (!content || typeof content !== "string" || !content.trim()) {
+            throw new Error("Message content cannot be empty.");
+        }
+
+        const trimmedContent = content.trim();
+        if (trimmedContent.length > 2000) {
+            throw new Error("Message exceeds the maximum limit of 2,000 characters.");
+        }
+
+        const bloodbank = await prisma.bloodbanks.findUnique({
+            where: { bloodbankid: bloodbankId },
+            select: { bloodbankid: true, bloodbankname: true },
+        });
+
+        if (!bloodbank) {
+            throw new Error("Target blood bank does not exist.");
+        }
+
+        const message = await prisma.hospitalbloodbankmessages.create({
+            data: {
+                hospitalid: hospital.hospitalid,
+                bloodbankid: bloodbankId,
+                senderrole: "HOSPITAL",
+                content: trimmedContent,
+                isread: false,
+            },
+            include: {
+                hospitals: { select: { hospitalid: true, hospitalname: true } },
+                bloodbanks: { select: { bloodbankid: true, bloodbankname: true } },
+            },
+        });
+
+        return {
+            messageId: message.messageid,
+            senderId: message.hospitalid,
+            senderName: message.hospitals.hospitalname,
+            recipientId: message.bloodbankid,
+            recipientName: message.bloodbanks.bloodbankname,
+            content: message.content,
+            isRead: message.isread,
+            createdAt: message.createdat,
+            isOutgoing: true,
+        };
+    }
+
+    /**
+     * List all approved hospitals for blood bank cross-communication
+     */
+    public static async listHospitalsForBloodBank(bloodbankUserId: string) {
+        const bloodbank = await this.getBloodBankByUserId(bloodbankUserId);
+        if (!bloodbank) {
+            throw new Error("Blood bank profile not found for authenticated user.");
+        }
+
+        const hospitals = await prisma.hospitals.findMany({
+            where: {
+                approvalstatus: "APPROVED",
+                users: { isactive: true },
+            },
+            select: {
+                hospitalid: true,
+                hospitalname: true,
+                contactpersonname: true,
+                contactpersonphone: true,
+                address: true,
+                city: true,
+                state: true,
+                pincode: true,
+            },
+            orderBy: { hospitalname: "asc" },
+        });
+
+        if (hospitals.length === 0) {
+            return [];
+        }
+
+        const results = await Promise.all(
+            hospitals.map(async (h) => {
+                const unreadCount = await prisma.hospitalbloodbankmessages.count({
+                    where: {
+                        hospitalid: h.hospitalid,
+                        bloodbankid: bloodbank.bloodbankid,
+                        senderrole: "HOSPITAL",
+                        isread: false,
+                    },
+                });
+
+                const lastMessage = await prisma.hospitalbloodbankmessages.findFirst({
+                    where: {
+                        hospitalid: h.hospitalid,
+                        bloodbankid: bloodbank.bloodbankid,
+                    },
+                    orderBy: { createdat: "desc" },
+                    select: {
+                        messageid: true,
+                        content: true,
+                        createdat: true,
+                        senderrole: true,
+                        isread: true,
+                    },
+                });
+
+                return {
+                    ...h,
+                    unreadCount,
+                    lastMessage: lastMessage
+                        ? {
+                              ...lastMessage,
+                              isOutgoing: lastMessage.senderrole === "BLOOD_BANK",
+                          }
+                        : null,
+                };
+            })
+        );
+
+        return results.sort((a, b) => {
+            const timeA = a.lastMessage?.createdat ? new Date(a.lastMessage.createdat).getTime() : 0;
+            const timeB = b.lastMessage?.createdat ? new Date(b.lastMessage.createdat).getTime() : 0;
+            if (timeA !== timeB) return timeB - timeA;
+            return a.hospitalname.localeCompare(b.hospitalname);
+        });
+    }
+
+    /**
+     * Get conversation between blood bank and hospital
+     */
+    public static async getBloodBankConversation(bloodbankUserId: string, hospitalId: string) {
+        const bloodbank = await this.getBloodBankByUserId(bloodbankUserId);
+        if (!bloodbank) {
+            throw new Error("Blood bank profile not found for authenticated user.");
+        }
+
+        const hospital = await prisma.hospitals.findUnique({
+            where: { hospitalid: hospitalId },
+            select: {
+                hospitalid: true,
+                hospitalname: true,
+                city: true,
+                state: true,
+            },
+        });
+
+        if (!hospital) {
+            throw new Error("Target hospital not found.");
+        }
+
+        const rawMessages = await prisma.hospitalbloodbankmessages.findMany({
+            where: {
+                hospitalid: hospitalId,
+                bloodbankid: bloodbank.bloodbankid,
+            },
+            orderBy: { createdat: "asc" },
+            include: {
+                hospitals: { select: { hospitalid: true, hospitalname: true } },
+                bloodbanks: { select: { bloodbankid: true, bloodbankname: true } },
+            },
+        });
+
+        // Mark incoming messages as read
+        await prisma.hospitalbloodbankmessages.updateMany({
+            where: {
+                hospitalid: hospitalId,
+                bloodbankid: bloodbank.bloodbankid,
+                senderrole: "HOSPITAL",
+                isread: false,
+            },
+            data: {
+                isread: true,
+                readat: new Date(),
+            },
+        });
+
+        return {
+            peerHospital: hospital,
+            currentBloodBank: bloodbank,
+            messages: rawMessages.map((m) => {
+                const isOut = m.senderrole === "BLOOD_BANK";
+                return {
+                    messageId: m.messageid,
+                    senderId: isOut ? m.bloodbankid : m.hospitalid,
+                    senderName: isOut ? m.bloodbanks.bloodbankname : m.hospitals.hospitalname,
+                    recipientId: isOut ? m.hospitalid : m.bloodbankid,
+                    recipientName: isOut ? m.hospitals.hospitalname : m.bloodbanks.bloodbankname,
+                    content: m.content,
+                    isRead: m.isread,
+                    readAt: m.readat,
+                    createdAt: m.createdat,
+                    isOutgoing: isOut,
+                };
+            }),
+        };
+    }
+
+    /**
+     * Send message from blood bank to hospital
+     */
+    public static async sendBloodBankMessage(bloodbankUserId: string, hospitalId: string, content: string) {
+        const bloodbank = await this.getBloodBankByUserId(bloodbankUserId);
+        if (!bloodbank) {
+            throw new Error("Blood bank profile not found for authenticated user.");
+        }
+
+        if (!content || typeof content !== "string" || !content.trim()) {
+            throw new Error("Message content cannot be empty.");
+        }
+
+        const trimmedContent = content.trim();
+        if (trimmedContent.length > 2000) {
+            throw new Error("Message exceeds the maximum limit of 2,000 characters.");
+        }
+
+        const hospital = await prisma.hospitals.findUnique({
+            where: { hospitalid: hospitalId },
+            select: { hospitalid: true, hospitalname: true },
+        });
+
+        if (!hospital) {
+            throw new Error("Target hospital does not exist.");
+        }
+
+        const message = await prisma.hospitalbloodbankmessages.create({
+            data: {
+                hospitalid: hospitalId,
+                bloodbankid: bloodbank.bloodbankid,
+                senderrole: "BLOOD_BANK",
+                content: trimmedContent,
+                isread: false,
+            },
+            include: {
+                hospitals: { select: { hospitalid: true, hospitalname: true } },
+                bloodbanks: { select: { bloodbankid: true, bloodbankname: true } },
+            },
+        });
+
+        return {
+            messageId: message.messageid,
+            senderId: message.bloodbankid,
+            senderName: message.bloodbanks.bloodbankname,
+            recipientId: message.hospitalid,
+            recipientName: message.hospitals.hospitalname,
+            content: message.content,
+            isRead: message.isread,
+            createdAt: message.createdat,
+            isOutgoing: true,
+        };
+    }
+}
+

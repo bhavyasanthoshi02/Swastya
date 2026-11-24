@@ -359,6 +359,47 @@ export class CustomSmsService {
                 }
             }
 
+            // 5. Permitted Donors from Hospital Donor Registry (added via Donor Registry page)
+            const hospitalRegistryDonors = await prisma.hospitaldonors.findMany({
+                where: {
+                    hospitalid: hospital.hospitalid,
+                    status: "ACTIVE",
+                },
+                include: {
+                    donors: {
+                        select: {
+                            donorid: true,
+                            bloodgroup: true,
+                            city: true,
+                            users: {
+                                select: {
+                                    userid: true,
+                                    name: true,
+                                    phonenumber: true,
+                                    isactive: true,
+                                },
+                            },
+                        },
+                    },
+                },
+                orderBy: { createdat: "desc" },
+                take: 200,
+            });
+
+            for (const hd of hospitalRegistryDonors) {
+                const u = hd.donors?.users;
+                if (u && u.phonenumber) {
+                    recipients.push({
+                        userId: u.userid,
+                        displayName: `${u.name || "Registry Donor"} (${hd.donors.bloodgroup})`,
+                        role: "DONOR",
+                        maskedPhone: this.maskPhoneNumber(u.phonenumber),
+                        relationshipContext: "Hospital Donor Registry",
+                        bloodGroup: hd.donors.bloodgroup,
+                    });
+                }
+            }
+
             // Deduplicate by userId
             const seenHospitalRecipients = new Set<string>();
             return recipients.filter(r => {
@@ -608,7 +649,8 @@ export class CustomSmsService {
             select: { userid: true, name: true, phonenumber: true, isactive: true, role: true },
         });
 
-        if (!recipientUser || !recipientUser.isactive) {
+        const isRegistryDonor = authorizedRecipient?.relationshipContext === "Hospital Donor Registry";
+        if (!recipientUser || (!recipientUser.isactive && !isRegistryDonor)) {
             throw {
                 statusCode: 404,
                 code: "RECIPIENT_NOT_FOUND",

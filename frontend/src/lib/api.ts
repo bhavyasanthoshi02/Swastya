@@ -741,6 +741,11 @@ export interface ImportPreviewResult {
 export interface ImportCommitResult {
   success: boolean;
   message: string;
+  successfulCount?: number;
+  duplicateCount?: number;
+  failedCount?: number;
+  skippedDuplicatesCount?: number;
+  conflictsCount?: number;
   importedCount: number;
   linkedCount: number;
   historicalDonationsImported: number;
@@ -1517,6 +1522,18 @@ export const api = {
         user: { name: string; email: string; phone?: string };
         message?: string;
       }>("/auth/verify-activation-token", { params: { token } }),
+
+    checkDonorPhone: (phone: string) =>
+      api.post<{
+        success: boolean;
+        registered?: boolean;
+        isDonor?: boolean;
+        isImported?: boolean;
+        name?: string;
+        maskedPhone?: string;
+        code?: string;
+        message?: string;
+      }>("/auth/otp/check-phone", { phone }),
 
     activateDonor: (data: { token: string; password: string }) =>
       api.post<{
@@ -3530,6 +3547,78 @@ export const api = {
         success: boolean;
         data: { markedReadCount: number };
       }>(`/hospitals/me/messages/${hospitalId}/read`),
+
+    getBloodBankPeers: () =>
+      api.get<{
+        success: boolean;
+        data: Array<{
+          bloodbankid: string;
+          bloodbankname: string;
+          contactpersonname: string;
+          contactpersonphone: string;
+          address: string;
+          city: string;
+          state: string;
+          pincode: string;
+          unreadCount: number;
+          lastMessage: {
+            messageid: string;
+            content: string;
+            createdat: string;
+            senderrole: string;
+            isread: boolean;
+            isOutgoing: boolean;
+          } | null;
+        }>;
+      }>("/hospitals/me/messages/bloodbanks"),
+
+    getBloodBankConversation: (bloodbankId: string) =>
+      api.get<{
+        success: boolean;
+        data: {
+          currentHospital: {
+            hospitalid: string;
+            hospitalname: string;
+            city: string;
+            state: string;
+          };
+          peerBloodBank: {
+            bloodbankid: string;
+            bloodbankname: string;
+            city: string;
+            state: string;
+          };
+          messages: Array<{
+            messageId: string;
+            senderId: string;
+            senderName: string;
+            recipientId: string;
+            recipientName: string;
+            content: string;
+            isRead: boolean;
+            readAt: string | null;
+            createdAt: string;
+            isOutgoing: boolean;
+          }>;
+        };
+      }>(`/hospitals/me/messages/bloodbanks/${bloodbankId}`),
+
+    sendBloodBankMessage: (bloodbankId: string, content: string) =>
+      api.post<{
+        success: boolean;
+        data: {
+          messageId: string;
+          senderId: string;
+          senderName: string;
+          recipientId: string;
+          recipientName: string;
+          content: string;
+          isRead: boolean;
+          createdAt: string;
+          isOutgoing: boolean;
+        };
+        message: string;
+      }>(`/hospitals/me/messages/bloodbanks/${bloodbankId}`, { content }),
   },
 
   bloodbankMessages: {
@@ -3605,6 +3694,78 @@ export const api = {
         success: boolean;
         data: { markedReadCount: number };
       }>(`/bloodbanks/me/messages/${bloodBankId}/read`),
+
+    getHospitalPeers: () =>
+      api.get<{
+        success: boolean;
+        data: Array<{
+          hospitalid: string;
+          hospitalname: string;
+          contactpersonname: string;
+          contactpersonphone: string;
+          address: string;
+          city: string;
+          state: string;
+          pincode: string;
+          unreadCount: number;
+          lastMessage: {
+            messageid: string;
+            content: string;
+            createdat: string;
+            senderrole: string;
+            isread: boolean;
+            isOutgoing: boolean;
+          } | null;
+        }>;
+      }>("/bloodbanks/me/messages/hospitals"),
+
+    getHospitalConversation: (hospitalId: string) =>
+      api.get<{
+        success: boolean;
+        data: {
+          currentBloodBank: {
+            bloodbankid: string;
+            bloodbankname: string;
+            city: string;
+            state: string;
+          };
+          peerHospital: {
+            hospitalid: string;
+            hospitalname: string;
+            city: string;
+            state: string;
+          };
+          messages: Array<{
+            messageId: string;
+            senderId: string;
+            senderName: string;
+            recipientId: string;
+            recipientName: string;
+            content: string;
+            isRead: boolean;
+            readAt: string | null;
+            createdAt: string;
+            isOutgoing: boolean;
+          }>;
+        };
+      }>(`/bloodbanks/me/messages/hospitals/${hospitalId}`),
+
+    sendHospitalMessage: (hospitalId: string, content: string) =>
+      api.post<{
+        success: boolean;
+        data: {
+          messageId: string;
+          senderId: string;
+          senderName: string;
+          recipientId: string;
+          recipientName: string;
+          content: string;
+          isRead: boolean;
+          createdAt: string;
+          isOutgoing: boolean;
+        };
+        message: string;
+      }>(`/bloodbanks/me/messages/hospitals/${hospitalId}`, { content }),
   },
 };
 

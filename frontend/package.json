@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "predev": "node -e \"try { const fs=require('fs'); if(fs.existsSync('.next_dist/trace')) fs.unlinkSync('.next_dist/trace'); } catch(e){}\"",
+    "predev": "node -e \"try { const fs=require('fs'); if(fs.existsSync('.next_dist/trace')) fs.unlinkSync('.next_dist/trace'); if(fs.existsSync('.next/trace')) fs.unlinkSync('.next/trace'); } catch(e){}\"",
     "dev": "next dev",
-    "prebuild": "node -e \"try { const fs=require('fs'); if(fs.existsSync('.next_dist/trace')) fs.unlinkSync('.next_dist/trace'); } catch(e){}\"",
+    "prebuild": "node -e \"try { const fs=require('fs'); if(fs.existsSync('.next_dist/trace')) fs.unlinkSync('.next_dist/trace'); if(fs.existsSync('.next/trace')) fs.unlinkSync('.next/trace'); } catch(e){}\"",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"

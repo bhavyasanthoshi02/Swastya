@@ -48,12 +48,23 @@ interface ChatMessage {
 
 interface PeerChatManagerProps {
   role: "HOSPITAL" | "BLOOD_BANK";
+  targetType?: "HOSPITAL" | "BLOOD_BANK";
 }
 
-export default function PeerChatManager({ role }: PeerChatManagerProps) {
+export default function PeerChatManager({ role, targetType }: PeerChatManagerProps) {
   const isHospital = role === "HOSPITAL";
-  const orgTypeLabel = isHospital ? "Hospitals" : "Blood Banks";
-  const singularLabel = isHospital ? "Hospital" : "Blood Bank";
+  const effectiveTarget = targetType || role;
+  const isTargetBloodBank = effectiveTarget === "BLOOD_BANK";
+
+  const singularSourceLabel = isHospital ? "Hospital" : "Blood Bank";
+  const singularTargetLabel = isTargetBloodBank ? "Blood Bank" : "Hospital";
+  const targetPluralLabel = isTargetBloodBank ? "Blood Banks" : "Hospitals";
+
+  const title = `${singularSourceLabel}-to-${singularTargetLabel} Direct Communication`;
+  const subtitle =
+    role === effectiveTarget
+      ? `Private, secure in-app messaging between registered ${targetPluralLabel.toLowerCase()}.`
+      : `Private, secure in-app messaging between registered ${singularSourceLabel.toLowerCase()}s and ${targetPluralLabel.toLowerCase()}.`;
 
   const [peers, setPeers] = useState<PeerItem[]>([]);
   const [selectedPeerId, setSelectedPeerId] = useState<string | null>(null);
@@ -79,48 +90,96 @@ export default function PeerChatManager({ role }: PeerChatManagerProps) {
     if (isInitial) setLoadingPeers(true);
     try {
       if (isHospital) {
-        const res = await api.hospitalMessages.getPeers();
-        if (res.success && res.data) {
-          const mapped: PeerItem[] = res.data.map((h) => ({
-            id: h.hospitalid,
-            name: h.hospitalname,
-            city: h.city,
-            state: h.state,
-            contactPerson: h.contactpersonname,
-            phone: h.contactpersonphone,
-            unreadCount: h.unreadCount || 0,
-            lastMessage: h.lastMessage
-              ? {
-                  content: h.lastMessage.content,
-                  createdAt: h.lastMessage.createdat,
-                  isOutgoing: h.lastMessage.isOutgoing,
-                  isRead: h.lastMessage.isread,
-                }
-              : null,
-          }));
-          setPeers(mapped);
+        if (effectiveTarget === "BLOOD_BANK") {
+          const res = await api.hospitalMessages.getBloodBankPeers();
+          if (res.success && res.data) {
+            const mapped: PeerItem[] = res.data.map((b) => ({
+              id: b.bloodbankid,
+              name: b.bloodbankname,
+              city: b.city,
+              state: b.state,
+              contactPerson: b.contactpersonname,
+              phone: b.contactpersonphone,
+              unreadCount: b.unreadCount || 0,
+              lastMessage: b.lastMessage
+                ? {
+                    content: b.lastMessage.content,
+                    createdAt: b.lastMessage.createdat,
+                    isOutgoing: b.lastMessage.isOutgoing,
+                    isRead: b.lastMessage.isread,
+                  }
+                : null,
+            }));
+            setPeers(mapped);
+          }
+        } else {
+          const res = await api.hospitalMessages.getPeers();
+          if (res.success && res.data) {
+            const mapped: PeerItem[] = res.data.map((h) => ({
+              id: h.hospitalid,
+              name: h.hospitalname,
+              city: h.city,
+              state: h.state,
+              contactPerson: h.contactpersonname,
+              phone: h.contactpersonphone,
+              unreadCount: h.unreadCount || 0,
+              lastMessage: h.lastMessage
+                ? {
+                    content: h.lastMessage.content,
+                    createdAt: h.lastMessage.createdat,
+                    isOutgoing: h.lastMessage.isOutgoing,
+                    isRead: h.lastMessage.isread,
+                  }
+                : null,
+            }));
+            setPeers(mapped);
+          }
         }
       } else {
-        const res = await api.bloodbankMessages.getPeers();
-        if (res.success && res.data) {
-          const mapped: PeerItem[] = res.data.map((b) => ({
-            id: b.bloodbankid,
-            name: b.bloodbankname,
-            city: b.city,
-            state: b.state,
-            contactPerson: b.contactpersonname,
-            phone: b.contactpersonphone,
-            unreadCount: b.unreadCount || 0,
-            lastMessage: b.lastMessage
-              ? {
-                  content: b.lastMessage.content,
-                  createdAt: b.lastMessage.createdat,
-                  isOutgoing: b.lastMessage.isOutgoing,
-                  isRead: b.lastMessage.isread,
-                }
-              : null,
-          }));
-          setPeers(mapped);
+        if (effectiveTarget === "HOSPITAL") {
+          const res = await api.bloodbankMessages.getHospitalPeers();
+          if (res.success && res.data) {
+            const mapped: PeerItem[] = res.data.map((h) => ({
+              id: h.hospitalid,
+              name: h.hospitalname,
+              city: h.city,
+              state: h.state,
+              contactPerson: h.contactpersonname,
+              phone: h.contactpersonphone,
+              unreadCount: h.unreadCount || 0,
+              lastMessage: h.lastMessage
+                ? {
+                    content: h.lastMessage.content,
+                    createdAt: h.lastMessage.createdat,
+                    isOutgoing: h.lastMessage.isOutgoing,
+                    isRead: h.lastMessage.isread,
+                  }
+                : null,
+            }));
+            setPeers(mapped);
+          }
+        } else {
+          const res = await api.bloodbankMessages.getPeers();
+          if (res.success && res.data) {
+            const mapped: PeerItem[] = res.data.map((b) => ({
+              id: b.bloodbankid,
+              name: b.bloodbankname,
+              city: b.city,
+              state: b.state,
+              contactPerson: b.contactpersonname,
+              phone: b.contactpersonphone,
+              unreadCount: b.unreadCount || 0,
+              lastMessage: b.lastMessage
+                ? {
+                    content: b.lastMessage.content,
+                    createdAt: b.lastMessage.createdat,
+                    isOutgoing: b.lastMessage.isOutgoing,
+                    isRead: b.lastMessage.isread,
+                  }
+                : null,
+            }));
+            setPeers(mapped);
+          }
         }
       }
       setError(null);
@@ -132,7 +191,7 @@ export default function PeerChatManager({ role }: PeerChatManagerProps) {
     } finally {
       if (isInitial) setLoadingPeers(false);
     }
-  }, [isHospital]);
+  }, [isHospital, effectiveTarget]);
 
   // Fetch active conversation
   const fetchConversation = useCallback(
@@ -140,50 +199,100 @@ export default function PeerChatManager({ role }: PeerChatManagerProps) {
       if (!isSilent) setLoadingMessages(true);
       try {
         if (isHospital) {
-          const res = await api.hospitalMessages.getConversation(peerId);
-          if (res.success && res.data) {
-            setActivePeerName(res.data.peerHospital.hospitalname);
-            setActivePeerCity(
-              res.data.peerHospital.city
-                ? `${res.data.peerHospital.city}, ${res.data.peerHospital.state || ""}`
-                : ""
-            );
-            const mapped: ChatMessage[] = res.data.messages.map((m) => ({
-              messageId: m.messageId,
-              senderId: m.senderHospitalId,
-              senderName: m.senderHospitalName,
-              recipientId: m.recipientHospitalId,
-              recipientName: m.recipientHospitalName,
-              content: m.content,
-              isRead: m.isRead,
-              readAt: m.readAt,
-              createdAt: m.createdAt,
-              isOutgoing: m.isOutgoing,
-            }));
-            setMessages(mapped);
+          if (effectiveTarget === "BLOOD_BANK") {
+            const res = await api.hospitalMessages.getBloodBankConversation(peerId);
+            if (res.success && res.data) {
+              setActivePeerName(res.data.peerBloodBank.bloodbankname);
+              setActivePeerCity(
+                res.data.peerBloodBank.city
+                  ? `${res.data.peerBloodBank.city}, ${res.data.peerBloodBank.state || ""}`
+                  : ""
+              );
+              const mapped: ChatMessage[] = res.data.messages.map((m) => ({
+                messageId: m.messageId,
+                senderId: m.senderId,
+                senderName: m.senderName,
+                recipientId: m.recipientId,
+                recipientName: m.recipientName,
+                content: m.content,
+                isRead: m.isRead,
+                readAt: m.readAt,
+                createdAt: m.createdAt,
+                isOutgoing: m.isOutgoing,
+              }));
+              setMessages(mapped);
+            }
+          } else {
+            const res = await api.hospitalMessages.getConversation(peerId);
+            if (res.success && res.data) {
+              setActivePeerName(res.data.peerHospital.hospitalname);
+              setActivePeerCity(
+                res.data.peerHospital.city
+                  ? `${res.data.peerHospital.city}, ${res.data.peerHospital.state || ""}`
+                  : ""
+              );
+              const mapped: ChatMessage[] = res.data.messages.map((m) => ({
+                messageId: m.messageId,
+                senderId: m.senderHospitalId,
+                senderName: m.senderHospitalName,
+                recipientId: m.recipientHospitalId,
+                recipientName: m.recipientHospitalName,
+                content: m.content,
+                isRead: m.isRead,
+                readAt: m.readAt,
+                createdAt: m.createdAt,
+                isOutgoing: m.isOutgoing,
+              }));
+              setMessages(mapped);
+            }
           }
         } else {
-          const res = await api.bloodbankMessages.getConversation(peerId);
-          if (res.success && res.data) {
-            setActivePeerName(res.data.peerBloodBank.bloodbankname);
-            setActivePeerCity(
-              res.data.peerBloodBank.city
-                ? `${res.data.peerBloodBank.city}, ${res.data.peerBloodBank.state || ""}`
-                : ""
-            );
-            const mapped: ChatMessage[] = res.data.messages.map((m) => ({
-              messageId: m.messageId,
-              senderId: m.senderBloodBankId,
-              senderName: m.senderBloodBankName,
-              recipientId: m.recipientBloodBankId,
-              recipientName: m.recipientBloodBankName,
-              content: m.content,
-              isRead: m.isRead,
-              readAt: m.readAt,
-              createdAt: m.createdAt,
-              isOutgoing: m.isOutgoing,
-            }));
-            setMessages(mapped);
+          if (effectiveTarget === "HOSPITAL") {
+            const res = await api.bloodbankMessages.getHospitalConversation(peerId);
+            if (res.success && res.data) {
+              setActivePeerName(res.data.peerHospital.hospitalname);
+              setActivePeerCity(
+                res.data.peerHospital.city
+                  ? `${res.data.peerHospital.city}, ${res.data.peerHospital.state || ""}`
+                  : ""
+              );
+              const mapped: ChatMessage[] = res.data.messages.map((m) => ({
+                messageId: m.messageId,
+                senderId: m.senderId,
+                senderName: m.senderName,
+                recipientId: m.recipientId,
+                recipientName: m.recipientName,
+                content: m.content,
+                isRead: m.isRead,
+                readAt: m.readAt,
+                createdAt: m.createdAt,
+                isOutgoing: m.isOutgoing,
+              }));
+              setMessages(mapped);
+            }
+          } else {
+            const res = await api.bloodbankMessages.getConversation(peerId);
+            if (res.success && res.data) {
+              setActivePeerName(res.data.peerBloodBank.bloodbankname);
+              setActivePeerCity(
+                res.data.peerBloodBank.city
+                  ? `${res.data.peerBloodBank.city}, ${res.data.peerBloodBank.state || ""}`
+                  : ""
+              );
+              const mapped: ChatMessage[] = res.data.messages.map((m) => ({
+                messageId: m.messageId,
+                senderId: m.senderBloodBankId,
+                senderName: m.senderBloodBankName,
+                recipientId: m.recipientBloodBankId,
+                recipientName: m.recipientBloodBankName,
+                content: m.content,
+                isRead: m.isRead,
+                readAt: m.readAt,
+                createdAt: m.createdAt,
+                isOutgoing: m.isOutgoing,
+              }));
+              setMessages(mapped);
+            }
           }
         }
         setError(null);
@@ -196,7 +305,7 @@ export default function PeerChatManager({ role }: PeerChatManagerProps) {
         if (!isSilent) setLoadingMessages(false);
       }
     },
-    [isHospital]
+    [isHospital, effectiveTarget]
   );
 
   // Initial load
@@ -249,9 +358,17 @@ export default function PeerChatManager({ role }: PeerChatManagerProps) {
 
     try {
       if (isHospital) {
-        await api.hospitalMessages.sendMessage(selectedPeerId, contentToSend);
+        if (effectiveTarget === "BLOOD_BANK") {
+          await api.hospitalMessages.sendBloodBankMessage(selectedPeerId, contentToSend);
+        } else {
+          await api.hospitalMessages.sendMessage(selectedPeerId, contentToSend);
+        }
       } else {
-        await api.bloodbankMessages.sendMessage(selectedPeerId, contentToSend);
+        if (effectiveTarget === "HOSPITAL") {
+          await api.bloodbankMessages.sendHospitalMessage(selectedPeerId, contentToSend);
+        } else {
+          await api.bloodbankMessages.sendMessage(selectedPeerId, contentToSend);
+        }
       }
       await fetchConversation(selectedPeerId, true);
       await fetchPeers(false);
@@ -292,10 +409,10 @@ export default function PeerChatManager({ role }: PeerChatManagerProps) {
           </div>
           <div>
             <h1 className="text-lg font-bold text-[#053845] font-serif">
-              {singularLabel}-to-{singularLabel} Direct Communication
+              {title}
             </h1>
             <p className="text-xs text-slate-500">
-              Private, secure in-app messaging between registered {orgTypeLabel.toLowerCase()}.
+              {subtitle}
             </p>
           </div>
         </div>
@@ -321,7 +438,7 @@ export default function PeerChatManager({ role }: PeerChatManagerProps) {
               <Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
               <input
                 type="text"
-                placeholder={`Search ${orgTypeLabel.toLowerCase()}...`}
+                placeholder={`Search ${targetPluralLabel.toLowerCase()}...`}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full pl-9 pr-3 py-2 text-xs bg-slate-50 rounded-xl border border-slate-200 focus:outline-none focus:ring-1 focus:ring-[#317786]"
@@ -334,7 +451,7 @@ export default function PeerChatManager({ role }: PeerChatManagerProps) {
             {loadingPeers ? (
               <div className="p-6 text-center text-xs text-slate-400">
                 <RefreshCw className="w-5 h-5 mx-auto animate-spin mb-2 text-[#317786]" />
-                Loading {orgTypeLabel.toLowerCase()}...
+                Loading {targetPluralLabel.toLowerCase()}...
               </div>
             ) : filteredPeers.length === 0 ? (
               <div className="p-8 text-center">
@@ -342,11 +459,11 @@ export default function PeerChatManager({ role }: PeerChatManagerProps) {
                   <Building2 className="w-6 h-6" />
                 </div>
                 <h3 className="text-xs font-semibold text-slate-700 mb-1">
-                  {peers.length === 0 ? `No Other ${orgTypeLabel} Found` : "No matching results"}
+                  {peers.length === 0 ? `No ${targetPluralLabel} Available` : "No matching results"}
                 </h3>
                 <p className="text-[11px] text-slate-500 max-w-[200px] mx-auto leading-relaxed">
                   {peers.length === 0
-                    ? `When other ${orgTypeLabel.toLowerCase()} register and are approved, they will appear here.`
+                    ? `When registered ${targetPluralLabel.toLowerCase()} are approved, they will appear here.`
                     : "Try adjusting your search criteria."}
                 </p>
               </div>
@@ -519,7 +636,7 @@ export default function PeerChatManager({ role }: PeerChatManagerProps) {
                 <MessageSquare className="w-8 h-8" />
               </div>
               <h3 className="text-sm font-bold text-slate-700 font-serif">
-                Select a {singularLabel}
+                Select a {singularTargetLabel}
               </h3>
               <p className="text-xs text-slate-500 max-w-sm mt-1">
                 Choose an organization from the directory on the left to view conversation history or start a new in-app discussion.

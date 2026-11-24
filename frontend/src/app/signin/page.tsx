@@ -29,6 +29,9 @@ function SignInForm() {
     if (searchParams.get("session") === "expired") {
       setStatusMessage("Your session has expired. Please sign in again to continue.");
     }
+    if (searchParams.get("role") === "donor" || searchParams.get("portal") === "donor") {
+      setAuthMode("otp");
+    }
   }, [searchParams]);
 
   const handleSuccessfulAuth = (res: any) => {
@@ -59,11 +62,41 @@ function SignInForm() {
     if (e) e.preventDefault();
     setErrorMessage(null);
     setStatusMessage(null);
+
+    const cleanPhone = phone.trim();
+    const digits = cleanPhone.replace(/\D/g, "");
+    if (!digits || digits.length < 10) {
+      setErrorMessage("Please enter a valid 10-digit registered mobile number.");
+      return;
+    }
+
     setIsOtpLaunching(true);
 
+    // 1. Verify eligibility with backend before triggering OTP
+    try {
+      const checkRes = await api.auth.checkDonorPhone(cleanPhone);
+      if (!checkRes.success || !checkRes.registered) {
+        setErrorMessage(
+          checkRes.message ||
+            "This mobile number is not registered in Swastya or any Hospital Donor Registry. Please contact your hospital or complete the registration process."
+        );
+        setIsOtpLaunching(false);
+        return;
+      }
+    } catch (checkErr: any) {
+      setIsOtpLaunching(false);
+      const errMsg =
+        checkErr?.data?.message ||
+        checkErr?.message ||
+        "This mobile number is not registered in Swastya or any Hospital Donor Registry. Please contact your hospital or complete the registration process.";
+      setErrorMessage(errMsg);
+      return;
+    }
+
+    // 2. Trigger MSG91 OTP widget directly with pre-filled identifier
     try {
       await triggerMsg91Otp({
-        identifier: phone.trim() || undefined,
+        identifier: cleanPhone,
         onSuccess: async (accessToken) => {
           if (!accessToken) {
             setErrorMessage("Did not receive a valid verification token from MSG91 widget.");
@@ -81,7 +114,7 @@ function SignInForm() {
             }
           } catch (err: any) {
             if (err?.data?.code === "USER_NOT_FOUND" || err?.status === 404) {
-              setErrorMessage("No account found matching this verified mobile number. Please create an account.");
+              setErrorMessage("No account found matching this verified mobile number. Please contact your hospital or register an account.");
             } else {
               setErrorMessage(err?.message || "Failed to authenticate with verified mobile OTP.");
             }
@@ -264,8 +297,8 @@ function SignInForm() {
                     {isLoading
                       ? "Verifying session..."
                       : isOtpLaunching
-                      ? "Opening OTP Widget..."
-                      : "Send & Verify OTP"}
+                      ? "Checking & Sending OTP..."
+                      : "Send OTP"}
                   </span>
                 </button>
               </form>

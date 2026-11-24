@@ -134,7 +134,17 @@ export const triggerMsg91Otp = async (options: Msg91OtpOptions): Promise<void> =
     };
 
     if (options.identifier && options.identifier.trim() !== "") {
-      configuration.identifier = options.identifier.trim();
+      const raw = options.identifier.trim();
+      const digits = raw.replace(/\D/g, "");
+      if (digits.length === 10) {
+        configuration.identifier = "91" + digits;
+      } else if (digits.length === 12 && digits.startsWith("91")) {
+        configuration.identifier = digits;
+      } else if (digits) {
+        configuration.identifier = digits;
+      } else {
+        configuration.identifier = raw;
+      }
     }
 
     window.initSendOTP(configuration);

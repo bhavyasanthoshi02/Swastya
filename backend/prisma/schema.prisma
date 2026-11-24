@@ -39,6 +39,7 @@ model bloodbanks {
   equipmentstatushistory equipmentstatushistory[]
   sent_bloodbankmessages     bloodbankmessages[]    @relation("bloodbankmessages_sender")
   received_bloodbankmessages bloodbankmessages[]    @relation("bloodbankmessages_recipient")
+  hospitalbloodbankmessages  hospitalbloodbankmessages[]
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -179,6 +180,7 @@ model hospitals {
   surgeryplans                                                        surgeryplans[]
   sent_hospitalmessages                                               hospitalmessages[]     @relation("hospitalmessages_sender")
   received_hospitalmessages                                           hospitalmessages[]     @relation("hospitalmessages_recipient")
+  hospitalbloodbankmessages                                           hospitalbloodbankmessages[]
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -1423,4 +1425,22 @@ model bloodbankmessages {
   @@index([senderbloodbankid], map: "idx_bloodbankmessages_sender")
   @@index([recipientbloodbankid], map: "idx_bloodbankmessages_recipient")
   @@index([createdat], map: "idx_bloodbankmessages_createdat")
+}
+
+model hospitalbloodbankmessages {
+  messageid   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  hospitalid  String    @db.Uuid
+  bloodbankid String    @db.Uuid
+  senderrole  String    @db.VarChar(20)
+  content     String    @db.Text
+  isread      Boolean   @default(false)
+  readat      DateTime? @db.Timestamp(6)
+  createdat   DateTime? @default(now()) @db.Timestamp(6)
+
+  hospitals   hospitals  @relation(fields: [hospitalid], references: [hospitalid], onDelete: Cascade, onUpdate: NoAction)
+  bloodbanks  bloodbanks @relation(fields: [bloodbankid], references: [bloodbankid], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([hospitalid], map: "idx_hbb_messages_hospital")
+  @@index([bloodbankid], map: "idx_hbb_messages_bloodbank")
+  @@index([createdat], map: "idx_hbb_messages_createdat")
 }
