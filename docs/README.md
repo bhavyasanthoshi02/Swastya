@@ -1,6 +1,6 @@
 #  Swastya — Smart Clinical Blood Coordination Network
 
-> **Swastya** is a next-generation clinical blood logistics and emergency donor coordination platform. Built to bridge the critical gap between patients, voluntary donors, hospitals, and blood banks, Swastya eliminates emergency delays through intelligent multi-criteria matching, real-time in-app cross-organization communication, AI-driven shortage forecasting, and complete blood unit cold-chain traceability.
+> **Swastya** is a next-generation clinical blood logistics and emergency donor coordination platform. Built to bridge the critical gap between patients, voluntary donors, hospitals, and blood banks, Swastya eliminates emergency delays through intelligent multi-criteria matching, real-time in-app cross-organization communication, AI-driven shortage forecasting.
 
 ---
 
@@ -25,7 +25,7 @@ Emergency blood requisition in healthcare systems frequently suffers from fragme
 1. **Requesters & Patients** can post verified blood requisitions with medical prescription uploads.
 2. **Voluntary Donors** receive instantaneous SMS match alerts with secure, zero-friction 1-click action links.
 3. **Hospitals** can coordinate surgeries, reserve compatible units in advance, import and maintain voluntary donor rosters, and communicate directly with peer facilities.
-4. **Blood Banks** manage individual blood units via an audit-proof ledger, forecast shortages using predictive models, plan community blood drives with AI recommendations, and dispatch blood units with verifiable cold-chain traceability.
+4. **Blood Banks** manage individual blood units via an audit-proof ledger, forecast shortages using predictive models, and plan community blood drives with AI recommendations.
 
 ---
 
@@ -57,10 +57,6 @@ Emergency blood requisition in healthcare systems frequently suffers from fragme
 - **Smart Camp Planner**: Recommends optimal dates and high-footfall locations for community blood collection drives based on historical demographic response.
 - **Surgery Blood Planner**: Clinical crossmatch calculation that automatically reserves units for planned operations to eliminate intraoperative shortages.
 
-### 6. Cold-Chain Unit Traceability & Ledger
-- Individual bag tracking (`inventoryunits`) with unique serial barcodes, component fractionation records, serological screening results (HIV, HBV, HCV, Syphilis, Malaria), and expiration trackers.
-- Complete chain-of-custody logging upon hospital delivery receipt.
-
 ---
 
 ##  The Four Dedicated Portals
@@ -71,9 +67,9 @@ Emergency blood requisition in healthcare systems frequently suffers from fragme
   │   Donor Portal    │ Requester Portal  │  Hospital Portal  │ Blood Bank Portal │
   ├───────────────────┼───────────────────┼───────────────────┼───────────────────┤
   │ • Emergency Feed  │ • Request Intake  │ • Requisitions    │ • Unit Ledger     │
-  │ • 1-Click Action  │ • Prescription OCR│ • Surgery Planner │ • Dispatch Cold-C │
-  │ • Donation History│ • Real-time Status│ • Donor Registry  │ • AI Shortage Pred│
-  │ • Camp Discovery  │ • Direct Support  │ • Cross-Org Chat  │ • Smart Camp Plan │
+  │ • 1-Click Action  │ • Prescription OCR│ • Surgery Planner │ • AI Shortage Pred│
+  │ • Donation History│ • Real-time Status│ • Donor Registry  │ • Smart Camp Plan │
+  │ • Camp Discovery  │ • Direct Support  │ • Cross-Org Chat  │ • Donor Broadcast │
   └───────────────────┴───────────────────┴───────────────────┴───────────────────┘
 ```
 
@@ -94,10 +90,9 @@ Emergency blood requisition in healthcare systems frequently suffers from fragme
 - **Clinical Chat**: Coordinate directly with partner hospitals and blood banks via the top-bar **Chat** center.
 
 ### 4. Blood Bank Portal (`/bloodbank/*`)
-- **Unit Inventory & Barcode Registry**: Register newly collected bags, log fractionation, and record lab screening outcomes.
-- **Requisition Dispatch**: Assign reserved units to hospital requests and generate cold-chain custody receipts.
+- **Unit Inventory**: Register newly collected bags, log fractionation, and record lab screening outcomes.
 - **Predictive Analytics**: Review shortage forecasts and launch targeted blood donation drives using AI recommendations.
-- **Equipment Compliance**: Log maintenance and calibration records for centrifuges, agitators, and ultra-low freezers.
+- **Community Camps & Custom SMS**: Schedule blood donation drives and broadcast urgent appeal alerts to registered donors.
 
 ---
 
@@ -110,7 +105,7 @@ Swastya is engineered as a modern, decoupled clinical monorepo with dedicated pr
   - **Donor Portal (`/donor`)**: Real-time emergency feed, 1-click commitment action handlers, profile metrics, and camp discovery.
   - **Requester Portal (`/requester`)**: Requisition wizards, prescription image uploads with OCR parsing, and fulfillment milestone trackers.
   - **Hospital Portal (`/hospital`)**: Clinical requisition lifecycle, surgery blood reservation planner, voluntary donor registry management, and cross-facility peer messaging.
-  - **Blood Bank Portal (`/bloodbank`)**: Barcode unit tracking ledger, blood component fractionation, AI shortage forecasting, and camp planning.
+  - **Blood Bank Portal (`/bloodbank`)**: Blood component fractionation, AI shortage forecasting, and camp planning.
 - **In-App Peer Chat (`PeerChatManager`)**: Reusable real-time communication widget connecting hospitals and blood banks with instant unread indicators and directory search.
 
 ### 2. API & Gateway Layer (`backend`)
@@ -126,7 +121,6 @@ Swastya is engineered as a modern, decoupled clinical monorepo with dedicated pr
   - **Blood Shortage Predictor**: Computes 7-day, 14-day, and 30-day component burn-rates to proactively flag potential deficits.
   - **Smart Camp Planner**: Scores historical collection metrics to recommend optimal community blood drive dates and locations.
   - **Surgery Planner**: Automates surgical crossmatch requirements and reserves matching inventory prior to scheduled procedures.
-- **Cold-Chain Traceability Ledger**: Manages individual blood units (`inventoryunits`) with serological screening verification (HIV, HBV, HCV, Syphilis, Malaria) and custodial chain-of-custody transfer logging.
 
 ### 4. Background Workers & Event Processing
 - **Twilio SMS Outbox Worker (`outboxWorker.service.ts`)**: Implements the transactional outbox pattern by polling database-persisted queue entries (`smsoutbox`) with exponential retry backoff and local mock support (`TWILIO_MOCK_MODE`).
@@ -135,7 +129,7 @@ Swastya is engineered as a modern, decoupled clinical monorepo with dedicated pr
 
 ### 5. Data & Persistence Layer
 - **Neon Cloud PostgreSQL**: Serverless, high-availability PostgreSQL database operating over connection-pooled endpoints with strict SSL verification (`verify-full`).
-- **Prisma 7.10 ORM**: Type-safe database client mapping 49 normalized relational models across identity, clinical requisitions, inventory ledgers, surgeries, equipment, and peer messages.
+- **Prisma 7.10 ORM**: Type-safe database client mapping 49 normalized relational models across identity, clinical requisitions, inventory ledgers, surgeries, and peer messages.
 
 ### 6. External Telephony & Authentication Gateways
 - **Twilio Programmable Messaging**: Delivers time-sensitive SMS alerts containing HMAC-SHA256 signed 1-click action links (`/r/action/[token]`) for instant donor response.
@@ -177,8 +171,6 @@ The database schema is defined in [backend/prisma/schema.prisma](file:///c:/User
 │   ├── surgeryplans, surgeryplanstatushistory, procedurebloodconfigs
 ├── Community Camps & Drives
 │   ├── donationcamps, campregistrations, campstatushistory, campaudithistory
-├── Facility Equipment QA
-│   ├── equipment, equipmentcalibrations, equipmentmaintenance, equipmentbreakdowns
 ├── Voluntary Donor Registry
 │   ├── hospitaldonors, donoractivationtokens
 ├── Messaging & SMS Outbox
@@ -223,7 +215,7 @@ Swastya/
 │   │   │   ├── blood-requests/        # Blood request lifecycle, documents, OCR
 │   │   │   ├── matching/              # Automated multi-criteria emergency matching
 │   │   │   ├── hospitals/             # Hospital operations, surgery planner, coordination
-│   │   │   ├── blood-banks/           # Blood bank inventory, camps, equipment, AI forecasts
+│   │   │   ├── blood-banks/           # Blood bank inventory, camps, AI forecasts
 │   │   │   ├── communication/         # Peer chat, custom SMS, notifications, Twilio outbox
 │   │   │   ├── system/                # Health checks, diagnostic routes
 │   │   │   └── index.ts               # Core Express application entrypoint
@@ -389,7 +381,6 @@ node backend/node_modules/typescript/bin/tsc -p e2e/tsconfig.json --noEmit
 - **Role-Based Authorization (RBAC)**: All sensitive routes are guarded by strict role middleware (`DONOR`, `REQUESTER`, `HOSPITAL`, `BLOOD_BANK`).
 - **Encrypted Clinical Passwords**: Stored using industry-standard `bcryptjs` salts.
 - **HMAC Action Link Tamper-Resistance**: Action tokens sent in donor SMS alerts are signed with cryptographic HMAC-SHA256, strictly bound to a single action (`ACCEPT`/`DECLINE`), and expire automatically.
-- **Traceability Ledger Immutability**: All unit adjustments, screenings, and custody transfers are recorded in `inventoryledger` and `unitdispositionhistory` for full clinical traceability.
 - **Zero Credentials in Version Control**: Sensitive secrets, connection strings, and API keys are strictly excluded via root and nested `.gitignore` policies.
 
 ---

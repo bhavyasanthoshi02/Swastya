@@ -400,7 +400,7 @@ export function mapRequestStatusToDisplay(status: string | null | undefined): {
       };
     case "FULFILLED":
       return {
-        label: "Fulfilled & Dispatched",
+        label: "Fulfilled (Closed)",
         badgeClass: "bg-emerald-50 text-emerald-800 border-emerald-200",
         dotClass: "bg-emerald-600",
       };

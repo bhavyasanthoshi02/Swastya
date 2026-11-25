@@ -444,14 +444,24 @@ export default function BloodBankRequisitionsPage() {
   return (
     <div className="space-y-6 pb-12">
       {/* Top Breadcrumb Navigation */}
-      <div className="flex items-center justify-between gap-3">
-        <Link
-          href="/bloodbank/dashboard"
-          className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#053845] hover:text-[#317786] transition-colors"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          <span>Back to Blood Bank Dashboard</span>
-        </Link>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <Link
+            href="/bloodbank/dashboard"
+            className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#053845] hover:text-[#317786] transition-colors"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            <span>Back to Dashboard</span>
+          </Link>
+          <span className="text-slate-300">|</span>
+          <Link
+            href="/bloodbank/requests"
+            className="inline-flex items-center gap-1.5 text-xs font-bold text-[#317786] hover:text-[#053845] transition-colors"
+          >
+            <span>Switch to Blood Requests View</span>
+            <ArrowRight className="w-3.5 h-3.5" />
+          </Link>
+        </div>
 
         {!isLoading && !error && (
           <span className="text-xs text-slate-500">

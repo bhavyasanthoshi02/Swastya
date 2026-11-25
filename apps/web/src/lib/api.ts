@@ -58,6 +58,7 @@ export interface BloodRequestItem {
   prescriptionhistory?: PrescriptionHistoryItem[];
   requeststatushistory?: RequestStatusHistoryItem[];
   volunteers?: VolunteerDonorResponse[];
+  myCommitment?: VolunteerDonorResponse | null;
   requisitionassignments?: RequisitionAssignmentItem[];
 }
 
@@ -379,6 +380,7 @@ export interface VolunteerDonorResponse {
   completedAt?: string | null;
   estimatedArrival?: string;
   notes?: string;
+  transitnotes?: string;
   screening?: {
     drinksAlcohol?: boolean;
     alcoholInPast24Hours?: boolean;
@@ -2126,10 +2128,24 @@ export const api = {
         broadcast: any;
       }>(`/bloodrequests/${id}/broadcast`, data),
 
+    respondToRequest: (
+      requestId: string,
+      data?: {
+        action?: "ACCEPT" | "DECLINE";
+        estimatedArrival?: string;
+        notes?: string;
+      }
+    ) =>
+      api.post<{
+        success: boolean;
+        message: string;
+        deliveryId?: string;
+      }>(`/bloodrequests/${requestId}/respond`, data || {}),
+
     updateTransitStatus: (
       requestId: string,
       status: "DONOR_FOUND" | "STARTED" | "REACHED_LOCATION" | "COMPLETED" | string,
-      options?: { donorUserId?: string; deliveryId?: string }
+      options?: { donorUserId?: string; deliveryId?: string; deliveryMode?: string; notes?: string }
     ) =>
       api.patch<{
         success: boolean;
@@ -2145,6 +2161,8 @@ export const api = {
         status,
         ...(options?.donorUserId ? { donorUserId: options.donorUserId } : {}),
         ...(options?.deliveryId ? { deliveryId: options.deliveryId } : {}),
+        ...(options?.deliveryMode ? { deliveryMode: options.deliveryMode } : {}),
+        ...(options?.notes ? { notes: options.notes } : {}),
       }),
 
     decideVolunteer: (
@@ -2381,7 +2399,7 @@ export const api = {
     updateTransitStatus: (
       requestId: string,
       status: "DONOR_FOUND" | "STARTED" | "REACHED_LOCATION" | "COMPLETED" | string,
-      options?: { donorUserId?: string; deliveryId?: string }
+      options?: { donorUserId?: string; deliveryId?: string; deliveryMode?: string; notes?: string }
     ) =>
       api.patch<{
         success: boolean;
@@ -2397,6 +2415,8 @@ export const api = {
         status,
         ...(options?.donorUserId ? { donorUserId: options.donorUserId } : {}),
         ...(options?.deliveryId ? { deliveryId: options.deliveryId } : {}),
+        ...(options?.deliveryMode ? { deliveryMode: options.deliveryMode } : {}),
+        ...(options?.notes ? { notes: options.notes } : {}),
       }),
 
     decideVolunteer: (

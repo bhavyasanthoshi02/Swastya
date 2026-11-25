@@ -26,6 +26,6 @@ These activities often involve manual communication and can take time.
 
 Swastya is a blood coordination platform that brings requesters, donors, hospitals and blood banks together in one place.
 
-It helps users submit blood requests, find matching donors, receive notifications and communicate with other organizations. It also supports donor records, blood inventory management and blood unit tracking.
+It helps users submit blood requests, find matching donors, receive notifications and communicate with other organizations. It also supports donor records, blood inventory management.
 
 The main aim of Swastya is to make blood coordination easier and help users manage blood requirements in a more organized way.

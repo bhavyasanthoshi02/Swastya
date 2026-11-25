@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "predev": "node -e \"try { const fs=require('fs'); if(fs.existsSync('.next_dist/trace')) fs.unlinkSync('.next_dist/trace'); if(fs.existsSync('.next/trace')) fs.unlinkSync('.next/trace'); } catch(e){}\"",
+    "predev": "node -e \"try { const fs=require('fs'); ['.next_dist/trace', '.next/trace', '.next_dist/package.json', '.next/package.json'].forEach(f => { if(fs.existsSync(f)) try { fs.unlinkSync(f); } catch(e){} }); } catch(e){}\"",
     "dev": "next dev",
     "prebuild": "node -e \"try { const fs=require('fs'); if(fs.existsSync('.next_dist/trace')) fs.unlinkSync('.next_dist/trace'); if(fs.existsSync('.next/trace')) fs.unlinkSync('.next/trace'); } catch(e){}\"",
     "build": "next build",

@@ -57,10 +57,6 @@ Emergency blood requisition in healthcare systems frequently suffers from fragme
 - **Smart Camp Planner**: Recommends optimal dates and high-footfall locations for community blood collection drives based on historical demographic response.
 - **Surgery Blood Planner**: Clinical crossmatch calculation that automatically reserves units for planned operations to eliminate intraoperative shortages.
 
-### 6. Cold-Chain Unit Traceability & Ledger
-- Individual bag tracking (`inventoryunits`) with unique serial barcodes, component fractionation records, serological screening results (HIV, HBV, HCV, Syphilis, Malaria), and expiration trackers.
-- Complete chain-of-custody logging upon hospital delivery receipt.
-
 ---
 
 ##  The Four Dedicated Portals
@@ -94,7 +90,7 @@ Emergency blood requisition in healthcare systems frequently suffers from fragme
 - **Clinical Chat**: Coordinate directly with partner hospitals and blood banks via the top-bar **Chat** center.
 
 ### 4. Blood Bank Portal (`/bloodbank/*`)
-- **Unit Inventory & Barcode Registry**: Register newly collected bags, log fractionation, and record lab screening outcomes.
+- **Unit Inventory**: Register newly collected bags, log fractionation, and record lab screening outcomes.
 - **Predictive Analytics**: Review shortage forecasts and launch targeted blood donation drives using AI recommendations.
 - **Community Camps & Custom SMS**: Schedule blood donation drives and broadcast urgent appeal alerts to registered donors.
 
@@ -109,7 +105,7 @@ Swastya is engineered as a modern, decoupled clinical monorepo with dedicated pr
   - **Donor Portal (`/donor`)**: Real-time emergency feed, 1-click commitment action handlers, profile metrics, and camp discovery.
   - **Requester Portal (`/requester`)**: Requisition wizards, prescription image uploads with OCR parsing, and fulfillment milestone trackers.
   - **Hospital Portal (`/hospital`)**: Clinical requisition lifecycle, surgery blood reservation planner, voluntary donor registry management, and cross-facility peer messaging.
-  - **Blood Bank Portal (`/bloodbank`)**: Barcode unit tracking ledger, blood component fractionation, AI shortage forecasting, and camp planning.
+  - **Blood Bank Portal (`/bloodbank`)**: Blood component fractionation, AI shortage forecasting, and camp planning.
 - **In-App Peer Chat (`PeerChatManager`)**: Reusable real-time communication widget connecting hospitals and blood banks with instant unread indicators and directory search.
 
 ### 2. API & Gateway Layer (`backend`)
@@ -125,7 +121,6 @@ Swastya is engineered as a modern, decoupled clinical monorepo with dedicated pr
   - **Blood Shortage Predictor**: Computes 7-day, 14-day, and 30-day component burn-rates to proactively flag potential deficits.
   - **Smart Camp Planner**: Scores historical collection metrics to recommend optimal community blood drive dates and locations.
   - **Surgery Planner**: Automates surgical crossmatch requirements and reserves matching inventory prior to scheduled procedures.
-- **Cold-Chain Traceability Ledger**: Manages individual blood units (`inventoryunits`) with serological screening verification (HIV, HBV, HCV, Syphilis, Malaria) and custodial chain-of-custody transfer logging.
 
 ### 4. Background Workers & Event Processing
 - **Twilio SMS Outbox Worker (`outboxWorker.service.ts`)**: Implements the transactional outbox pattern by polling database-persisted queue entries (`smsoutbox`) with exponential retry backoff and local mock support (`TWILIO_MOCK_MODE`).
@@ -386,7 +381,6 @@ node backend/node_modules/typescript/bin/tsc -p e2e/tsconfig.json --noEmit
 - **Role-Based Authorization (RBAC)**: All sensitive routes are guarded by strict role middleware (`DONOR`, `REQUESTER`, `HOSPITAL`, `BLOOD_BANK`).
 - **Encrypted Clinical Passwords**: Stored using industry-standard `bcryptjs` salts.
 - **HMAC Action Link Tamper-Resistance**: Action tokens sent in donor SMS alerts are signed with cryptographic HMAC-SHA256, strictly bound to a single action (`ACCEPT`/`DECLINE`), and expire automatically.
-- **Traceability Ledger Immutability**: All unit adjustments, screenings, and custody transfers are recorded in `inventoryledger` and `unitdispositionhistory` for full clinical traceability.
 - **Zero Credentials in Version Control**: Sensitive secrets, connection strings, and API keys are strictly excluded via root and nested `.gitignore` policies.
 
 ---

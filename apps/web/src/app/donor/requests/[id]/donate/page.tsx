@@ -40,6 +40,8 @@ export default function DonorScreeningAndDonatePage() {
   >("DONOR_FOUND");
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
   const [statusUpdateSuccess, setStatusUpdateSuccess] = useState<string | null>(null);
+  const [showThankYouModal, setShowThankYouModal] = useState(false);
+  const [thankYouDismissed, setThankYouDismissed] = useState(false);
 
   // Mandatory Questionnaire State
   const [drinksAlcohol, setDrinksAlcohol] = useState<boolean | null>(null);
@@ -70,10 +72,14 @@ export default function DonorScreeningAndDonatePage() {
           setContactPhone(profileRes.donor.users?.phonenumber || "");
         }
 
-        const reqRes = await api.donor.getMatchingRequests({ limit: 50 });
-        if (reqRes.success && reqRes.requests) {
-          const rawParam = (requestIdParam || "").trim().toLowerCase();
-          const cleanedParam = rawParam.replace(/^req-/, "");
+        const rawParam = (requestIdParam || "").trim().toLowerCase();
+        const cleanedParam = rawParam.replace(/^req-/, "");
+
+        let loadedRequest: any = null;
+        let loadedCommitment: any = null;
+
+        const reqRes = await api.donor.getMatchingRequests({ limit: 50 }).catch(() => null);
+        if (reqRes?.success && reqRes.requests) {
           const match = rawParam
             ? reqRes.requests.find((r: { requestid?: string }) => {
                 const rawId = (r.requestid || "").toLowerCase();
@@ -88,30 +94,43 @@ export default function DonorScreeningAndDonatePage() {
             : undefined;
 
           if (match) {
-            const mapped = mapBackendRequestToPreview(match);
-            const verifiedRawId = (mapped.rawId || "").toLowerCase();
-            if (
-              verifiedRawId === rawParam ||
-              verifiedRawId === cleanedParam ||
-              `req-${verifiedRawId.slice(0, 8)}` === rawParam ||
-              (cleanedParam.length >= 8 && verifiedRawId.startsWith(cleanedParam))
-            ) {
-              setRequest(mapped);
-            } else {
-              setRequest(null);
-              setErrorMessage(
-                "Requested blood requisition ID mismatch. Please return to the requests list."
-              );
+            loadedRequest = mapBackendRequestToPreview(match);
+          }
+        }
+
+        // If not found in matching pool or already committed/fulfilled, fetch direct requisition
+        const lookupId = loadedRequest?.rawId || cleanedParam || rawParam;
+        if (lookupId) {
+          const directRes = await api.bloodRequests.getById(lookupId).catch(() => null);
+          if (directRes && (directRes.requestid || (directRes as any).id)) {
+            if (!loadedRequest) {
+              loadedRequest = mapBackendRequestToPreview(directRes);
             }
-          } else {
-            setRequest(null);
-            setErrorMessage(
-              "Blood request not found or no longer available for matching. It may have been fulfilled, cancelled, or outside your current eligibility/radius."
-            );
+            if ((directRes as any).myCommitment) {
+              loadedCommitment = (directRes as any).myCommitment;
+            }
+          }
+        }
+
+        if (loadedRequest) {
+          setRequest(loadedRequest);
+          if (loadedCommitment) {
+            setIsSubmitted(true);
+            const transit = (loadedCommitment.transitStatus || loadedCommitment.status || "DONOR_FOUND") as any;
+            setTransitStatus(transit);
+            if (transit === "COMPLETED" || loadedRequest.requestStatus === "FULFILLED") {
+              setShowThankYouModal(true);
+            }
+          } else if (loadedRequest.requestStatus === "FULFILLED") {
+            setIsSubmitted(true);
+            setTransitStatus("COMPLETED");
+            setShowThankYouModal(true);
           }
         } else {
           setRequest(null);
-          setErrorMessage("Unable to load matching blood requests.");
+          setErrorMessage(
+            "Blood request not found or no longer available for matching."
+          );
         }
       } catch (err: unknown) {
         setErrorMessage(
@@ -248,6 +267,9 @@ export default function DonorScreeningAndDonatePage() {
       const res = await api.donor.updateTransitStatus(targetId, newStatus);
       if (res.success) {
         setTransitStatus(newStatus);
+        if (newStatus === "COMPLETED") {
+          setShowThankYouModal(true);
+        }
         setStatusUpdateSuccess(
           newStatus === "STARTED"
             ? "Status updated: Started Journey! Requester & Hospital notified."
@@ -267,6 +289,12 @@ export default function DonorScreeningAndDonatePage() {
       setIsUpdatingStatus(false);
     }
   };
+
+  useEffect(() => {
+    if ((transitStatus === "COMPLETED" || request?.requestStatus === "FULFILLED") && !thankYouDismissed && !showThankYouModal) {
+      setShowThankYouModal(true);
+    }
+  }, [transitStatus, request?.requestStatus, thankYouDismissed, showThankYouModal]);
 
   if (isLoading) {
     return (
@@ -436,9 +464,23 @@ export default function DonorScreeningAndDonatePage() {
               )}
 
               {transitStatus === "COMPLETED" && (
-                <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold text-center flex items-center justify-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                  <span>Donation Completed &bull; Blood unit collected successfully!</span>
+                <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                    <div>
+                      <p className="font-bold text-emerald-900 text-sm">Donation Completed &amp; Requisition Closed</p>
+                      <p className="text-emerald-800 text-xs">
+                        Blood unit collected successfully! Thank you for saving a life.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowThankYouModal(true)}
+                    className="px-3.5 py-1.5 rounded-xl text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 transition-colors cursor-pointer shrink-0"
+                  >
+                    View Thank You Card
+                  </button>
                 </div>
               )}
             </div>
@@ -1080,6 +1122,65 @@ export default function DonorScreeningAndDonatePage() {
           </button>
         </div>
       </form>
+
+      {/* Celebration Thank You Modal */}
+      {showThankYouModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl border border-[#F3E9D1] shadow-2xl max-w-md w-full p-6 sm:p-7 text-center space-y-5 animate-in zoom-in-95 duration-200">
+            <div className="mx-auto w-16 h-16 rounded-3xl bg-gradient-to-tr from-[#317786] to-emerald-500 text-white flex items-center justify-center shadow-lg shadow-emerald-500/20">
+              <Heart className="w-8 h-8 fill-current animate-pulse text-white" />
+            </div>
+
+            <div className="space-y-2">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Requisition Fulfilled &amp; Closed</span>
+              </span>
+              <h2 className="font-serif text-2xl font-bold text-[#053845]">
+                Thank You So Much, Hero!
+              </h2>
+              <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+                A life was saved today! You stepped up and made a real difference by donating your life-saving blood for patient{" "}
+                <strong>{(request as any)?.patientname || (request as any)?.patientName || "the patient"}</strong>. Your heroism and generosity are deeply appreciated.
+              </p>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-[#FAF6EE] border border-[#F3E9D1] text-xs space-y-1.5 text-left">
+              <div className="flex justify-between text-slate-600">
+                <span>Care Facility:</span>
+                <span className="font-bold text-[#053845]">{request?.hospitalName || "Hospital"}</span>
+              </div>
+              <div className="flex justify-between text-slate-600">
+                <span>Blood Group:</span>
+                <span className="font-bold text-[#053845]">{request?.bloodGroup} ({request?.bloodComponent || "Whole Blood"})</span>
+              </div>
+              <div className="flex justify-between text-slate-600">
+                <span>Donation Status:</span>
+                <span className="font-bold text-emerald-700">Fulfilled &amp; Closed</span>
+              </div>
+            </div>
+
+            <div className="pt-2 flex flex-col sm:flex-row items-center gap-2.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowThankYouModal(false);
+                  setThankYouDismissed(true);
+                }}
+                className="w-full sm:w-1/2 px-4 py-2.5 rounded-xl text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 transition-colors cursor-pointer"
+              >
+                View Closed Request
+              </button>
+              <Link
+                href="/donor/dashboard"
+                className="w-full sm:w-1/2 inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold text-white bg-[#053845] hover:bg-[#317786] transition-colors"
+              >
+                <span>Return to Dashboard</span>
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1110,13 +1110,24 @@ export default function RequestDetailPage() {
                         </button>
                       </div>
                     ) : isAccepted && vol.deliveryId ? (
-                      <Link
-                        href={`/requester/requests/${request.requestid}/donors/${vol.deliveryId}`}
-                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-[#053845] hover:bg-[#317786] transition-colors"
-                      >
-                        <span>View Details</span>
-                        <ArrowRight className="w-3 h-3" />
-                      </Link>
+                      <div className="flex items-center gap-1.5">
+                        {transit === "REACHED_LOCATION" && !isCompleted && (
+                          <Link
+                            href={`/requester/requests/${request.requestid}/donors/${vol.deliveryId}`}
+                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 transition-colors animate-pulse"
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            <span>Confirm Receipt</span>
+                          </Link>
+                        )}
+                        <Link
+                          href={`/requester/requests/${request.requestid}/donors/${vol.deliveryId}`}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-[#053845] hover:bg-[#317786] transition-colors"
+                        >
+                          <span>{transit === "REACHED_LOCATION" ? "Details & Tracker" : "View Details"}</span>
+                          <ArrowRight className="w-3 h-3" />
+                        </Link>
+                      </div>
                     ) : null}
                   </div>
                 </div>

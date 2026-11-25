@@ -20,6 +20,7 @@ import {
   MessageSquare,
   Layers,
   Calendar,
+  Heart,
 } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { api } from "@/lib/api";
@@ -166,13 +167,19 @@ export function BloodBankTopNav({
     setIsChatOpen(false);
   }, [pathname]);
 
-  // Primary 3 core navigation links
+  // Primary core navigation links
   const coreLinks = [
     {
       href: "/bloodbank/dashboard",
       label: "Dashboard",
       icon: LayoutDashboard,
       active: pathname === "/bloodbank/dashboard" || pathname === "/bloodbank",
+    },
+    {
+      href: "/bloodbank/requests",
+      label: "Blood Requests",
+      icon: Heart,
+      active: pathname.startsWith("/bloodbank/requests"),
     },
     {
       href: "/bloodbank/inventory",

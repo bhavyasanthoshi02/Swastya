@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams, useSearchParams, useRouter } from "next/navigation";
 import {
   ChevronLeft,
   User,
@@ -19,6 +19,7 @@ import {
   Check,
   Navigation,
   HeartHandshake,
+  Heart,
   X,
   UploadCloud,
   FileText,
@@ -71,6 +72,7 @@ export default function RequesterDonorDetailPage() {
   const backLabel = fromAvailableDonors
     ? "Back to Available Donors"
     : "Back to Blood Request Details";
+  const router = useRouter();
 
   const [requestSummary, setRequestSummary] = useState<RequestSummary | null>(null);
   const [volunteer, setVolunteer] = useState<VolunteerDonorResponse | null>(null);
@@ -84,6 +86,7 @@ export default function RequesterDonorDetailPage() {
   const [isViewingReceipt, setIsViewingReceipt] = useState(false);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [isConfirmingReceipt, setIsConfirmingReceipt] = useState(false);
+  const [showThankYouModal, setShowThankYouModal] = useState(false);
   const [actionFeedback, setActionFeedback] = useState<{
     type: "success" | "error";
     text: string;
@@ -205,6 +208,7 @@ export default function RequesterDonorDetailPage() {
       }
       const res = await api.bloodRequests.confirmBloodReceipt(requestId, deliveryId);
       setShowReceiptModal(false);
+      setShowThankYouModal(true);
       setActionFeedback({
         type: "success",
         text: res.message || "Blood receipt confirmed and donor notified.",
@@ -867,7 +871,7 @@ export default function RequesterDonorDetailPage() {
               </div>
 
               <p className="text-xs text-slate-600 leading-relaxed">
-                Confirm that the blood unit has been received. This records receipt and notifies the donor.
+                Confirm that the blood unit has been received. This records receipt and marks this requisition as fulfilled.
               </p>
             </div>
 
@@ -890,6 +894,57 @@ export default function RequesterDonorDetailPage() {
                 <span>{isConfirmingReceipt ? "Confirming..." : "Confirm Blood Received"}</span>
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 9. Blood Donation Complete Pop Up for Requester */}
+      {showThankYouModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl border border-[#F3E9D1] shadow-2xl max-w-md w-full p-6 sm:p-7 text-center space-y-5 animate-in zoom-in-95 duration-200">
+            <div className="mx-auto w-16 h-16 rounded-3xl bg-emerald-50 text-emerald-600 border border-emerald-200 flex items-center justify-center shadow-md">
+              <CheckCircle2 className="w-9 h-9" />
+            </div>
+
+            <div className="space-y-2">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>Requisition Fulfilled &amp; Closed</span>
+              </span>
+              <h2 className="font-serif text-2xl font-bold text-[#053845]">
+                Blood Donation Complete
+              </h2>
+              <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+                Blood receipt has been confirmed successfully. The blood donation is complete and this requisition is now closed.
+              </p>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-[#FAF6EE] border border-[#F3E9D1] text-xs space-y-1.5 text-left">
+              <div className="flex justify-between text-slate-600">
+                <span>Blood Provider:</span>
+                <span className="font-bold text-[#053845]">{volunteer.donorName}</span>
+              </div>
+              <div className="flex justify-between text-slate-600">
+                <span>Patient Name:</span>
+                <span className="font-bold text-[#053845]">{requestSummary.patientname}</span>
+              </div>
+              <div className="flex justify-between text-slate-600">
+                <span>Units Received:</span>
+                <span className="font-bold text-emerald-700">{requestSummary.unitsrequired || 1} Unit(s)</span>
+              </div>
+              <div className="flex justify-between text-slate-600">
+                <span>Status:</span>
+                <span className="font-bold text-emerald-700">Fulfilled &amp; Closed</span>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => router.push("/requester/requests")}
+              className="w-full inline-flex items-center justify-center gap-2 px-5 py-3 rounded-2xl text-xs font-bold text-white bg-[#053845] hover:bg-[#317786] transition-all shadow-sm cursor-pointer"
+            >
+              <span>Okay</span>
+            </button>
           </div>
         </div>
       )}

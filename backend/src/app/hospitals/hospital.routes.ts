@@ -663,7 +663,10 @@ router.get("/me/bloodrequests", authenticate, authorize("HOSPITAL", "ADMIN"), re
 
         const bloodRequests = await prisma.bloodrequests.findMany({
             where: {
-                hospitalid: hospital.hospitalid,
+                OR: [
+                    { hospitalid: hospital.hospitalid },
+                    { hospitalid: null },
+                ],
             },
             include: {
                 users: {

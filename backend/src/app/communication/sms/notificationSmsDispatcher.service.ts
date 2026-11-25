@@ -21,12 +21,27 @@ export class NotificationSmsDispatcher {
             const db = prismaTx || prisma;
             const user = await db.users.findUnique({
                 where: { userid: userId },
-                select: { phonenumber: true, name: true, isactive: true },
+                select: { phonenumber: true, name: true, isactive: true, role: true },
             });
-            if (!user || !user.phonenumber || user.isactive === false) {
+            if (!user || user.isactive === false) {
                 return null;
             }
-            return { phone: user.phonenumber, name: user.name };
+            let phone = user.phonenumber;
+            if (!phone && user.role === "BLOOD_BANK") {
+                const bb = await db.bloodbanks.findUnique({
+                    where: { userid: userId },
+                    select: { contactpersonphone: true },
+                });
+                phone = bb?.contactpersonphone || null;
+            } else if (!phone && user.role === "HOSPITAL") {
+                const hosp = await db.hospitals.findUnique({
+                    where: { userid: userId },
+                    select: { contactpersonphone: true },
+                });
+                phone = hosp?.contactpersonphone || null;
+            }
+            if (!phone) return null;
+            return { phone, name: user.name };
         } catch (err) {
             console.warn(`[NotificationSmsDispatcher] Failed to fetch user ${userId} phone:`, err);
             return null;
@@ -735,44 +750,58 @@ export class NotificationSmsDispatcher {
      */
     public static async dispatchBloodBankReqAssigned({
         bloodBankUserId,
+        contactPhone,
         requestId,
         bloodGroup,
         units,
         prismaTx,
     }: {
-        bloodBankUserId: string;
+        bloodBankUserId?: string;
+        contactPhone?: string;
         requestId: string;
         bloodGroup: string;
         units: number;
         prismaTx?: any;
     }): Promise<{ queued: boolean; outboxId?: string }> {
         try {
-            const user = await this.getUserPhone(bloodBankUserId, prismaTx);
-            if (!user) return { queued: false };
+            let phone = contactPhone;
+            if (!phone && bloodBankUserId) {
+                const user = await this.getUserPhone(bloodBankUserId, prismaTx);
+                phone = user?.phone;
+            }
+            if (!phone) return { queued: false };
 
-            const tokenRes = await ActionTokenService.createActionToken({
-                userId: bloodBankUserId,
-                purpose: "BLOOD_BANK_CHECK",
-                targetId: requestId,
-                redirectUrl: "/bloodbank/requisitions",
-                expiresInHours: 24,
-                prismaTx,
-            });
+            let actionUrl = `/bloodbank/requests/${requestId}`;
+            if (bloodBankUserId) {
+                try {
+                    const tokenRes = await ActionTokenService.createActionToken({
+                        userId: bloodBankUserId,
+                        purpose: "BLOOD_BANK_CHECK",
+                        targetId: requestId,
+                        redirectUrl: `/bloodbank/requests/${requestId}`,
+                        expiresInHours: 24,
+                        prismaTx,
+                    });
+                    if (tokenRes?.actionUrl) actionUrl = tokenRes.actionUrl;
+                } catch (tokenErr) {
+                    console.warn("[NotificationSmsDispatcher] BB token creation failed, using direct url:", tokenErr);
+                }
+            }
 
-            const idempotencyKey = `SMS:BB_ASSIGNED:${requestId}:${bloodBankUserId}`;
+            const idempotencyKey = `SMS:BB_ASSIGNED:${requestId}:${bloodBankUserId || phone}`;
 
             return await SmsService.queueSms(
                 {
-                    to: user.phone,
+                    to: phone,
                     template: "BLOOD_BANK_REQ_ASSIGNED",
                     variables: {
                         requestId: requestId.slice(0, 8).toUpperCase(),
                         units: String(units),
                         bloodGroup: bloodGroup || "Blood",
-                        actionUrl: tokenRes.actionUrl,
+                        actionUrl,
                     },
                     userId: bloodBankUserId,
-                    actionUrl: tokenRes.actionUrl,
+                    actionUrl,
                     idempotencyKey,
                 },
                 prismaTx
