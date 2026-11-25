@@ -11,6 +11,9 @@ frontend/.next/
 frontend/.next_dist/
 .next_dist/
 frontend/out/
+apps/web/.next/
+apps/web/.next_dist/
+apps/web/out/
 
 # Backups & Runtime Uploads
 backend/backups/

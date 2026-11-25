@@ -1,7 +1,7 @@
 import { prisma } from "../src/config/prisma";
 import { generateToken } from "../src/utils/jwt";
 import app from "../src/app";
-import { mapBackendDonorToProfile } from "../../frontend/src/lib/mappers";
+import { mapBackendDonorToProfile } from "../../apps/web/src/lib/mappers";
 
 // Database safety constraint
 const dbUrl = process.env.DATABASE_URL || "";

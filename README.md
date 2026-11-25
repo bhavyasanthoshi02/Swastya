@@ -15,10 +15,6 @@
 - [Environment Variables](#-environment-variables)
 - [Getting Started & Local Setup](#-getting-started--local-setup)
 - [Automated Testing & Quality Assurance](#-automated-testing--quality-assurance)
-- [Deployment Overview](#-deployment-overview)
-- [Security & Compliance](#-security--compliance)
-- [Screenshots & UI Showcase](#-screenshots--ui-showcase)
-- [Contributing & License](#-contributing--license)
 
 ---
 
@@ -200,71 +196,61 @@ The database schema is defined in [backend/prisma/schema.prisma](file:///c:/User
 
 ```
 Swastya/
-├── backend/
+├── apps/
+│   └── web/                           # Next.js 15.2.0 Web Application (All 4 Portals)
+│       ├── src/
+│       │   ├── app/
+│       │   │   ├── donor/             # Donor Portal routes
+│       │   │   ├── requester/         # Requester / Patient Portal routes
+│       │   │   ├── hospital/          # Hospital Portal (Surgeries, Donors, Chat)
+│       │   │   ├── bloodbank/         # Blood Bank Portal (Inventory, Traceability, AI)
+│       │   │   ├── r/action/[token]/  # 1-click SMS action landing handler
+│       │   │   ├── signin/            # Universal authenticated login (Email & OTP)
+│       │   │   └── signup/            # Multi-role account onboarding
+│       │   ├── components/            # Portal UI components, navbars, and chat
+│       │   └── lib/                   # API clients, session auth, MSG91 client
+│       ├── public/                    # Static portal icons and logos
+│       ├── next.config.ts             # Next.js build configuration
+│       └── package.json
+│
+├── backend/                           # Express + TypeScript REST API
 │   ├── prisma/
 │   │   ├── schema.prisma              # Comprehensive Prisma schema (49 models)
 │   │   └── migrations/                # Database migrations
 │   ├── src/
-│   │   ├── config/
-│   │   │   └── prisma.ts              # Neon PostgreSQL client with connection safety
-│   │   ├── middleware/
-│   │   │   ├── auth.middleware.ts     # JWT session verification
-│   │   │   └── role.middleware.ts     # Strict RBAC (DONOR, HOSPITAL, BLOOD_BANK, ADMIN)
-│   │   ├── routes/
-│   │   │   ├── auth.routes.ts         # User auth, phone OTP verification, registry login
-│   │   │   ├── bloodrequest.routes.ts # Blood requests & automated matching trigger
-│   │   │   ├── hospitalCommunication.routes.ts # Hospital peer & cross-org chat
-│   │   │   ├── bloodbankCommunication.routes.ts# Blood bank peer & cross-org chat
-│   │   │   ├── surgeryPlanner.routes.ts        # Surgical blood reservation
-│   │   │   └── bloodShortagePredictor.routes.ts# Predictive AI inventory forecasting
-│   │   ├── services/
-│   │   │   ├── peerCommunication.service.ts    # Chat persistence & unread tracking
-│   │   │   ├── donorImport.service.ts          # Registry parsing, normalization, user link
-│   │   │   ├── unitTraceability.service.ts     # Cold-chain blood unit traceability
-│   │   │   ├── smartCampPlanner.service.ts     # AI camp location & date scoring
-│   │   │   └── sms/
-│   │   │       ├── outboxWorker.service.ts     # Background SMS outbox dispatcher
-│   │   │       ├── twilio.provider.ts          # Twilio API integration & mock mode
-│   │   │       ├── actionToken.service.ts      # HMAC signed 1-click action tokens
-│   │   │       └── bloodRequestEvents.ts       # Automated request lifecycle SMS events
-│   │   ├── app.ts                     # Express application configuration
-│   │   └── server.ts                  # Server entrypoint and worker initializers
+│   │   ├── app/                       # Feature-based modular architecture
+│   │   │   ├── auth/                  # Authentication, user routes, MSG91, donor import
+│   │   │   ├── donors/                # Donor profiles, eligibility, and stats
+│   │   │   ├── requesters/            # Patient requisitions and prescription flows
+│   │   │   ├── blood-requests/        # Blood request lifecycle, documents, OCR
+│   │   │   ├── matching/              # Automated multi-criteria emergency matching
+│   │   │   ├── hospitals/             # Hospital operations, surgery planner, coordination
+│   │   │   ├── blood-banks/           # Blood bank inventory, camps, equipment, AI forecasts
+│   │   │   ├── communication/         # Peer chat, custom SMS, notifications, Twilio outbox
+│   │   │   ├── system/                # Health checks, diagnostic routes
+│   │   │   └── index.ts               # Core Express application entrypoint
+│   │   ├── config/                    # Neon PostgreSQL client with connection pooling
+│   │   ├── middleware/                # JWT verification and strict RBAC middleware
+│   │   ├── utils/                     # Blood compatibility, distance, HMAC tokens, JWT
+│   │   ├── server.ts                  # HTTP listener & background worker coordinator
+│   │   ├── routes/                    # Backward-compatible modular route shims
+│   │   └── services/                  # Backward-compatible modular service shims
+│   ├── tests/                         # Integration, audit, and security test suites
 │   └── package.json
 │
-├── frontend/
-│   ├── next.config.ts                 # Next.js configuration & startup trace cleanup
-│   ├── src/
-│   │   ├── app/
-│   │   │   ├── donor/                 # Donor Portal routes
-│   │   │   ├── requester/             # Requester / Patient Portal routes
-│   │   │   ├── hospital/
-│   │   │   │   ├── dashboard/         # Clinical dashboard
-│   │   │   │   ├── donors/            # Hospital voluntary donor registry
-│   │   │   │   ├── surgeries/         # Surgical blood planner
-│   │   │   │   └── messages/          # Hospital-to-Hospital & Blood Bank Chat
-│   │   │   ├── bloodbank/
-│   │   │   │   ├── dashboard/         # Blood bank dashboard
-│   │   │   │   ├── inventory/         # Traceability ledger & unit management
-│   │   │   │   ├── predictor/         # AI shortage forecasting
-│   │   │   │   ├── camp-planner/      # Smart blood drive planner
-│   │   │   │   └── messages/          # Blood Bank-to-Blood Bank & Hospital Chat
-│   │   │   ├── r/action/[token]/      # 1-click SMS action landing handler
-│   │   │   ├── signin/                # Universal authenticated login (Email & OTP)
-│   │   │   └── signup/                # Multi-role account onboarding
-│   │   ├── components/
-│   │   │   ├── chat/
-│   │   │   │   └── PeerChatManager.tsx# Reusable peer & cross-organization chat UI
-│   │   │   ├── hospital/
-│   │   │   │   └── HospitalTopNav.tsx # Navbar with dedicated Chat dropdown
-│   │   │   ├── bloodbank/
-│   │   │   │   └── BloodBankTopNav.tsx# Navbar with dedicated Chat dropdown
-│   │   │   └── ui/                    # UI elements, buttons, badges, tables
-│   │   └── lib/
-│   │       ├── api.ts                 # Type-safe Axios/Fetch API client
-│   │       ├── auth.ts                # Session state, tokens, and storage sync
-│   │       └── msg91.ts               # Client-side MSG91 OTP widget initialization
-│   └── package.json
+├── packages/
+│   ├── contracts/                     # Shared API type definitions & request/response contracts
+│   │   ├── src/index.ts
+│   │   └── package.json
+│   └── shared/                        # Shared clinical constants (ABO matrices, blood group codes)
+│       ├── src/index.ts
+│       └── package.json
 │
+├── brand/                             # High-resolution logos and SVG brand assets
+├── docs/                              # Project diagrams and architectural documentation
+├── e2e/                               # End-to-end integration and frontend test suites
+├── scripts/                           # Maintenance, database alignment, and verification scripts
+├── package.json                       # Monorepo orchestration & concurrent dev runner
 └── README.md                          # Comprehensive project documentation
 ```
 
@@ -298,8 +284,8 @@ TWILIO_MESSAGING_SERVICE_SID="MG00000000000000000000000000000000"
 TWILIO_MOCK_MODE=true
 ```
 
-### Frontend (`frontend/.env.local`)
-Create `frontend/.env.local` using the template below:
+### Frontend Web (`apps/web/.env.local`)
+Create `apps/web/.env.local` using the template below:
 
 ```ini
 # Swastya Backend API Base URL
@@ -328,64 +314,75 @@ git clone https://github.com/bhavyasanthoshi02/Swastya.git
 cd Swastya
 ```
 
-### 2. Backend Setup
-```bash
-cd backend
+### 2. Configure Environment Files & Prisma Client
+- **Backend Environment**: Copy `backend/.env.example` to `backend/.env` and supply your Neon DB connection string and secrets.
+- **Frontend Environment**: Copy `apps/web/.env.example` to `apps/web/.env.local`.
+- **Generate Prisma Client**:
+  ```bash
+  cd backend && npx prisma generate && cd ..
+  ```
 
-# Install dependencies
-npm install
-
-# Generate Prisma Client
-npx prisma generate
-
-# Configure environment variables
-cp .env.example .env
-# Open .env and populate your Neon DB connection string and secrets
-
-# Start development server
-npm run dev
-```
-The backend API will boot up at `http://localhost:5000`.
-
-### 3. Frontend Setup
-Open a separate terminal window:
+### 3. Quick Start (Run Both Frontend & Backend Concurrently)
+From the root repository directory:
 
 ```bash
-cd frontend
-
-# Install dependencies
+# Install root dependencies
 npm install
 
-# Configure environment variables
-cp .env.example .env.local
-# Open .env.local and populate the backend URL
-
-# Start Next.js development server
+# Start both backend and web servers simultaneously
 npm run dev
 ```
-Open your browser and navigate to `http://localhost:3000`.
+
+- **Backend API**: Running at `http://localhost:5000` (with active background workers)
+- **Frontend Web Application**: Running at `http://localhost:3000`
+
+### 4. Root Repository Scripts
+From the main project directory, you can also run:
+
+| Command | Action |
+| :--- | :--- |
+| `npm run dev` | Starts both backend (port 5000) and frontend (port 3000) concurrently with labeled logs |
+| `npm run dev:backend` | Starts only the Express backend development server with hot-reload (`tsx watch`) |
+| `npm run dev:web` | Starts only the Next.js frontend development server (`next dev`) |
+| `npm run build` | Builds both the backend and frontend for production |
+| `npm run build:backend` | Compiles the backend TypeScript into `dist/` |
+| `npm run build:web` | Generates the Next.js production build for `apps/web` |
+| `npm run tsc` | Runs TypeScript compilation verification across both backend and frontend |
 
 ---
 
 ##  Automated Testing & Quality Assurance
 
-The codebase includes comprehensive integration and type checks for clinical safety:
+The codebase includes comprehensive integration, build, and type checks:
 
 ```bash
-# Verify backend type integrity
+# 1. Verify backend type integrity (TypeScript)
 cd backend
 npx tsc --noEmit
 
-# Run backend regression and security test suites
-npm run test:aud07
-npm run test:aud08
-npm run test:aud10
-npm run test:aud11
+# 2. Verify Prisma schema and regenerate client
+npx prisma validate
+npx prisma generate
 
-# Verify frontend type integrity
-cd ../frontend
+# 3. Verify frontend web type integrity (TypeScript)
+cd ../apps/web
 npx tsc --noEmit
+
+# 4. Verify frontend web production build (All 57 routes)
+npm run build
+
+# 5. Verify shared packages compilation
+cd ../packages/contracts && npx tsc
+cd ../shared && npx tsc
+
+# 6. Verify end-to-end integration test suite types
+cd ../..
+node backend/node_modules/typescript/bin/tsc -p e2e/tsconfig.json --noEmit
 ```
+
+> [!NOTE]
+> The regression test scripts (`npm run test:aud07`, `test:aud08`, etc.) contain safety assertions that require a local test database named `swastya_test` (`assert(currentDb === "swastya_test")`) to prevent accidental data modifications on the live Neon Cloud PostgreSQL database (`neondb`).
+
 
 ---
 

@@ -1,0 +1,18 @@
+{
+  "name": "swastya",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Swastya Smart Clinical Blood Coordination Network Monorepo",
+  "scripts": {
+    "dev": "concurrently -n \"backend,web\" -c \"blue.bold,magenta.bold\" \"npm run dev:backend\" \"npm run dev:web\"",
+    "dev:backend": "npm --prefix backend run dev",
+    "dev:web": "npm --prefix apps/web run dev",
+    "build:backend": "npm --prefix backend run build",
+    "build:web": "npm --prefix apps/web run build",
+    "build": "npm --prefix backend run build && npm --prefix apps/web run build",
+    "tsc": "npm --prefix backend run build && cd apps/web && npx tsc --noEmit"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.7"
+  }
+}

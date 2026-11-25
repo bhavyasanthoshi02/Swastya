@@ -1,9 +1,3 @@
-import { Router } from "express";
-
-const router = Router();
-
-router.get("/", (_req, res) => {
-    res.json({ message: "Test route working" });
-});
-
-export default router;
+// Auto-generated backward-compatible shim for Swastya modular architecture
+export * from "../app/system/test.routes";
+export { default } from "../app/system/test.routes";
