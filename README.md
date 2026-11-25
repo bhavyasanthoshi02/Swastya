@@ -103,45 +103,43 @@ Emergency blood requisition in healthcare systems frequently suffers from fragme
 
 ##  System Architecture
 
-```mermaid
-flowchart TD
-    subgraph Client["Frontend Layer (Next.js 15 + React 19)"]
-        DP["Donor Portal (/donor)"]
-        RP["Requester Portal (/requester)"]
-        HP["Hospital Portal (/hospital)"]
-        BP["Blood Bank Portal (/bloodbank)"]
-        ChatUI["PeerChatManager (In-App Messaging)"]
-    end
+Swastya is engineered as a modern, decoupled clinical monorepo with dedicated presentation, service orchestration, background processing, and persistence layers:
 
-    subgraph API["Backend Layer (Express + TypeScript)"]
-        AuthMiddleware["JWT & RBAC Middleware"]
-        Routes["API Endpoints (/routes)"]
-        MatchingEngine["Automated Donor Matching Engine"]
-        PeerCommService["PeerCommunicationService"]
-        AIPlanner["Predictive AI & Camp Planner"]
-        OutboxWorker["SMS Outbox Polling Worker"]
-    end
+### 1. Presentation Layer (`apps/web`)
+- **Next.js 15.2 (App Router) & React 19**: Server-side rendered and client-hydrated interfaces providing tailored workflows for all four participant roles:
+  - **Donor Portal (`/donor`)**: Real-time emergency feed, 1-click commitment action handlers, profile metrics, and camp discovery.
+  - **Requester Portal (`/requester`)**: Requisition wizards, prescription image uploads with OCR parsing, and fulfillment milestone trackers.
+  - **Hospital Portal (`/hospital`)**: Clinical requisition lifecycle, surgery blood reservation planner, voluntary donor registry management, and cross-facility peer messaging.
+  - **Blood Bank Portal (`/bloodbank`)**: Barcode unit tracking ledger, blood component fractionation, AI shortage forecasting, and camp planning.
+- **In-App Peer Chat (`PeerChatManager`)**: Reusable real-time communication widget connecting hospitals and blood banks with instant unread indicators and directory search.
 
-    subgraph External["External Integrations"]
-        NeonDB[("Neon Cloud PostgreSQL\n(49 Relational Models)")]
-        TwilioAPI["Twilio Programmable SMS API"]
-        MSG91API["MSG91 OTP & Auth Widget"]
-    end
+### 2. API & Gateway Layer (`backend`)
+- **Express 4.21 & TypeScript 5**: Structured into cohesive, feature-based application modules located under `backend/src/app/` (`auth`, `donors`, `requesters`, `blood-requests`, `matching`, `hospitals`, `blood-banks`, `communication`, `system`).
+- **Security & Authorization Middleware**:
+  - `auth.middleware.ts`: Validates cryptographically signed JWT bearer tokens for session establishment.
+  - `role.middleware.ts`: Enforces strict Role-Based Access Control (`DONOR`, `REQUESTER`, `HOSPITAL`, `BLOOD_BANK`, `ADMIN`) across all API routes.
+  - Security baseline headers (helmet-equivalent) and bounded sliding-window rate limiters preventing abuse on authentication and upload endpoints.
 
-    Client -->|HTTPS / REST API| AuthMiddleware
-    AuthMiddleware --> Routes
-    Routes --> MatchingEngine
-    Routes --> PeerCommService
-    Routes --> AIPlanner
-    
-    MatchingEngine -->|Queue Notification| OutboxWorker
-    OutboxWorker -->|Persist & Dispatch| NeonDB
-    OutboxWorker -->|Send Real/Mock SMS| TwilioAPI
-    
-    PeerCommService -->|Message Persistence| NeonDB
-    Routes -->|Prisma ORM Adapter| NeonDB
-    Client -->|Direct OTP Verification| MSG91API
-```
+### 3. Core Clinical Engines & Services
+- **Automated Donor Matching Engine**: Evaluates clinical compatibility matrices (ABO & Rh factor), geographical proximity, and 90-day donor cooldowns. Dispatches urgent SMS alerts exclusively to matching candidates.
+- **Predictive AI & Operational Planners**:
+  - **Blood Shortage Predictor**: Computes 7-day, 14-day, and 30-day component burn-rates to proactively flag potential deficits.
+  - **Smart Camp Planner**: Scores historical collection metrics to recommend optimal community blood drive dates and locations.
+  - **Surgery Planner**: Automates surgical crossmatch requirements and reserves matching inventory prior to scheduled procedures.
+- **Cold-Chain Traceability Ledger**: Manages individual blood units (`inventoryunits`) with serological screening verification (HIV, HBV, HCV, Syphilis, Malaria) and custodial chain-of-custody transfer logging.
+
+### 4. Background Workers & Event Processing
+- **Twilio SMS Outbox Worker (`outboxWorker.service.ts`)**: Implements the transactional outbox pattern by polling database-persisted queue entries (`smsoutbox`) with exponential retry backoff and local mock support (`TWILIO_MOCK_MODE`).
+- **Emergency Scheduler Worker (`scheduler.service.ts`)**: Background scheduler ensuring pending emergency requests are escalated or fulfilled within clinical SLAs.
+- **Camp Notification Worker (`campNotification.service.ts`)**: Automatically dispatches reminders to registered donors in advance of community donation drives.
+
+### 5. Data & Persistence Layer
+- **Neon Cloud PostgreSQL**: Serverless, high-availability PostgreSQL database operating over connection-pooled endpoints with strict SSL verification (`verify-full`).
+- **Prisma 7.10 ORM**: Type-safe database client mapping 49 normalized relational models across identity, clinical requisitions, inventory ledgers, surgeries, equipment, and peer messages.
+
+### 6. External Telephony & Authentication Gateways
+- **Twilio Programmable Messaging**: Delivers time-sensitive SMS alerts containing HMAC-SHA256 signed 1-click action links (`/r/action/[token]`) for instant donor response.
+- **MSG91 OTP Platform**: Powers seamless mobile number verification, allowing donors imported through hospital registries to activate and access their portal with one-time passwords.
 
 ---
 
