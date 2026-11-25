@@ -204,13 +204,6 @@ export function HospitalTopNav({
   // Secondary navigation links organized in "More" dropdown
   const secondaryNavLinks = [
     {
-      href: "/hospital/receipt",
-      label: "Delivery Receipt",
-      icon: Truck,
-      desc: "Log blood unit delivery receipts and physical chain-of-custody",
-      active: pathname.startsWith("/hospital/receipt"),
-    },
-    {
       href: "/hospital/donors",
       label: "Donor Registry",
       icon: Users,
@@ -303,8 +296,8 @@ export function HospitalTopNav({
                   key={link.href}
                   href={link.href}
                   className={`inline-flex items-center gap-1.5 px-2.5 lg:px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${link.active
-                      ? "text-[#053845] bg-[#FAF6EE] border border-[#F3E9D1] shadow-2xs font-bold"
-                      : "text-slate-600 hover:text-[#053845] hover:bg-[#FAF6EE]/70"
+                    ? "text-[#053845] bg-[#FAF6EE] border border-[#F3E9D1] shadow-2xs font-bold"
+                    : "text-slate-600 hover:text-[#053845] hover:bg-[#FAF6EE]/70"
                     }`}
                 >
                   <Icon className="w-3.5 h-3.5 shrink-0" />
@@ -324,8 +317,8 @@ export function HospitalTopNav({
                   setIsNotificationsOpen(false);
                 }}
                 className={`inline-flex items-center gap-1 px-2.5 lg:px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${isSecondaryActive || isMoreOpen
-                    ? "text-[#053845] bg-[#FAF6EE] border border-[#F3E9D1] shadow-2xs font-bold"
-                    : "text-slate-600 hover:text-[#053845] hover:bg-[#FAF6EE]/70"
+                  ? "text-[#053845] bg-[#FAF6EE] border border-[#F3E9D1] shadow-2xs font-bold"
+                  : "text-slate-600 hover:text-[#053845] hover:bg-[#FAF6EE]/70"
                   }`}
                 aria-expanded={isMoreOpen}
                 aria-haspopup="true"
@@ -344,8 +337,8 @@ export function HospitalTopNav({
                         href={sec.href}
                         onClick={() => setIsMoreOpen(false)}
                         className={`flex items-start gap-2.5 p-2.5 rounded-xl transition-all ${sec.active
-                            ? "bg-[#FAF6EE] text-[#053845] border border-[#F3E9D1]/80 font-bold"
-                            : "hover:bg-[#FAF6EE]/60 text-slate-700"
+                          ? "bg-[#FAF6EE] text-[#053845] border border-[#F3E9D1]/80 font-bold"
+                          : "hover:bg-[#FAF6EE]/60 text-slate-700"
                           }`}
                       >
                         <div className="w-7 h-7 rounded-lg bg-[#317786]/10 text-[#317786] flex items-center justify-center shrink-0 mt-0.5">
@@ -377,8 +370,8 @@ export function HospitalTopNav({
                   setIsNotificationsOpen(false);
                 }}
                 className={`inline-flex items-center gap-1.5 px-2.5 lg:px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${isChatActive || isChatOpen
-                    ? "text-[#053845] bg-[#FAF6EE] border border-[#F3E9D1] shadow-2xs font-bold"
-                    : "text-slate-600 hover:text-[#053845] hover:bg-[#FAF6EE]/70"
+                  ? "text-[#053845] bg-[#FAF6EE] border border-[#F3E9D1] shadow-2xs font-bold"
+                  : "text-slate-600 hover:text-[#053845] hover:bg-[#FAF6EE]/70"
                   }`}
                 aria-expanded={isChatOpen}
                 aria-haspopup="true"
@@ -398,8 +391,8 @@ export function HospitalTopNav({
                         href={chatItem.href}
                         onClick={() => setIsChatOpen(false)}
                         className={`flex items-start gap-2.5 p-2.5 rounded-xl transition-all ${chatItem.active
-                            ? "bg-[#FAF6EE] text-[#053845] border border-[#F3E9D1]/80 font-bold"
-                            : "hover:bg-[#FAF6EE]/60 text-slate-700"
+                          ? "bg-[#FAF6EE] text-[#053845] border border-[#F3E9D1]/80 font-bold"
+                          : "hover:bg-[#FAF6EE]/60 text-slate-700"
                           }`}
                       >
                         <div className="w-7 h-7 rounded-lg bg-[#317786]/10 text-[#317786] flex items-center justify-center shrink-0 mt-0.5">
@@ -643,8 +636,8 @@ export function HospitalTopNav({
                   href={link.href}
                   onClick={() => setIsMobileMenuOpen(false)}
                   className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold ${link.active
-                      ? "text-[#053845] bg-[#FAF6EE] border border-[#F3E9D1]"
-                      : "text-slate-600 hover:text-[#053845] hover:bg-[#FAF6EE]"
+                    ? "text-[#053845] bg-[#FAF6EE] border border-[#F3E9D1]"
+                    : "text-slate-600 hover:text-[#053845] hover:bg-[#FAF6EE]"
                     }`}
                 >
                   <Icon className="w-4 h-4" />
