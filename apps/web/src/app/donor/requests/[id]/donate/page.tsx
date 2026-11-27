@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
@@ -18,6 +18,7 @@ import {
   Building,
   Car,
   Loader2,
+  RefreshCw,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { mapBackendRequestToPreview } from "@/lib/mappers";
@@ -34,7 +35,11 @@ export default function DonorScreeningAndDonatePage() {
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Live Transit Tracking State
+  // Acceptance & Transit Tracking State
+  const [acceptanceStatus, setAcceptanceStatus] = useState<
+    "PENDING" | "ACCEPTED" | "REJECTED" | string
+  >("PENDING");
+  const [isCheckingAcceptance, setIsCheckingAcceptance] = useState(false);
   const [transitStatus, setTransitStatus] = useState<
     "DONOR_FOUND" | "STARTED" | "REACHED_LOCATION" | "COMPLETED"
   >("DONOR_FOUND");
@@ -62,87 +67,106 @@ export default function DonorScreeningAndDonatePage() {
   const [contactPhone, setContactPhone] = useState<string>("");
   const [notes, setNotes] = useState<string>("");
 
-  useEffect(() => {
-    async function loadData() {
-      try {
-        setIsLoading(true);
-        const profileRes = await api.donor.getProfile();
-        if (profileRes.success && profileRes.donor) {
-          setDonorGender(profileRes.donor.gender || null);
-          setContactPhone(profileRes.donor.users?.phonenumber || "");
+  const loadData = useCallback(async (isSilent = false) => {
+    try {
+      if (!isSilent) setIsLoading(true);
+      const profileRes = await api.donor.getProfile().catch(() => null);
+      if (profileRes?.success && profileRes.donor) {
+        setDonorGender(profileRes.donor.gender || null);
+        setContactPhone((prev) => prev || profileRes.donor.users?.phonenumber || "");
+      }
+
+      const rawParam = (requestIdParam || "").trim().toLowerCase();
+      const cleanedParam = rawParam.replace(/^req-/, "");
+
+      let loadedRequest: any = null;
+      let loadedCommitment: any = null;
+
+      const reqRes = await api.donor.getMatchingRequests({ limit: 50 }).catch(() => null);
+      if (reqRes?.success && reqRes.requests) {
+        const match = rawParam
+          ? reqRes.requests.find((r: { requestid?: string }) => {
+              const rawId = (r.requestid || "").toLowerCase();
+              const formatted = `req-${rawId.slice(0, 8)}`;
+              return (
+                rawId === rawParam ||
+                rawId === cleanedParam ||
+                formatted === rawParam ||
+                (cleanedParam.length >= 8 && rawId.startsWith(cleanedParam))
+              );
+            })
+          : undefined;
+
+        if (match) {
+          loadedRequest = mapBackendRequestToPreview(match);
         }
+      }
 
-        const rawParam = (requestIdParam || "").trim().toLowerCase();
-        const cleanedParam = rawParam.replace(/^req-/, "");
-
-        let loadedRequest: any = null;
-        let loadedCommitment: any = null;
-
-        const reqRes = await api.donor.getMatchingRequests({ limit: 50 }).catch(() => null);
-        if (reqRes?.success && reqRes.requests) {
-          const match = rawParam
-            ? reqRes.requests.find((r: { requestid?: string }) => {
-                const rawId = (r.requestid || "").toLowerCase();
-                const formatted = `req-${rawId.slice(0, 8)}`;
-                return (
-                  rawId === rawParam ||
-                  rawId === cleanedParam ||
-                  formatted === rawParam ||
-                  (cleanedParam.length >= 8 && rawId.startsWith(cleanedParam))
-                );
-              })
-            : undefined;
-
-          if (match) {
-            loadedRequest = mapBackendRequestToPreview(match);
+      // If not found in matching pool or already committed/fulfilled, fetch direct requisition
+      const lookupId = loadedRequest?.rawId || cleanedParam || rawParam;
+      if (lookupId) {
+        const directRes = await api.bloodRequests.getById(lookupId).catch(() => null);
+        if (directRes && (directRes.requestid || (directRes as any).id)) {
+          if (!loadedRequest) {
+            loadedRequest = mapBackendRequestToPreview(directRes);
+          }
+          if ((directRes as any).myCommitment) {
+            loadedCommitment = (directRes as any).myCommitment;
           }
         }
+      }
 
-        // If not found in matching pool or already committed/fulfilled, fetch direct requisition
-        const lookupId = loadedRequest?.rawId || cleanedParam || rawParam;
-        if (lookupId) {
-          const directRes = await api.bloodRequests.getById(lookupId).catch(() => null);
-          if (directRes && (directRes.requestid || (directRes as any).id)) {
-            if (!loadedRequest) {
-              loadedRequest = mapBackendRequestToPreview(directRes);
-            }
-            if ((directRes as any).myCommitment) {
-              loadedCommitment = (directRes as any).myCommitment;
-            }
-          }
-        }
-
-        if (loadedRequest) {
-          setRequest(loadedRequest);
-          if (loadedCommitment) {
-            setIsSubmitted(true);
-            const transit = (loadedCommitment.transitStatus || loadedCommitment.status || "DONOR_FOUND") as any;
-            setTransitStatus(transit);
-            if (transit === "COMPLETED" || loadedRequest.requestStatus === "FULFILLED") {
-              setShowThankYouModal(true);
-            }
-          } else if (loadedRequest.requestStatus === "FULFILLED") {
-            setIsSubmitted(true);
-            setTransitStatus("COMPLETED");
+      if (loadedRequest) {
+        setRequest(loadedRequest);
+        const commitment = loadedCommitment || loadedRequest.myCommitment;
+        if (commitment) {
+          setIsSubmitted(true);
+          const transit = (commitment.transitStatus || commitment.status || "DONOR_FOUND") as any;
+          const acceptance = (commitment.acceptanceStatus || "PENDING").toUpperCase();
+          setTransitStatus(transit);
+          setAcceptanceStatus(acceptance);
+          if (transit === "COMPLETED" || loadedRequest.requestStatus === "FULFILLED") {
             setShowThankYouModal(true);
           }
-        } else {
-          setRequest(null);
-          setErrorMessage(
-            "Blood request not found or no longer available for matching."
-          );
+        } else if (loadedRequest.requestStatus === "FULFILLED") {
+          setIsSubmitted(true);
+          setTransitStatus("COMPLETED");
+          setAcceptanceStatus("ACCEPTED");
+          setShowThankYouModal(true);
         }
-      } catch (err: unknown) {
+      } else {
+        setRequest(null);
         setErrorMessage(
-          err instanceof Error ? err.message : "Failed to load requisition details."
+          "Blood request not found or no longer available for matching."
         );
-      } finally {
-        setIsLoading(false);
       }
+    } catch (err: unknown) {
+      setErrorMessage(
+        err instanceof Error ? err.message : "Failed to load requisition details."
+      );
+    } finally {
+      if (!isSilent) setIsLoading(false);
     }
-
-    loadData();
   }, [requestIdParam]);
+
+  useEffect(() => {
+    loadData(false);
+  }, [loadData]);
+
+  // Automatic background polling: check every 5s while awaiting requester decision
+  useEffect(() => {
+    if (!isSubmitted || acceptanceStatus !== "PENDING") return;
+    const interval = setInterval(() => {
+      loadData(true);
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [isSubmitted, acceptanceStatus, loadData]);
+
+  const handleCheckAcceptanceStatus = async () => {
+    setIsCheckingAcceptance(true);
+    await loadData(true);
+    setIsCheckingAcceptance(false);
+  };
 
   // Real-time Clinical Eligibility Evaluation
   const isFemale = donorGender === "FEMALE";
@@ -243,6 +267,7 @@ export default function DonorScreeningAndDonatePage() {
       if (res.success) {
         setIsSubmitted(true);
         setTransitStatus("DONOR_FOUND");
+        setAcceptanceStatus("PENDING");
       } else {
         setErrorMessage(res.message || "Failed to submit donation pledge.");
       }
@@ -336,6 +361,150 @@ export default function DonorScreeningAndDonatePage() {
   }
 
   if (isSubmitted && request) {
+    // 1. If Requester REJECTED this offer:
+    if (acceptanceStatus === "REJECTED") {
+      return (
+        <div className="max-w-2xl mx-auto space-y-5 pb-12">
+          <div className="bg-white rounded-2xl border border-[#F3E9D1] shadow-2xs p-6 text-center space-y-5">
+            <div className="w-14 h-14 rounded-full bg-rose-50 border border-rose-200 text-[#A2363A] flex items-center justify-center mx-auto">
+              <XCircle className="w-8 h-8" />
+            </div>
+
+            <div className="space-y-1">
+              <span className="text-[11px] font-semibold text-[#A2363A] bg-rose-50 px-3 py-0.5 rounded-full border border-rose-200 inline-block">
+                Offer Not Selected
+              </span>
+              <h1 className="font-serif text-2xl font-bold text-[#053845] pt-1">
+                Alternative Donor Selected
+              </h1>
+              <p className="text-xs sm:text-sm text-slate-600 max-w-lg mx-auto">
+                The requester has selected an alternative donor or hospital facility for patient{" "}
+                <strong>{request.patientName || "the patient"}</strong>. Thank you sincerely for your willingness to help.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-center gap-3 pt-2">
+              <Link
+                href="/donor/requests"
+                className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-xs font-semibold text-white bg-[#053845] hover:bg-[#317786] transition-colors"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                <span>Explore Other Blood Requests</span>
+              </Link>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // 2. If Requester has NOT accepted yet (PENDING):
+    if (acceptanceStatus !== "ACCEPTED") {
+      return (
+        <div className="max-w-2xl mx-auto space-y-5 pb-12">
+          <div className="bg-white rounded-2xl border border-[#F3E9D1] shadow-2xs p-6 text-center space-y-5">
+            <div className="relative mx-auto w-16 h-16 rounded-full bg-amber-50 border border-amber-200 text-amber-700 flex items-center justify-center">
+              <Clock className="w-8 h-8 animate-pulse" />
+            </div>
+
+            <div className="space-y-1.5">
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-amber-900 bg-amber-50 px-3 py-1 rounded-full border border-amber-200">
+                <Clock className="w-3.5 h-3.5 text-amber-700 animate-spin" style={{ animationDuration: "5s" }} />
+                <span>Offer Submitted &bull; Awaiting Requester Approval</span>
+              </span>
+              <h1 className="font-serif text-2xl font-bold text-[#053845] pt-1">
+                Donation Offer Submitted to Requester
+              </h1>
+              <p className="text-xs sm:text-sm text-slate-600 max-w-lg mx-auto leading-relaxed">
+                Thank you for stepping up to save a life! Your offer to donate blood for patient{" "}
+                <strong className="text-[#053845]">{request.patientName || "the patient"}</strong> has been sent to the requester.
+              </p>
+            </div>
+
+            {/* Informational Guidance Box */}
+            <div className="p-4 rounded-xl bg-[#FAF6EE]/80 border border-[#F3E9D1] text-left space-y-2">
+              <div className="flex items-center gap-2 text-[#053845] font-bold text-xs">
+                <Info className="w-4 h-4 text-[#317786] shrink-0" />
+                <span>Next Step: Wait for Requester Acceptance</span>
+              </div>
+              <p className="text-xs text-slate-700 leading-relaxed">
+                The requester and hospital medical coordination team are currently reviewing incoming donor offers. 
+                Once the requester accepts your offer, <strong>your Live Donation Journey will automatically activate on this page</strong>, 
+                allowing you to start traveling to the hospital and track your journey live.
+              </p>
+              <div className="pt-1 flex items-center gap-2 text-[11px] text-amber-900 bg-amber-50/80 p-2.5 rounded-lg border border-amber-200/70">
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                <span>Please wait for requester confirmation before traveling to the hospital.</span>
+              </div>
+            </div>
+
+            {/* Pledged Requisition Details */}
+            <div className="p-4 rounded-xl bg-white border border-[#F3E9D1] text-left space-y-2 text-xs">
+              <div className="flex items-center justify-between border-b border-[#F3E9D1] pb-2">
+                <span className="font-semibold text-[#053845] flex items-center gap-1.5">
+                  <Building className="w-4 h-4 text-[#317786]" />
+                  <span>{request.hospitalName}</span>
+                </span>
+                <span className="font-semibold text-[#B94F30]">
+                  {request.bloodGroup} &middot; {request.bloodComponent || "Whole Blood"}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-slate-600 pt-1">
+                {request.location && request.location !== "Location not specified" && (
+                  <div className="flex items-start gap-1.5">
+                    <MapPin className="w-3.5 h-3.5 text-[#317786] shrink-0 mt-0.5" />
+                    <span>{request.location}</span>
+                  </div>
+                )}
+                <div className="flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5 text-[#317786] shrink-0" />
+                  <span>
+                    Pledged Arrival: <strong className="text-[#053845]">{estimatedArrival}</strong>
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5 sm:col-span-2">
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  <span>
+                    Clinical Pre-Screening: <strong className="text-emerald-700">Passed &amp; Verified</strong>
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Refresh & Navigation Actions */}
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+              <button
+                type="button"
+                disabled={isCheckingAcceptance}
+                onClick={handleCheckAcceptanceStatus}
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-[#317786] hover:bg-[#245964] shadow-sm transition-colors cursor-pointer disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isCheckingAcceptance ? "animate-spin" : ""}`} />
+                <span>{isCheckingAcceptance ? "Checking Decision..." : "Check Requester Decision"}</span>
+              </button>
+
+              <Link
+                href="/donor/requests"
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold text-[#053845] bg-white border border-[#F3E9D1] hover:bg-[#FAF6EE] transition-colors"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                <span>Matching Requests</span>
+              </Link>
+
+              <Link
+                href="/donor/dashboard"
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold text-slate-600 hover:text-[#053845] transition-colors"
+              >
+                <span>Donor Dashboard</span>
+              </Link>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // 3. Requester HAS ACCEPTED (acceptanceStatus === "ACCEPTED"):
+    // Render Live Donation Progress and Transit Actions
     return (
       <div className="max-w-2xl mx-auto space-y-5 pb-12">
         <div className="bg-white rounded-2xl border border-[#F3E9D1] shadow-2xs p-6 text-center space-y-5">
@@ -345,13 +514,14 @@ export default function DonorScreeningAndDonatePage() {
 
           <div className="space-y-1">
             <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-3 py-0.5 rounded-full border border-emerald-200 inline-block">
-              Clinical Clearance Verified &bull; Pledge Active
+              Requester Accepted Your Offer! &bull; Journey Active
             </span>
             <h1 className="font-serif text-2xl font-bold text-[#053845] pt-1">
-              Thank You for Stepping Up to Save a Life!
+              Requester Accepted Your Donation Offer!
             </h1>
             <p className="text-xs sm:text-sm text-slate-600 max-w-lg mx-auto">
-              Your verified donor pledge has been transmitted directly to the requester and hospital transfusion desk.
+              The requester has approved your blood provision for patient{" "}
+              <strong className="text-[#053845]">{request.patientName || "the patient"}</strong>. You can now start your journey to {request.hospitalName} and track your progress live below.
             </p>
           </div>
 
@@ -362,67 +532,104 @@ export default function DonorScreeningAndDonatePage() {
             </div>
           )}
 
-          {/* Live Donation Journey Tracker */}
+          {/* Live Donation Journey Tracker with circular milestone stepper */}
           <div className="p-4 sm:p-5 rounded-2xl bg-[#FAF6EE]/70 border border-[#F3E9D1] text-left space-y-4">
             <div className="flex items-center justify-between pb-2 border-b border-[#F3E9D1]">
-              <span className="text-xs font-bold text-[#053845]">
-                Live Donation Progress
+              <div>
+                <span className="text-xs font-bold text-[#053845] block">
+                  Live Donation Progress
+                </span>
+                <span className="text-[11px] text-slate-500">Live milestone progress &bull; Visible to requester &amp; hospital</span>
+              </div>
+              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                Pledge Active
               </span>
-              <span className="text-[11px] text-slate-500">Visible to requester</span>
             </div>
 
-            <div className="grid grid-cols-3 gap-2 text-center">
-              <div className="flex flex-col items-center space-y-1">
-                <div className="w-9 h-9 rounded-full flex items-center justify-center bg-[#317786] text-white">
-                  <CheckCircle2 className="w-4 h-4" />
-                </div>
-                <span className="text-xs font-semibold text-[#053845]">Donor Found</span>
-              </div>
+            <div className="relative py-2">
+              {/* Connecting track line */}
+              <div className="absolute top-5 left-[16%] right-[16%] h-1 bg-[#E8DEC8] -z-0 rounded-full" />
+              <div
+                className="absolute top-5 left-[16%] h-1 bg-[#317786] transition-all duration-500 rounded-full -z-0"
+                style={{
+                  width:
+                    transitStatus === "COMPLETED" || transitStatus === "REACHED_LOCATION"
+                      ? "68%"
+                      : transitStatus === "STARTED"
+                      ? "34%"
+                      : "0%",
+                }}
+              />
 
-              <div className="flex flex-col items-center space-y-1">
-                <div
-                  className={`w-9 h-9 rounded-full flex items-center justify-center ${
-                    transitStatus === "STARTED" ||
-                    transitStatus === "REACHED_LOCATION" ||
-                    transitStatus === "COMPLETED"
-                      ? "bg-[#317786] text-white"
-                      : "bg-white text-slate-400 border border-[#F3E9D1]"
-                  }`}
-                >
-                  <Car className="w-4 h-4" />
+              <div className="grid grid-cols-3 gap-2 text-center relative z-10">
+                {/* Milestone 1: Offer Accepted */}
+                <div className="flex flex-col items-center space-y-1.5">
+                  <div className="w-10 h-10 rounded-full flex items-center justify-center bg-[#317786] text-white shadow-sm ring-4 ring-[#FAF6EE]">
+                    <CheckCircle2 className="w-5 h-5" />
+                  </div>
+                  <div className="leading-tight">
+                    <span className="text-xs font-bold text-[#053845] block">Offer Accepted</span>
+                    <span className="text-[10px] text-slate-500">Requester Approved</span>
+                  </div>
                 </div>
-                <span
-                  className={`text-xs font-semibold ${
-                    transitStatus === "STARTED" ||
-                    transitStatus === "REACHED_LOCATION" ||
-                    transitStatus === "COMPLETED"
-                      ? "text-[#053845]"
-                      : "text-slate-400"
-                  }`}
-                >
-                  Started
-                </span>
-              </div>
 
-              <div className="flex flex-col items-center space-y-1">
-                <div
-                  className={`w-9 h-9 rounded-full flex items-center justify-center ${
-                    transitStatus === "REACHED_LOCATION" || transitStatus === "COMPLETED"
-                      ? "bg-[#317786] text-white"
-                      : "bg-white text-slate-400 border border-[#F3E9D1]"
-                  }`}
-                >
-                  <MapPin className="w-4 h-4" />
+                {/* Milestone 2: On The Way */}
+                <div className="flex flex-col items-center space-y-1.5">
+                  <div
+                    className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors shadow-sm ring-4 ring-[#FAF6EE] ${
+                      transitStatus === "STARTED" ||
+                      transitStatus === "REACHED_LOCATION" ||
+                      transitStatus === "COMPLETED"
+                        ? "bg-[#317786] text-white"
+                        : "bg-white text-slate-400 border border-[#F3E9D1]"
+                    }`}
+                  >
+                    <Car className="w-5 h-5" />
+                  </div>
+                  <div className="leading-tight">
+                    <span
+                      className={`text-xs font-bold block ${
+                        transitStatus === "STARTED" ||
+                        transitStatus === "REACHED_LOCATION" ||
+                        transitStatus === "COMPLETED"
+                          ? "text-[#053845]"
+                          : "text-slate-400"
+                      }`}
+                    >
+                      On The Way
+                    </span>
+                    <span className="text-[10px] text-slate-500">
+                      {transitStatus === "STARTED" ? "In Transit Now" : "En Route to Facility"}
+                    </span>
+                  </div>
                 </div>
-                <span
-                  className={`text-xs font-semibold ${
-                    transitStatus === "REACHED_LOCATION" || transitStatus === "COMPLETED"
-                      ? "text-[#053845]"
-                      : "text-slate-400"
-                  }`}
-                >
-                  Reached Location
-                </span>
+
+                {/* Milestone 3: Reached Destination */}
+                <div className="flex flex-col items-center space-y-1.5">
+                  <div
+                    className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors shadow-sm ring-4 ring-[#FAF6EE] ${
+                      transitStatus === "REACHED_LOCATION" || transitStatus === "COMPLETED"
+                        ? "bg-[#317786] text-white"
+                        : "bg-white text-slate-400 border border-[#F3E9D1]"
+                    }`}
+                  >
+                    <MapPin className="w-5 h-5" />
+                  </div>
+                  <div className="leading-tight">
+                    <span
+                      className={`text-xs font-bold block ${
+                        transitStatus === "REACHED_LOCATION" || transitStatus === "COMPLETED"
+                          ? "text-[#053845]"
+                          : "text-slate-400"
+                      }`}
+                    >
+                      Reached Facility
+                    </span>
+                    <span className="text-[10px] text-slate-500">
+                      {transitStatus === "COMPLETED" ? "Receipt Confirmed" : "At Transfusion Desk"}
+                    </span>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -432,7 +639,7 @@ export default function DonorScreeningAndDonatePage() {
                   type="button"
                   disabled={isUpdatingStatus}
                   onClick={() => handleUpdateTransit("STARTED")}
-                  className="w-full py-2.5 px-4 rounded-xl text-xs font-semibold text-white bg-[#317786] hover:bg-[#245964] flex items-center justify-center gap-2 cursor-pointer transition-colors"
+                  className="w-full py-2.5 px-4 rounded-xl text-xs font-semibold text-white bg-[#317786] hover:bg-[#245964] flex items-center justify-center gap-2 cursor-pointer transition-colors shadow-sm"
                 >
                   <Car className="w-4 h-4" />
                   <span>I Have Started / On My Way to Hospital</span>
@@ -444,7 +651,7 @@ export default function DonorScreeningAndDonatePage() {
                   type="button"
                   disabled={isUpdatingStatus}
                   onClick={() => handleUpdateTransit("REACHED_LOCATION")}
-                  className="w-full py-2.5 px-4 rounded-xl text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 flex items-center justify-center gap-2 cursor-pointer transition-colors"
+                  className="w-full py-2.5 px-4 rounded-xl text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 flex items-center justify-center gap-2 cursor-pointer transition-colors shadow-sm"
                 >
                   <MapPin className="w-4 h-4" />
                   <span>I Have Reached the Hospital / Location</span>
@@ -452,15 +659,15 @@ export default function DonorScreeningAndDonatePage() {
               )}
 
               {transitStatus === "REACHED_LOCATION" && (
-                <button
-                  type="button"
-                  disabled={isUpdatingStatus}
-                  onClick={() => handleUpdateTransit("COMPLETED")}
-                  className="w-full py-2.5 px-4 rounded-xl text-xs font-semibold text-white bg-[#053845] hover:bg-[#317786] flex items-center justify-center gap-2 cursor-pointer transition-colors"
-                >
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>Mark Blood Donation Completed</span>
-                </button>
+                <div className="p-3.5 rounded-xl bg-teal-50 border border-[#317786]/30 text-teal-900 text-xs flex items-center gap-2.5">
+                  <MapPin className="w-4 h-4 text-[#317786] shrink-0" />
+                  <div>
+                    <span className="font-bold">You Have Reached the Care Facility!</span>
+                    <p className="text-teal-800 text-[11px] mt-0.5">
+                      Please check in at the transfusion desk for blood unit collection. The hospital staff or requester will confirm blood receipt once completed.
+                    </p>
+                  </div>
+                </div>
               )}
 
               {transitStatus === "COMPLETED" && (

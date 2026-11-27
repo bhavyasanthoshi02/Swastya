@@ -92,3 +92,19 @@
 | **Q5. Would a centralized platform connecting hospitals, blood banks and donors be useful?** | Yes, I think it would be very useful. If we could search for the required blood group, check blood bank availability and contact suitable donors directly, the process would become much faster and more convenient. |
 | **Q6. What is the one feature you would expect from this website?** | Honestly, I would like a direct communication feature between hospitals and blood banks. Instead of making repeated phone calls, we should be able to send requests, receive replies and discuss the availability of blood through the website. |
 | **Q7. What would make you hesitate to use an online platform for blood requests?** | Honestly, I would hesitate if the website is difficult to use or requires too many steps to raise a request. During an emergency, we need something simple where we can quickly enter the requirement and get a response. |
+
+## Overall Findings
+
+The interviews highlighted the following common challenges:
+
+**1.Difficulty finding the right contact**: Hospitals and blood banks may need to contact multiple people or organizations to arrange the required blood.
+
+**2.Scattered communication**: Phone calls and WhatsApp groups are commonly used, but messages may not reach the right person or receive an immediate response.
+
+**3.Availability confirmation**: Blood banks need reliable information about available stock before responding to requests.
+
+**4.Coordination delays**: When blood is unavailable locally, contacting other blood banks and confirming availability can take additional time.
+
+**5.Need for organized communication**: Interviewees expressed interest in a platform that helps them search, send requests, receive updates and coordinate blood requirements.
+
+These findings support the problem of difficulty in finding the right blood-related contact and coordinating urgent blood requirements.

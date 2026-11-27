@@ -2,30 +2,46 @@
 
 ## A Real-Life Scenario
 
-In our college WhatsApp groups, we often come across messages about urgent blood requirements. These messages usually contain details such as the patient's blood group, number of units required, hospital name, location and contact number.
+Imagine a patient in a hospital urgently needs 2 units of AB-positive blood before a medical procedure.
 
-For example, a message may mention that a patient undergoing heart surgery needs 6 units of O-negative blood at a hospital in Vijayawada. Another message may request O-positive blood for a patient in need.
+The patient's family first contacts the hospital's blood bank. If the required blood is not available, they may need to contact other blood banks or search for eligible donors.
 
-These messages are forwarded across different groups to reach potential donors. However, the information remains scattered across WhatsApp messages, and people may have to search through messages or contact others to find the required blood.
+They share the blood requirement through WhatsApp groups and phone calls. The message may reach many people, but the family still needs to identify who has the required blood group, who is eligible to donate, and whom they should contact.
+
+Even when potential donors or blood banks are available, finding the right contact and coordinating with them can take time.
+
+This creates a communication and coordination problem during an already stressful situation.
 
 ## Problem
 
-Finding blood can become difficult when information about donors, blood availability and requests is scattered across different platforms.
+During urgent blood requirements, patients' families and hospitals often struggle to identify and contact the right blood donors or blood banks quickly.
 
-Some common problems are:
+Blood requests, donor details and availability information may be maintained separately by different hospitals, blood banks and individuals. As a result, people often depend on phone calls, WhatsApp messages and personal contacts to find the required blood.
 
-- Contacting multiple blood banks to check blood availability.
-- Finding donors with the required blood group.
-- Sharing urgent blood requirements through different channels.
-- Getting updates about the request.
-- Coordinating between hospitals and blood banks.
+This creates several challenges:
 
-These activities often involve manual communication and can take time.
+- **Difficulty finding the right contact:** People may not know which donor or blood bank can help with the required blood group.
+- **Scattered information:** Blood requests and donor details are shared across different groups and communication channels.
+
+- **Repeated communication:** Requesters may need to contact multiple donors or blood banks to check availability.
+
+- **Limited request updates:** It can be difficult to keep track of whether a request has been responded to or fulfilled.
+
+- **Coordination delays:** Hospitals, blood banks and potential donors may not have a common platform to coordinate blood requirements.
+
+The core problem is not simply the shortage of blood. It is the difficulty of finding the right people and coordinating blood requirements when information and communication are scattered.
+
 
 ## Proposed Solution
 
-Swastya is a blood coordination platform that brings requesters, donors, hospitals and blood banks together in one place.
+Swastya is a blood coordination platform that connects donors, requesters, hospitals and blood banks through a common website.
 
-It helps users submit blood requests, find matching donors, receive notifications and communicate with other organizations. It also supports donor records, blood inventory management.
+The platform helps users:
+- Submit and manage blood requests.
+- Find potential donors based on blood group and relevant details.
+- Notify matching donors about blood requirements.
+- Help hospitals and blood banks coordinate with one another.
+- Manage donor records and available blood stock information.
+- Track request progress and receive updates.
 
-The main aim of Swastya is to make blood coordination easier and help users manage blood requirements in a more organized way.
+By bringing blood-related information and communication into one platform, Swastya aims to reduce the effort required to find the right contact and make blood request coordination more organized.

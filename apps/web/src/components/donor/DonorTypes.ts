@@ -60,6 +60,7 @@ export interface RequestPreviewItem {
   requiredWithin?: string;
   requiredByDateTime?: string;
   patientAgeGroup?: string;
+  patientName?: string;
   prescriptionStatus?: string;
   requestStatus?: string;
   hasResponded?: boolean;

@@ -221,6 +221,7 @@ export function mapBackendRequestToPreview(req: any): RequestPreviewItem {
     requiredWithin: requiredByDateTime ? `By ${requiredByDateTime}` : undefined,
     requiredByDateTime,
     patientAgeGroup: patientSummaryParts.length > 0 ? patientSummaryParts.join(" · ") : undefined,
+    patientName: req.patientname || req.patientName || undefined,
     prescriptionStatus: req.prescription?.status || undefined,
     requestStatus: req.status || undefined,
     hasResponded: Boolean(req.hasResponded),

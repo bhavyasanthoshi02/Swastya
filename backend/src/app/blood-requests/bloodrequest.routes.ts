@@ -658,6 +658,7 @@ router.get("/:id", authenticate, requireApprovedHospital, async (req: Request, r
                 return {
                     notificationid: n.notificationid,
                     donorId: meta.donorId || n.users?.userid,
+                    donorUserId: n.users?.userid,
                     donorName: meta.donorName || n.users?.name || "Voluntary Donor",
                     donorBloodGroup: meta.donorBloodGroup || n.users?.donors?.bloodgroup || "COMPATIBLE",
                     donorCity: meta.donorCity || n.users?.donors?.city || "Registered Area",
@@ -665,6 +666,7 @@ router.get("/:id", authenticate, requireApprovedHospital, async (req: Request, r
                     donorPhone: meta.donorPhone || n.users?.phonenumber || "",
                     donorEmail: meta.donorEmail || n.users?.email || "",
                     respondedAt: n.sentat,
+                    acceptanceStatus: meta.acceptanceStatus || "PENDING",
                     status: meta.transitStatus || "DONOR_FOUND",
                     transitStatus: meta.transitStatus || "DONOR_FOUND",
                     startedAt: meta.startedAt || null,
@@ -1106,60 +1108,60 @@ router.post("/", authenticate, authorize("REQUESTER", "PATIENT", "HOSPITAL", "AD
             console.error("[Requisition Creation] Blood bank dispatch error:", err);
         });
 
-        // Query full request with prescription
-        const fullRequest = await prisma.bloodrequests.findUnique({
-            where: { requestid: bloodRequest.requestid },
-            include: {
-                prescription: true,
-                requesters: true,
-                hospitals: true,
-            },
-        });
+// Query full request with prescription
+const fullRequest = await prisma.bloodrequests.findUnique({
+    where: { requestid: bloodRequest.requestid },
+    include: {
+        prescription: true,
+        requesters: true,
+        hospitals: true,
+    },
+});
 
-        // Trigger emergency broadcast if request is marked emergency or CRITICAL
-        const isEmergency = Boolean(bloodRequest.isemergency) || bloodRequest.urgencylevel === "CRITICAL";
-        if (isEmergency) {
-            await triggerEmergencyBroadcast({
-                requestId: bloodRequest.requestid,
-                triggeredByUserId: user.userid,
-                triggerType: "REQUEST_CREATION",
-                triggerReason: "Emergency blood requisition initiated",
-                radiusKm: bloodRequest.searchradius || 15,
-            }).catch((err) => {
-                console.error("Emergency broadcast creation error:", err);
-            });
+// Trigger emergency broadcast if request is marked emergency or CRITICAL
+const isEmergency = Boolean(bloodRequest.isemergency) || bloodRequest.urgencylevel === "CRITICAL";
+if (isEmergency) {
+    await triggerEmergencyBroadcast({
+        requestId: bloodRequest.requestid,
+        triggeredByUserId: user.userid,
+        triggerType: "REQUEST_CREATION",
+        triggerReason: "Emergency blood requisition initiated",
+        radiusKm: bloodRequest.searchradius || 15,
+    }).catch((err) => {
+        console.error("Emergency broadcast creation error:", err);
+    });
 
-            // Schedule persistent follow-up job for emergency escalation
-            await scheduleEmergencyFollowUp({
-                requestId: bloodRequest.requestid,
-            }).catch((err) => {
-                console.error("Emergency scheduler follow-up creation error:", err);
-            });
-        }
+    // Schedule persistent follow-up job for emergency escalation
+    await scheduleEmergencyFollowUp({
+        requestId: bloodRequest.requestid,
+    }).catch((err) => {
+        console.error("Emergency scheduler follow-up creation error:", err);
+    });
+}
 
-        // Event-driven dispatch: Automated notifications to matched donors, relevant hospitals, and blood banks
-        bloodRequestEventEmitter.emit(EVENTS.REQUEST_CREATED, {
-            requestId: bloodRequest.requestid,
-            createdByUserId: user.userid,
-            hospitalId: bloodRequest.hospitalid,
-            isEmergency: Boolean(bloodRequest.isemergency),
-            urgencyLevel: bloodRequest.urgencylevel,
-        });
+// Event-driven dispatch: Automated notifications to matched donors, relevant hospitals, and blood banks
+bloodRequestEventEmitter.emit(EVENTS.REQUEST_CREATED, {
+    requestId: bloodRequest.requestid,
+    createdByUserId: user.userid,
+    hospitalId: bloodRequest.hospitalid,
+    isEmergency: Boolean(bloodRequest.isemergency),
+    urgencyLevel: bloodRequest.urgencylevel,
+});
 
-        res.status(201).json(fullRequest || bloodRequest);
+res.status(201).json(fullRequest || bloodRequest);
     } catch (error) {
-        console.error("Error creating blood request:", error);
+    console.error("Error creating blood request:", error);
 
-        // Transaction failed: clean up written file from storage so no orphaned files remain
-        if (savedFilePath) {
-            await fs.promises.unlink(savedFilePath).catch(() => { });
-        }
-
-        res.status(500).json({
-            success: false,
-            message: "Failed to create blood request",
-        });
+    // Transaction failed: clean up written file from storage so no orphaned files remain
+    if (savedFilePath) {
+        await fs.promises.unlink(savedFilePath).catch(() => { });
     }
+
+    res.status(500).json({
+        success: false,
+        message: "Failed to create blood request",
+    });
+}
 });
 router.put("/:id", authenticate, requireApprovedHospital, async (req: Request, res: Response) => {
     try {
@@ -4023,6 +4025,7 @@ router.post("/:id/respond", authenticate, async (req: Request, res: Response) =>
             requestId: request.requestid,
             patientName: null,
             transitStatus: "DONOR_FOUND",
+            acceptanceStatus: "PENDING",
             status: finalStatus,
         });
     } catch (error: any) {
